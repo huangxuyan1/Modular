@@ -1,0 +1,35 @@
+# Exercise public file arguments, including characters outside Windows ANSI code
+# pages. A unique directory keeps repeated/concurrent tests from sharing outputs.
+string(RANDOM LENGTH 12 ALPHABET 0123456789abcdef run_id)
+set(work_dir "${WORK_ROOT}/${run_id}")
+file(MAKE_DIRECTORY "${work_dir}")
+set(input "${work_dir}/音符🎵.mid")
+set(output "${work_dir}/播放🎵.wav")
+configure_file("${FIXTURE}" "${input}" COPYONLY)
+file(SHA256 "${input}" input_before)
+
+execute_process(COMMAND "${CLI}" "${input}" "${output}"
+  RESULT_VARIABLE result OUTPUT_VARIABLE message ERROR_VARIABLE error ENCODING UTF-8)
+if(NOT result EQUAL 0)
+  message(FATAL_ERROR "MIDI CLI render failed (${result}): ${message}${error}")
+endif()
+file(SIZE "${output}" wav_size)
+if(NOT wav_size EQUAL 96046)
+  message(FATAL_ERROR "Expected 48001 PCM16 frames plus header, got ${wav_size} bytes")
+endif()
+file(READ "${output}" header LIMIT 44 HEX)
+if(NOT header MATCHES "^52494646........57415645666d7420")
+  message(FATAL_ERROR "Output is not a RIFF WAVE file")
+endif()
+file(SHA256 "${output}" output_before)
+
+execute_process(COMMAND "${CLI}" "${input}" "${output}"
+  RESULT_VARIABLE result OUTPUT_VARIABLE message ERROR_VARIABLE error ENCODING UTF-8)
+if(result EQUAL 0 OR NOT error MATCHES "output already exists")
+  message(FATAL_ERROR "MIDI CLI must refuse to overwrite an existing output")
+endif()
+file(SHA256 "${output}" output_after)
+file(SHA256 "${input}" input_after)
+if(NOT input_before STREQUAL input_after OR NOT output_before STREQUAL output_after)
+  message(FATAL_ERROR "MIDI CLI changed a source or existing output file")
+endif()

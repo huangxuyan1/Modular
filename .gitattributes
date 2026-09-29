@@ -1,0 +1,2 @@
+# Preserve Unix entry points when checking out on Windows.
+*.sh text eol=lf

@@ -1,0 +1,891 @@
+#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include "doctest.h"
+
+#include <limits>
+#include <chrono>
+#include <thread>
+#include <sstream>
+#include <fstream>
+#include <tuple>
+
+#include "modular/Engine.h"
+#include "modular/Workspace.h"
+#include "modular/GraphExecution.h"
+#include "modular/nodes/BasicNodes.h"
+#include "modular/GraphPersistence.h"
+#include "modular/Supernode.h"
+#include "modular/nodes/ManualTriggerNode.h"
+#include "modular/nodes/PrimitivePersistence.h"
+#include "modular/nodes/MidiFileNode.h"
+#include "modular/nodes/WavRecorderNode.h"
+#include "WavTestFiles.h"
+#ifdef _WIN32
+#include "modular/nodes/AudioOutputNode.h"
+#endif
+
+using namespace modular;
+using namespace modular::nodes;
+
+namespace {
+// Test-owned unsigned 8-bit PCM, retained separately from the playback cursor.
+// The shared container sees only the codec's opaque bytes.
+class StoredAudio : public Node {
+public:
+  StoredAudio(Graph& graph, std::vector<std::byte> samples)
+      : Node(graph), samples_(std::move(samples)) {
+    output = addOutput(PortType::audio(1), "out");
+  }
+  const std::vector<std::byte>& content() const { return samples_; }
+  void prepare(const PrepareInfo&) override { cursor_ = 0; }
+  void process(ProcessContext& ctx) override {
+    auto* outputSamples = ctx.audioOut(output).channels[0];
+    for (std::uint32_t f = 0; f < ctx.numFrames(); ++f)
+      outputSamples[f] = cursor_ < samples_.size()
+          ? (std::to_integer<int>(samples_[cursor_++]) - 128) / 128.0f : 0;
+  }
+  PortId output;
+private:
+  std::vector<std::byte> samples_;
+  std::size_t cursor_ = 0;
+};
+}
+
+namespace {
+struct GraphFiles {
+  std::filesystem::path directory = std::filesystem::temp_directory_path() /
+      ("modular-persistence-" + std::to_string(
+          std::chrono::steady_clock::now().time_since_epoch().count()));
+  GraphFiles() { std::filesystem::create_directory(directory); }
+  ~GraphFiles() {
+    std::error_code error;
+    std::filesystem::remove_all(directory, error);
+  }
+};
+}
+
+TEST_CASE("the shared container preserves a nodes stored audio independently of its cursor") {
+  const NodeCodec codec{"test.stored-audio/1",
+      [](const Node& n) { return typeid(n) == typeid(StoredAudio); },
+      [](const Node& n) { return NodeContent{"", static_cast<const StoredAudio&>(n).content()}; },
+      [](Graph& g, NodeId id, const NodePorts& ports, const NodeContent& content) {
+        return g.restoreNode<StoredAudio>(id, ports, content.stored);
+      }};
+  std::vector<NodeCodec> codecs(primitiveCodecs().begin(), primitiveCodecs().end());
+  codecs.push_back(codec);
+  Workspace authored;
+  const auto id = authored.graph().addNode<StoredAudio>(std::vector<std::byte>{
+      std::byte{0}, std::byte{64}, std::byte{128}, std::byte{192}, std::byte{255}});
+  std::stringstream saved;
+  {
+    Engine engine(authored.graph(), 48000, 3);
+    engine.process(3);
+    saveGraph(authored, saved, codecs);
+  }
+  const auto serialized = saved.str();
+  for (const std::uint32_t block : {3u, 17u}) {
+    std::istringstream file(serialized);
+    auto reopened = openGraph(file, codecs);
+    auto& graph = reopened.graph();
+    const auto sinkId = graph.addNode<CaptureSinkNode>(1);
+    auto& sink = static_cast<CaptureSinkNode&>(graph.node(sinkId));
+    graph.connect(id, static_cast<StoredAudio&>(graph.node(id)).output, sinkId, sink.in());
+    Engine engine(graph, 48000, block);
+    while (engine.streamTime() < 7)
+      engine.process(static_cast<std::uint32_t>(
+          std::min<std::uint64_t>(block, 7 - engine.streamTime())));
+    CHECK(sink.samples() == std::vector<float>{-1, -0.5f, 0, 0.5f, 127 / 128.0f, 0, 0});
+  }
+}
+
+TEST_CASE("shared file save replaces complete graphs at Unicode paths and retains files on failure") {
+  GraphFiles files;
+  const auto path = files.directory / std::filesystem::path(u8"作曲-é.modular");
+  Workspace workspace;
+  const auto id = workspace.graph().addNode<ConstFloatNode>(0.25f);
+  saveGraphFile(workspace, path, primitiveCodecs());
+  auto loaded = openGraphFile(path, primitiveCodecs());
+  CHECK(static_cast<ConstFloatNode&>(loaded.graph().node(id)).constant() == 0.25f);
+  static_cast<ConstFloatNode&>(workspace.graph().node(id)).setConstant(0.5f);
+  saveGraphFile(workspace, path, primitiveCodecs());
+  loaded = openGraphFile(path, primitiveCodecs());
+  CHECK(static_cast<ConstFloatNode&>(loaded.graph().node(id)).constant() == 0.5f);
+  workspace.graph().addNode<TriggerAtNode>(0);
+  CHECK_THROWS_AS(saveGraphFile(workspace, path, primitiveCodecs()), std::invalid_argument);
+  loaded = openGraphFile(path, primitiveCodecs());
+  CHECK(loaded.graph().nodeCount() == 1);
+  CHECK_THROWS_AS(openGraphFile(files.directory / "missing", primitiveCodecs()),
+                  std::invalid_argument);
+  CHECK_THROWS_AS(saveGraphFile(loaded, files.directory, primitiveCodecs()),
+                  std::invalid_argument);
+  CHECK(std::distance(std::filesystem::directory_iterator(files.directory),
+                       std::filesystem::directory_iterator{}) == 1);
+}
+
+TEST_CASE("open rejects corrupt identities ports settings content and references without replacement") {
+  const std::string valid =
+      "MODULAR_GRAPH 1\nNEXT 99\nNODES 2\n"
+      "NODE 2 \"modular.const-float/1\"\nSETTINGS \"0.5\"\nCONTENT \"\"\n"
+      "POSITION 0 0\nINPUTS 0\nOUTPUTS 1\nPORT 1 1 3 \"value\"\n"
+      "NODE 6 \"modular.gain/1\"\nSETTINGS \"1\"\nCONTENT \"\"\n"
+      "POSITION -17 31\nINPUTS 2\nPORT 3 0 1 \"in\"\nPORT 4 1 3 \"gain\"\n"
+      "OUTPUTS 1\nPORT 5 0 1 \"out\"\nWIRES 1\nWIRE 2 1 6 4\nEND\n";
+  std::istringstream original(valid);
+  auto current = openGraph(original, primitiveCodecs());
+  for (const auto& [before, after] : std::vector<std::pair<std::string, std::string>>{
+       {"MODULAR_GRAPH 1", "MODULAR_GRAPH 2"},
+       {"modular.const-float/1", "unknown/1"},
+       {"NEXT 99", "NEXT 6"}, {"NEXT 99", "NEXT 0"},
+       {"NEXT 99", "NEXT 4294967297"}, {"NODES 2", "NODES -1"},
+       {"NODE 6", "NODE 2"}, {"PORT 3 0 1", "PORT 1 0 1"},
+       {"PORT 3 0 1", "PORT 6 0 1"}, {"PORT 1 1 3", "PORT 0 1 1"},
+       {"PORT 1 1 3", "PORT 1 7 1"}, {"PORT 1 1 3", "PORT 1 0 1"},
+       {"INPUTS 2\nPORT 3 0 1 \"in\"", "INPUTS 1"},
+       {"SETTINGS \"0.5\"", "SETTINGS \"nan\""},
+       {"SETTINGS \"1\"", "SETTINGS \"0\""},
+       {"SETTINGS \"1\"", "SETTINGS \"1 junk\""},
+       {"CONTENT \"\"", "CONTENT \"01\""}, {"CONTENT \"\"", "CONTENT \"0z\""},
+       {"CONTENT \"\"", "CONTENT \"0\""}, {"POSITION 0 0", "POSITION nan 0"},
+       {"WIRE 2 1 6 4", "WIRE 2 1 66 4"}, {"WIRE 2 1 6 4", "WIRE 2 1 6 3"},
+       {"WIRES 1", "WIRES 2\nWIRE 2 1 6 4"}, {"END", "END junk"}, {"END", ""}}) {
+    auto corrupt = valid;
+    const auto at = corrupt.find(before);
+    REQUIRE(at != std::string::npos);
+    corrupt.replace(at, before.size(), after);
+    std::istringstream input(corrupt);
+    INFO(before, " -> ", after);
+    CHECK_THROWS_AS(current = openGraph(input, primitiveCodecs()), std::invalid_argument);
+    CHECK(current.graph().nodeCount() == 2);
+    CHECK(static_cast<ConstFloatNode&>(current.graph().node(2)).constant() == 0.5f);
+  }
+  const auto next = current.graph().addNode<ConstFloatNode>(1.0f);
+  CHECK(next == 100);
+}
+
+TEST_CASE("save rejects unsupported and nested content without emitting a partial graph") {
+  Workspace workspace;
+  workspace.graph().addNode<ConstFloatNode>(1.0f);
+  workspace.graph().addNode<TriggerAtNode>(0);
+  std::ostringstream output;
+  CHECK_THROWS_AS(saveGraph(workspace, output, primitiveCodecs()), std::invalid_argument);
+  CHECK(output.str().empty());
+  Workspace nested;
+  nested.graph().addNode<Supernode>();
+  CHECK_THROWS_AS(saveGraph(nested, output, primitiveCodecs()), std::invalid_argument);
+  CHECK(output.str().empty());
+  Workspace inner;
+  inner.graph().addNode<MixNode>(2, 1);
+  CHECK_NOTHROW(saveGraph(inner, output, primitiveCodecs()));
+}
+
+TEST_CASE("an exhausted saved identity source never wraps or reuses a deleted identity") {
+  std::istringstream input("MODULAR_GRAPH 1\nNEXT 4294967296\nNODES 0\nWIRES 0\nEND\n");
+  auto loaded = openGraph(input, primitiveCodecs());
+  CHECK_THROWS_AS(loaded.graph().addNode<ConstFloatNode>(1.0f), std::invalid_argument);
+  CHECK(loaded.graph().nodeCount() == 0);
+}
+
+TEST_CASE("mixer growth from a nearly exhausted saved graph fails before changing its configuration") {
+  std::istringstream input(
+      "MODULAR_GRAPH 1\nNEXT 4294967295\nNODES 1\n"
+      "NODE 4 \"modular.mix/1\"\nSETTINGS \"1\"\nCONTENT \"\"\nPOSITION 48 50\n"
+      "INPUTS 2\nPORT 1 0 1 \"in0\"\nPORT 2 0 1 \"in1\"\n"
+      "OUTPUTS 1\nPORT 3 0 1 \"out\"\nWIRES 0\nEND\n");
+  auto loaded = openGraph(input, primitiveCodecs());
+  auto& mix = static_cast<MixNode&>(loaded.graph().node(4));
+  CHECK_THROWS_AS(mix.configure(loaded.graph(), 4, 4, 2), std::invalid_argument);
+  CHECK(mix.inputCount() == 2);
+  CHECK(mix.channels() == 1);
+  for (const auto& port : mix.inputs()) CHECK(port.type == PortType::audio(1));
+  CHECK(mix.outputs()[0].type == PortType::audio(1));
+  // A smaller valid edit still gets the last available identity, proving the
+  // rejected request did not consume identities or partially change port types.
+  mix.configure(loaded.graph(), 4, 3, 1);
+  CHECK(mix.in(2) == std::numeric_limits<PortId>::max());
+  for (const auto& port : mix.inputs()) CHECK(port.type == PortType::audio(1));
+  CHECK(mix.outputs()[0].type == PortType::audio(1));
+  std::stringstream saved;
+  CHECK_NOTHROW(saveGraph(loaded, saved, primitiveCodecs()));
+  CHECK_NOTHROW(openGraph(saved, primitiveCodecs()));
+}
+
+TEST_CASE("a client can run and release a graph on a worker before editing and running again") {
+  Workspace workspace;
+  auto& graph = workspace.graph();
+  const auto gain = graph.addNode<GainNode>(1);
+  auto& node = static_cast<GainNode&>(graph.node(gain));
+  GraphExecution execution;
+  const auto waitFor = [&](GraphExecution::State expected) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (execution.state() != expected && std::chrono::steady_clock::now() < deadline)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    REQUIRE(execution.state() == expected);
+  };
+  for (int run = 0; run < 2; ++run) {
+    execution.start(graph, 48000, 127);
+    waitFor(GraphExecution::State::Running);
+    workspace.setPosition(gain, {101, 173});
+    execution.stop();
+    waitFor(GraphExecution::State::Idle);
+    node.setChannels(graph, gain, 2);
+  }
+  graph.connect(gain, node.out(), gain, node.in());
+  execution.start(graph, 48000, 127);
+  waitFor(GraphExecution::State::Failed);
+  CHECK(execution.errorMessage().find("cycle") != std::string::npos);
+  graph.disconnect(gain, node.in());
+  execution.start(graph, 48000, 127);
+  waitFor(GraphExecution::State::Running);
+  execution.stop();
+  waitFor(GraphExecution::State::Idle);
+}
+
+namespace {
+class FailedBoundary : public Node {
+public:
+  explicit FailedBoundary(Graph& graph) : Node(graph) {}
+  void process(ProcessContext&) override { failed_ = true; }
+  std::string errorMessage() const override { return failed_ ? "boundary: unavailable" : ""; }
+private:
+  bool failed_ = false;
+};
+}
+
+TEST_CASE("a worker reports a processing boundary failure and releases execution") {
+  Graph graph;
+  graph.addNode<FailedBoundary>();
+  GraphExecution execution;
+  execution.start(graph);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (execution.active() && std::chrono::steady_clock::now() < deadline)
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  CHECK(execution.state() == GraphExecution::State::Failed);
+  CHECK(execution.errorMessage() == "boundary: unavailable");
+}
+
+namespace {
+class SteadySignal : public Node {
+public:
+  SteadySignal(Graph& graph, std::uint32_t channels) : Node(graph) {
+    output_ = addOutput(PortType::audio(channels), "out");
+  }
+  PortId out() const { return output_; }
+  void process(ProcessContext& ctx) override {
+    const auto output = ctx.audioOut(output_);
+    for (std::uint32_t c = 0; c < output.numChannels; ++c)
+      for (std::uint32_t f = 0; f < ctx.numFrames(); ++f) output.channels[c][f] = 0.25f;
+  }
+private:
+  PortId output_ = kNoPort;
+};
+
+class ValueCapture : public Node {
+public:
+  explicit ValueCapture(Graph& graph) : Node(graph) {
+    input_ = addInput(PortType::value(subtype::Float), "in");
+  }
+  PortId in() const { return input_; }
+  float observed = 0;
+  void process(ProcessContext& ctx) override {
+    observed = ctx.valueIn(input_).valueAt<float>(0);
+  }
+private:
+  PortId input_ = kNoPort;
+};
+} // namespace
+
+namespace {
+class MidiLog : public Node {
+public:
+  using Record = std::tuple<std::uint64_t, int, int, int>;
+  explicit MidiLog(Graph& graph) : Node(graph) {
+    input = addInput(PortType::event(subtype::Midi), "in");
+  }
+  void process(ProcessContext& ctx) override {
+    for (const auto& event : ctx.eventsIn(input)) {
+      const auto message = event.as<MidiMsg>();
+      records.emplace_back(ctx.blockStartFrame() + event.offset,
+                           message.status, message.data1, message.data2);
+    }
+  }
+  PortId input;
+  std::vector<Record> records;
+};
+}
+
+TEST_CASE("saved MIDI file content plays independently of its removed import source") {
+  GraphFiles files;
+  const auto imported = files.directory / "import.mid";
+  std::filesystem::copy_file(std::filesystem::path(MODULAR_TEST_FIXTURES) / "one-note.mid",
+                             imported);
+  Workspace authored;
+  const auto id = authored.graph().addNode<MidiFileNode>(imported);
+  const auto saved = files.directory / "owned.modular";
+  saveGraphFile(authored, saved, primitiveCodecs());
+  REQUIRE(std::filesystem::remove(imported));
+  for (const auto rate : {8000.0, 44100.0}) {
+    for (const std::uint32_t block : {17u, 127u, 512u}) {
+      auto restored = openGraphFile(saved, primitiveCodecs());
+      auto& graph = restored.graph();
+      auto& midi = static_cast<MidiFileNode&>(graph.node(id));
+      REQUIRE(midi.ready());
+      const auto start = graph.addNode<TriggerAtNode>(101);
+      const auto logId = graph.addNode<MidiLog>();
+      auto& log = static_cast<MidiLog&>(graph.node(logId));
+      graph.connect(start, static_cast<TriggerAtNode&>(graph.node(start)).trigger(),
+                    id, midi.trigger());
+      graph.connect(id, midi.midi(), logId, log.input);
+      Engine engine(graph, rate, block);
+      const auto horizon = static_cast<std::uint64_t>(rate) + 137;
+      while (engine.streamTime() < horizon)
+        engine.process(static_cast<std::uint32_t>(
+            std::min<std::uint64_t>(block, horizon - engine.streamTime())));
+      CHECK(log.records == std::vector<MidiLog::Record>{
+          {101, 0x90, 60, 100},
+          {101 + static_cast<std::uint64_t>(rate / 2), 0x90, 60, 0}});
+    }
+  }
+}
+
+namespace {
+struct PlaybackGraph {
+  Workspace workspace;
+  NodeId start, stop, midi, allocator, mix, gain;
+  explicit PlaybackGraph(std::optional<MidiFile> file = {}) {
+    auto& graph = workspace.graph();
+    start = graph.addNode<ManualTriggerNode>();
+    stop = graph.addNode<ManualTriggerNode>(ManualTriggerNode::Label::Stop);
+    midi = file ? graph.addNode<MidiFileNode>(std::move(*file))
+        : graph.addNode<MidiBlockNode>(std::vector<MidiBlockNode::Entry>{
+        {7, {0x90, 60, 100}}, {11, {0xb3, 7, 90}}, {13, {0x91, 64, 80}},
+        {181, {0x80, 60, 0}}, {233, {0x81, 64, 0}}});
+    allocator = graph.addNode<VoiceAllocatorNode>(3);
+    auto& voices = static_cast<VoiceAllocatorNode&>(graph.node(allocator));
+    graph.removePort(allocator, voices.voice(1)); // retain private IDs across a gap
+    mix = graph.addNode<MixNode>(2, 1);
+    auto& mixer = static_cast<MixNode&>(graph.node(mix));
+    for (std::uint32_t i = 0; i < 2; ++i) {
+      const auto synth = graph.addNode<SineSynthNode>();
+      auto& node = static_cast<SineSynthNode&>(graph.node(synth));
+      graph.connect(allocator, voices.voice(i), synth, node.midiIn());
+      graph.connect(synth, node.out(), mix, mixer.in(i));
+    }
+    auto& block = static_cast<MidiBlockNode&>(graph.node(midi));
+    graph.connect(start, static_cast<ManualTriggerNode&>(graph.node(start)).trigger(),
+                  midi, block.trigger());
+    graph.connect(stop, static_cast<ManualTriggerNode&>(graph.node(stop)).trigger(),
+                  midi, block.stop());
+    graph.connect(midi, block.midi(), allocator, voices.midiIn());
+    gain = graph.addNode<GainNode>(1);
+    auto& level = static_cast<GainNode&>(graph.node(gain));
+    const auto constant = graph.addNode<ConstFloatNode>(0.375f);
+    graph.connect(constant, static_cast<ConstFloatNode&>(graph.node(constant)).value(),
+                  gain, level.gain());
+    graph.connect(mix, mixer.out(), gain, level.in());
+    workspace.setPosition(midi, {137.25, -81.5});
+    const auto deleted = graph.addNode<ManualTriggerNode>();
+    graph.removeNode(deleted);
+  }
+};
+
+struct PlaybackResult {
+  std::vector<float> samples;
+  std::vector<MidiLog::Record> events;
+  friend bool operator==(const PlaybackResult&, const PlaybackResult&) = default;
+};
+
+PlaybackResult renderPlayback(Workspace& workspace, const PlaybackGraph& ids,
+                              std::uint32_t block, bool signal = true) {
+  auto& graph = workspace.graph();
+  const auto sinkId = graph.addNode<CaptureSinkNode>(1);
+  auto& sink = static_cast<CaptureSinkNode&>(graph.node(sinkId));
+  graph.connect(ids.gain, static_cast<GainNode&>(graph.node(ids.gain)).out(),
+                sinkId, sink.in());
+  const auto logId = graph.addNode<MidiLog>();
+  auto& log = static_cast<MidiLog&>(graph.node(logId));
+  graph.connect(ids.midi, static_cast<MidiBlockNode&>(graph.node(ids.midi)).midi(),
+                logId, log.input);
+  Engine engine(graph, 48000, block);
+  // Explicit input frames are independent of dispatch size, including restart
+  // while notes are held and Stop before the sequence's natural completion.
+  for (const std::uint64_t boundary : {101u, 149u, 317u, 701u}) {
+    while (engine.streamTime() < boundary)
+      engine.process(static_cast<std::uint32_t>(
+          std::min<std::uint64_t>(block, boundary - engine.streamTime())));
+    if (signal && boundary != 701)
+      static_cast<ManualTriggerNode&>(graph.node(
+          boundary == 317 ? ids.stop : ids.start)).press();
+  }
+  return {sink.samples(), log.records};
+}
+}
+
+TEST_CASE("a reopened playback graph preserves sound identities and configuration but no activity") {
+  PlaybackGraph authored;
+  auto& graph = authored.workspace.graph();
+  std::stringstream before;
+  saveGraph(authored.workspace, before, primitiveCodecs());
+  std::stringstream active;
+  {
+    Engine engine(graph, 48000, 17);
+    static_cast<ManualTriggerNode&>(graph.node(authored.start)).press();
+    engine.process(17); // both voices sounding, with scheduled events still ahead
+    static_cast<ManualTriggerNode&>(graph.node(authored.stop)).press(); // pending control
+    saveGraph(authored.workspace, active, primitiveCodecs());
+  }
+  CHECK(active.str() == before.str());
+  auto idle = openGraph(active, primitiveCodecs());
+  CHECK(idle.graph().nodeIds() == graph.nodeIds());
+  CHECK(idle.graph().nextIdentity() == graph.nextIdentity());
+  CHECK(idle.position(authored.midi) == NodePosition{137.25, -81.5});
+  std::stringstream resaved;
+  saveGraph(idle, resaved, primitiveCodecs());
+  CHECK(resaved.str() == before.str()); // includes ordered wires, names and port IDs
+  auto& voices = static_cast<VoiceAllocatorNode&>(idle.graph().node(authored.allocator));
+  CHECK(voices.voiceCount() == 2);
+  CHECK(static_cast<ManualTriggerNode&>(idle.graph().node(authored.stop)).label() ==
+        ManualTriggerNode::Label::Stop);
+  const auto silent = renderPlayback(idle, authored, 127, false);
+  CHECK(silent.events.empty());
+  CHECK(std::all_of(silent.samples.begin(), silent.samples.end(),
+                    [](float sample) { return sample == 0; }));
+
+  PlaybackGraph reference;
+  const auto expected = renderPlayback(reference.workspace, reference, 17);
+  REQUIRE(!expected.events.empty());
+  REQUIRE(std::any_of(expected.samples.begin(), expected.samples.end(),
+                      [](float sample) { return sample != 0; }));
+  for (const std::uint32_t block : {17u, 127u, 512u}) {
+    std::istringstream saved(before.str());
+    auto reopened = openGraph(saved, primitiveCodecs());
+    CHECK(renderPlayback(reopened, authored, block) == expected);
+  }
+}
+
+TEST_CASE("saved parsed MIDI preserves tempo timing channel messages tails and sample-rate preparation") {
+  // Format 1, 500 PPQ: two simultaneous notes, all channel-message shapes,
+  // running status, skipped SysEx and a tempo change at tick 3.
+  const std::vector<std::uint8_t> bytes{
+      'M','T','h','d', 0,0,0,6, 0,1, 0,2, 1,244,
+      'M','T','r','k', 0,0,0,18,
+      0,255,81,3,7,161,32, 3,255,81,3,15,66,64, 7,255,47,0,
+      'M','T','r','k', 0,0,0,36,
+      1,0x90,60,100, 0,0x91,64,80, 0,0xc3,9, 0,10,
+      0,0xd3,12, 0,0xb3,7,90, 0,0xa3,60,45, 0,0xe3,1,64,
+      2,0xf0,1,0xf7, 7,0xff,0x2f,0};
+  const auto file = MidiFile::parse(bytes);
+  CHECK(file.skippedSysExEvents() == 1);
+  CHECK(file.durationSeconds() == doctest::Approx(0.017));
+  PlaybackGraph authored(file);
+  std::stringstream before;
+  saveGraph(authored.workspace, before, primitiveCodecs());
+  for (const auto rate : {44100.0, 96000.0}) {
+    std::istringstream input(before.str());
+    auto running = openGraph(input, primitiveCodecs());
+    {
+      Engine engine(running.graph(), rate, 127);
+      static_cast<ManualTriggerNode&>(running.graph().node(authored.start)).press();
+      engine.process(127);
+      std::stringstream active;
+      saveGraph(running, active, primitiveCodecs());
+      CHECK(active.str() == before.str());
+    }
+  }
+  PlaybackGraph reference(file);
+  const auto expected = renderPlayback(reference.workspace, reference, 17);
+  REQUIRE(expected.events.size() > 8);
+  // Start at 149 replaces the earlier sequence's event due at that instant.
+  CHECK(expected.events.front() == MidiLog::Record{197, 0x90, 60, 100});
+  for (const auto block : {17u, 127u, 512u}) {
+    std::istringstream input(before.str());
+    auto reopened = openGraph(input, primitiveCodecs());
+    CHECK(renderPlayback(reopened, authored, block) == expected);
+  }
+}
+
+namespace {
+std::string contentHex(const std::string& text) {
+  constexpr char kDigits[] = "0123456789abcdef";
+  std::string result;
+  for (const unsigned char c : text) {
+    result += kDigits[c >> 4];
+    result += kDigits[c & 15];
+  }
+  return result;
+}
+}
+
+TEST_CASE("malformed stored MIDI is rejected without replacing the current authored graph") {
+  const auto encoded = [](const std::string& kind, const std::string& settings,
+                          const std::string& content) {
+    return "MODULAR_GRAPH 1\nNEXT 5\nNODES 1\nNODE 4 \"modular." + kind +
+        "/1\"\nSETTINGS \"" + settings + "\"\nCONTENT \"" + contentHex(content) +
+        "\"\nPOSITION 0 0\nINPUTS 2\nPORT 1 2 1 \"start\"\n"
+        "PORT 2 2 1 \"stop\"\nOUTPUTS 1\nPORT 3 2 2 \"midi\"\nWIRES 0\nEND\n";
+  };
+  Workspace current;
+  const auto id = current.graph().addNode<ConstFloatNode>(0.625f);
+  for (const auto& content : {
+       "-1 0 0", "nan 0 0", "inf 0 0", "1 -1 0", "1 0 -1",
+       "1 0 999999999999", "1 0 1", "1 0 0 junk",
+       "1 0 1 nan 144 60 100", "1 0 1 -0.1 144 60 100", "1 0 1 2 144 60 100",
+       "1 0 2 0.5 144 60 100 0.25 128 60 0",
+       "1 0 1 0 256 60 100", "1 0 1 0 240 60 100", "1 0 1 0 127 60 100",
+       "1 0 1 0 144 128 100", "1 0 1 0 144 60 128", "1 0 1 0 192 9 1"}) {
+    INFO(content);
+    std::istringstream input(encoded("midi-file", "loaded", content));
+    CHECK_THROWS_AS(current = openGraph(input, primitiveCodecs()), std::invalid_argument);
+    CHECK(current.graph().nodeIds() == std::vector<NodeId>{id});
+    CHECK(static_cast<ConstFloatNode&>(current.graph().node(id)).constant() == 0.625f);
+  }
+  for (const auto& content : {"-1", "99999999999", "1 -1 144 60 100",
+       "1 18446744073709551616 144 60 100", "2 7 144 60 100 6 128 60 0",
+       "1 7 144 128 100", "0 junk"}) {
+    std::istringstream input(encoded("midi-block", "", content));
+    CHECK_THROWS_AS(current = openGraph(input, primitiveCodecs()), std::invalid_argument);
+    CHECK(current.graph().nodeIds() == std::vector<NodeId>{id});
+  }
+  for (const auto& settings : {"empty", "missing", "loaded/2"}) {
+    std::istringstream input(encoded("midi-file", settings, "1 0 0"));
+    CHECK_THROWS_AS(openGraph(input, primitiveCodecs()), std::invalid_argument);
+  }
+}
+
+TEST_CASE("an unready MIDI import can be reopened and repaired and failed replacement keeps content") {
+  Workspace authored;
+  const auto id = authored.graph().addNode<MidiFileNode>();
+  auto& midi = static_cast<MidiFileNode&>(authored.graph().node(id));
+  CHECK_THROWS_AS(midi.import("missing.mid"), std::invalid_argument);
+  CHECK(!midi.ready());
+  CHECK(!midi.importError().empty());
+  std::stringstream saved;
+  saveGraph(authored, saved, primitiveCodecs());
+  auto repaired = openGraph(saved, primitiveCodecs());
+  auto& node = static_cast<MidiFileNode&>(repaired.graph().node(id));
+  CHECK(!node.ready());
+  CHECK_THROWS_AS(Engine(repaired.graph(), 48000, 17), std::invalid_argument);
+  node.import(std::filesystem::path(MODULAR_TEST_FIXTURES) / "one-note.mid");
+  CHECK(node.ready());
+  std::stringstream before;
+  saveGraph(repaired, before, primitiveCodecs());
+  CHECK_THROWS_AS(node.import("missing.mid"), std::invalid_argument);
+  CHECK(node.ready());
+  std::stringstream after;
+  saveGraph(repaired, after, primitiveCodecs());
+  CHECK(after.str() == before.str());
+  CHECK_NOTHROW(Engine(repaired.graph(), 48000, 17));
+}
+
+#ifdef _WIN32
+TEST_CASE("saved Windows output settings restore without opening or requiring a device") {
+  Workspace authored;
+  const auto id = authored.graph().addNode<AudioOutputNode>(2);
+  std::stringstream file;
+  saveGraph(authored, file, primitiveCodecs());
+  auto loaded = openGraph(file, primitiveCodecs());
+  auto& output = static_cast<AudioOutputNode&>(loaded.graph().node(id));
+  CHECK(output.channels() == 2);
+  CHECK(output.inputs()[0].id == authored.graph().node(id).inputs()[0].id);
+  CHECK(output.errorMessage().empty());
+  output.setChannels(loaded.graph(), id, 1);
+  std::stringstream mono;
+  saveGraph(loaded, mono, primitiveCodecs());
+  auto reopened = openGraph(mono, primitiveCodecs());
+  CHECK(static_cast<AudioOutputNode&>(reopened.graph().node(id)).channels() == 1);
+}
+#endif
+
+TEST_CASE("explicit deletion removes only the selected node and its attached wires") {
+  Workspace workspace;
+  Graph& graph = workspace.graph();
+  const auto constant = graph.addNode<ConstFloatNode>(0.5f);
+  const auto gain = graph.addNode<GainNode>(1);
+  const auto other = graph.addNode<GainNode>(1);
+  const auto mix = graph.addNode<MixNode>(2, 1);
+  const auto& source = static_cast<const ConstFloatNode&>(graph.node(constant));
+  const auto& level = static_cast<const GainNode&>(graph.node(gain));
+  const auto& survivor = static_cast<const GainNode&>(graph.node(other));
+  const auto& mixer = static_cast<const MixNode&>(graph.node(mix));
+  const auto oldOutput = level.out();
+  graph.connect(constant, source.value(), gain, level.gain());
+  graph.connect(constant, source.value(), other, survivor.gain());
+  graph.connect(gain, level.out(), mix, mixer.in(0));
+  graph.connect(gain, level.out(), mix, mixer.in(1));
+  workspace.setPosition(gain, {37, 59});
+  workspace.setPosition(other, {401, 103});
+
+  CHECK_THROWS_AS(graph.removeNode(gain), std::invalid_argument);
+  CHECK_THROWS_AS(graph.removePort(gain, oldOutput), std::invalid_argument);
+  workspace.deleteNodeWithConnections(gain);
+  CHECK(graph.nodeIds() == std::vector<NodeId>{constant, other, mix});
+  REQUIRE(graph.connections().size() == 1);
+  CHECK(graph.connections()[0].dstNode == other);
+  CHECK(graph.connections()[0].dstPort == survivor.gain());
+  CHECK(workspace.position(other) == NodePosition{401, 103});
+  CHECK_THROWS_AS(workspace.position(gain), std::invalid_argument);
+  CHECK_THROWS_AS(workspace.deleteNodeWithConnections(gain), std::invalid_argument);
+  const auto replacement = graph.addNode<GainNode>(1);
+  CHECK(replacement > mix);
+  CHECK(static_cast<const GainNode&>(graph.node(replacement)).out() > oldOutput);
+}
+
+TEST_CASE("editing a wired constant preserves identity and changes its rendered value") {
+  Graph graph;
+  const auto id = graph.addNode<ConstFloatNode>(0.5f);
+  auto& constant = static_cast<ConstFloatNode&>(graph.node(id));
+  const auto sinkId = graph.addNode<ValueCapture>();
+  auto& sink = static_cast<ValueCapture&>(graph.node(sinkId));
+  const auto port = constant.value();
+  graph.connect(id, port, sinkId, sink.in());
+  constant.setConstant(-0.25f);
+  CHECK(constant.constant() == -0.25f);
+  CHECK(constant.value() == port);
+  CHECK_THROWS_AS(constant.setConstant(std::numeric_limits<float>::infinity()),
+                  std::invalid_argument);
+  CHECK(constant.constant() == -0.25f);
+  Engine engine(graph, 48000, 17);
+  engine.process(13);
+  CHECK(sink.observed == -0.25f);
+}
+
+TEST_CASE("channel edits preserve ports and reject incompatible wires without partial changes") {
+  Graph graph;
+  const auto id = graph.addNode<GainNode>(1);
+  auto& gain = static_cast<GainNode&>(graph.node(id));
+  const auto input = gain.in(), output = gain.out(), control = gain.gain();
+  const auto constant = graph.addNode<ConstFloatNode>(0.5f);
+  graph.connect(constant, static_cast<ConstFloatNode&>(graph.node(constant)).value(),
+                id, control);
+  gain.setChannels(graph, id, 2);
+  CHECK(gain.channels() == 2);
+  CHECK(gain.in() == input);
+  CHECK(gain.out() == output);
+  CHECK(gain.gain() == control);
+  CHECK(gain.inputs()[0].type == PortType::audio(2));
+  CHECK(gain.outputs()[0].type == PortType::audio(2));
+  const auto sinkId = graph.addNode<CaptureSinkNode>(2);
+  auto& sink = static_cast<CaptureSinkNode&>(graph.node(sinkId));
+  graph.connect(id, output, sinkId, sink.in());
+  CHECK_THROWS_AS(gain.setChannels(graph, id, 1), std::invalid_argument);
+  CHECK_THROWS_AS(gain.setChannels(graph, id, 0), std::invalid_argument);
+  CHECK_THROWS_AS(gain.setChannels(graph, constant, 1), std::invalid_argument);
+  CHECK(gain.channels() == 2);
+  CHECK(gain.inputs()[0].type == PortType::audio(2));
+  CHECK(gain.outputs()[0].type == PortType::audio(2));
+  CHECK(graph.connections().size() == 2);
+  CHECK_NOTHROW(gain.setChannels(graph, id, 2));
+  const auto source = graph.addNode<SteadySignal>(2);
+  graph.connect(source, static_cast<const SteadySignal&>(graph.node(source)).out(),
+                id, input);
+  Engine engine(graph, 48000, 17);
+  engine.process(13);
+  CHECK(sink.samples() == std::vector<float>(26, 0.125f));
+}
+
+TEST_CASE("mixer edits retain surviving ports and reject removal of a wired input atomically") {
+  Graph graph;
+  const auto id = graph.addNode<MixNode>(3, 1);
+  auto& mix = static_cast<MixNode&>(graph.node(id));
+  const auto first = mix.in(0), second = mix.in(1), third = mix.in(2);
+  const auto output = mix.out();
+  const auto sourceId = graph.addNode<GainNode>(1);
+  auto& source = static_cast<GainNode&>(graph.node(sourceId));
+  graph.connect(sourceId, source.out(), id, third);
+  CHECK_THROWS_AS(mix.configure(graph, id, 1, 2), std::invalid_argument);
+  CHECK(mix.inputCount() == 3);
+  CHECK(mix.channels() == 1);
+  CHECK(mix.in(0) == first);
+  CHECK(mix.in(1) == second);
+  CHECK(mix.in(2) == third);
+  CHECK(mix.out() == output);
+  REQUIRE(graph.connections().size() == 1);
+  CHECK(graph.connections()[0].dstPort == third);
+
+  mix.configure(graph, id, 4, 1);
+  const auto fourth = mix.in(3);
+  CHECK(fourth > sourceId);
+  CHECK(mix.in(2) == third);
+  graph.disconnect(id, third);
+  mix.configure(graph, id, 1, 2);
+  CHECK(mix.inputCount() == 1);
+  CHECK(mix.channels() == 2);
+  CHECK(mix.in(0) == first);
+  CHECK(mix.out() == output);
+  CHECK(mix.inputs()[0].type == PortType::audio(2));
+  CHECK(mix.outputs()[0].type == PortType::audio(2));
+  mix.configure(graph, id, 2, 2);
+  CHECK(mix.in(1) > fourth);
+  CHECK_THROWS_AS(graph.connect(sourceId, source.out(), id, third),
+                  std::invalid_argument);
+  CHECK_THROWS_AS(mix.configure(graph, id, 0, 2), std::invalid_argument);
+  CHECK_THROWS_AS(mix.configure(graph, id, 2, 0), std::invalid_argument);
+  CHECK(mix.inputCount() == 2);
+  const auto sinkId = graph.addNode<CaptureSinkNode>(2);
+  auto& sink = static_cast<CaptureSinkNode&>(graph.node(sinkId));
+  graph.connect(id, output, sinkId, sink.in());
+  const auto signal = graph.addNode<SteadySignal>(2);
+  const auto signalPort = static_cast<const SteadySignal&>(graph.node(signal)).out();
+  graph.connect(signal, signalPort, id, mix.in(0));
+  graph.connect(signal, signalPort, id, mix.in(1));
+  Engine engine(graph, 48000, 17);
+  engine.process(13);
+  CHECK(sink.samples() == std::vector<float>(26, 0.5f));
+}
+
+TEST_CASE("layout follows the authored graph through moves and does not change wiring") {
+  Workspace original;
+  const auto id = original.graph().addNode<ConstFloatNode>(0.5f);
+  CHECK(original.position(id) == NodePosition{});
+  original.setPosition(id, {-37, 101});
+  CHECK_THROWS_AS(original.setPosition(id, {0, std::numeric_limits<double>::quiet_NaN()}),
+                  std::invalid_argument);
+  Workspace moved = std::move(original);
+  CHECK(moved.graph().nodeIds() == std::vector<NodeId>{id});
+  CHECK(moved.position(id) == NodePosition{-37, 101});
+  const auto next = moved.graph().addNode<GainNode>(1);
+  CHECK(next > id);
+  CHECK(moved.position(next) == NodePosition{});
+  CHECK(moved.graph().connections().empty());
+}
+
+TEST_CASE("shared save and open preserve authored identities and later minting") {
+  Workspace source;
+  auto& graph = source.graph();
+  const auto deleted = graph.addNode<ConstFloatNode>(9.0f);
+  graph.removeNode(deleted);
+  const auto constant = graph.addNode<ConstFloatNode>(0.75f);
+  const auto gain = graph.addNode<GainNode>(2);
+  const auto mix = graph.addNode<MixNode>(3, 2);
+  auto& c = static_cast<ConstFloatNode&>(graph.node(constant));
+  auto& g = static_cast<GainNode&>(graph.node(gain));
+  auto& m = static_cast<MixNode&>(graph.node(mix));
+  const auto removedPort = m.in(1);
+  graph.removePort(mix, removedPort);
+  m.configure(graph, mix, 3, 2);
+  graph.connect(constant, c.value(), gain, g.gain());
+  graph.connect(gain, g.out(), mix, m.in(1));
+  source.setPosition(mix, {-37.5, 193.25});
+  const auto lastDeleted = graph.addNode<ConstFloatNode>(7.0f);
+  graph.removeNode(lastDeleted);
+
+  std::stringstream file;
+  saveGraph(source, file, primitiveCodecs());
+  auto loaded = openGraph(file, primitiveCodecs());
+  auto& restored = loaded.graph();
+  CHECK(restored.nodeIds() == graph.nodeIds());
+  CHECK(loaded.position(mix) == NodePosition{-37.5, 193.25});
+  for (const auto id : graph.nodeIds()) {
+    for (const auto input : {false, true}) {
+      const auto before = input ? graph.node(id).inputs() : graph.node(id).outputs();
+      const auto after = input ? restored.node(id).inputs() : restored.node(id).outputs();
+      REQUIRE(before.size() == after.size());
+      for (std::size_t i = 0; i < before.size(); ++i) {
+        CHECK(after[i].id == before[i].id);
+        CHECK(after[i].type == before[i].type);
+        CHECK(after[i].name == before[i].name);
+      }
+    }
+  }
+  REQUIRE(restored.connections().size() == 2);
+  CHECK(restored.connections()[0].srcNode == constant);
+  CHECK(restored.connections()[0].srcPort == c.value());
+  CHECK(restored.connections()[0].dstNode == gain);
+  CHECK(restored.connections()[0].dstPort == g.gain());
+  CHECK_THROWS_AS(restored.removeNode(gain), std::invalid_argument);
+  CHECK_THROWS_AS(restored.removePort(mix, removedPort), std::invalid_argument);
+  auto& loadedMix = static_cast<MixNode&>(restored.node(mix));
+  loadedMix.configure(restored, mix, 4, 2);
+  CHECK(loadedMix.in(3) > lastDeleted);
+
+  // Drive reconstructed private port references through real processing.
+  const auto signal = restored.addNode<SteadySignal>(2);
+  CHECK(signal > lastDeleted);
+  CHECK(static_cast<ConstFloatNode&>(restored.node(constant)).constant() == 0.75f);
+  CHECK(static_cast<GainNode&>(restored.node(gain)).channels() == 2);
+  const auto sink = restored.addNode<CaptureSinkNode>(2);
+  auto& loadedGain = static_cast<GainNode&>(restored.node(gain));
+  restored.connect(signal, static_cast<SteadySignal&>(restored.node(signal)).out(),
+                   gain, loadedGain.in());
+  auto& capture = static_cast<CaptureSinkNode&>(restored.node(sink));
+  restored.connect(mix, loadedMix.out(), sink, capture.in());
+  Engine engine(restored, 48000, 17);
+  engine.process(17);
+  REQUIRE(capture.samples().size() == 34);
+  for (const auto sample : capture.samples()) CHECK(sample == 0.1875f);
+}
+
+TEST_CASE("recording graphs reopen with owned MIDI and settings but no transient take") {
+  WavTestFiles files;
+  const auto imported = files.directory / "import.mid";
+  std::filesystem::copy_file(std::filesystem::path(MODULAR_TEST_FIXTURES) / "one-note.mid",
+                              imported);
+  Workspace workspace;
+  auto& graph = workspace.graph();
+  const auto start = graph.addNode<ManualTriggerNode>();
+  const auto stop = graph.addNode<ManualTriggerNode>(ManualTriggerNode::Label::Stop);
+  const auto midi = graph.addNode<MidiFileNode>(imported);
+  const auto synth = graph.addNode<SineSynthNode>();
+  const auto recorder = graph.addNode<WavRecorderNode>(files.directory / L"录音-é", "session");
+  auto& recording = static_cast<WavRecorderNode&>(graph.node(recorder));
+  auto& playback = static_cast<MidiFileNode&>(graph.node(midi));
+  auto& instrument = static_cast<SineSynthNode&>(graph.node(synth));
+  const auto trigger = [&](NodeId id) -> ManualTriggerNode& {
+    return static_cast<ManualTriggerNode&>(graph.node(id));
+  };
+  graph.connect(start, trigger(start).trigger(), midi, playback.trigger());
+  graph.connect(stop, trigger(stop).trigger(), midi, playback.stop());
+  graph.connect(midi, playback.midi(), synth, instrument.midiIn());
+  graph.connect(synth, instrument.out(), recorder, recording.in());
+  graph.connect(start, trigger(start).trigger(), recorder, recording.start());
+  graph.connect(stop, trigger(stop).trigger(), recorder, recording.stop());
+  workspace.setPosition(recorder, {437, -19});
+  const auto retired = graph.addNode<ConstFloatNode>(1.0f);
+  graph.removeNode(retired);
+  std::filesystem::remove(imported);
+  std::stringstream baseline;
+  saveGraph(workspace, baseline, primitiveCodecs());
+  {
+    Engine engine(graph, 48000, 127);
+    trigger(start).press(); engine.process(113);
+    CHECK(recording.state() == WavRecorderNode::State::Recording);
+    for (const bool failed : {false, true}) {
+      if (failed) {
+        trigger(stop).press(); engine.process(17);
+        CHECK(recording.state() == WavRecorderNode::State::Failed);
+      }
+      const auto file = files.directory / "recording.modular";
+      saveGraphFile(workspace, file, primitiveCodecs());
+      auto loaded = openGraphFile(file, primitiveCodecs());
+      auto& restored = loaded.graph();
+      auto& take = static_cast<WavRecorderNode&>(restored.node(recorder));
+      CHECK(take.state() == WavRecorderNode::State::Idle);
+      CHECK(take.directory() == files.directory / L"录音-é");
+      CHECK(take.prefix() == "session");
+      CHECK(take.channels() == 1);
+      CHECK(take.start() == recording.start());
+      CHECK(take.stop() == recording.stop());
+      CHECK(take.in() == recording.in());
+      CHECK(loaded.position(recorder) == NodePosition{437, -19});
+      CHECK(restored.nodeIds() == graph.nodeIds());
+      CHECK(restored.connections().size() == 6);
+      std::stringstream saved;
+      saveGraph(loaded, saved, primitiveCodecs());
+      CHECK(saved.str() == baseline.str());
+      CHECK(restored.addNode<ConstFloatNode>(1.0f) > retired);
+      std::filesystem::create_directory(take.directory());
+      Engine run(restored, 48000, 127);
+      run.process(113);
+      CHECK(take.state() == WavRecorderNode::State::Idle);
+      static_cast<ManualTriggerNode&>(restored.node(start)).press();
+      run.process(113);
+      static_cast<ManualTriggerNode&>(restored.node(stop)).press();
+      run.process(17);
+      const auto wav = readTestWav(take.directory() / "session-1.wav");
+      REQUIRE(wav.samples.size() == 113);
+      CHECK(std::any_of(wav.samples.begin(), wav.samples.end(),
+                       [](auto sample) { return sample != 0; }));
+      std::filesystem::remove(take.directory() / "session-1.wav");
+      std::filesystem::remove(take.directory());
+    }
+  }
+  CHECK(recording.state() == WavRecorderNode::State::Idle);
+}

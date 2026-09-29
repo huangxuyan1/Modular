@@ -1,0 +1,9 @@
+build/
+*.wav
+.DS_Store
+.vscode/
+compile_commands.json
+.cache/
+.claude/settings.local.json
+# Private MIDI investigation; redistribution rights have not been established.
+artifacts/midi-repair/
