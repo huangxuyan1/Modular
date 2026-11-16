@@ -1,12 +1,12 @@
 # Proposed public root tree
 
-Status: candidate for maintainer review; **not approved or staged**. Prepared
-2026-09-26 and refreshed 2026-09-28 from the current working tree, not from
-`HEAD`. This explicit list still contains 124 paths: 59 already tracked and 65
-newly proposed. The manifest itself is one of the proposed paths. The exact
-bytes to publish are the working-tree versions at approval time; any later edit
-requires rechecking this manifest and verification before staging. No root
-commit or remote publication is authorized by this document.
+Status: **approved and published.** The maintainer approved this exact 124-path
+tree on 2026-09-29. It is the parentless root commit `65e60dc` on public `main`
+at https://github.com/huangxuyan1/Modular, and ticket 02 records the evidence.
+The sections below are the pre-approval record, prepared 2026-09-26 and
+refreshed 2026-09-28 from the working tree rather than `HEAD`: 59 paths then
+tracked and 65 newly proposed, including this manifest. This manifest describes
+the root snapshot only and is not updated for later changes.
 
 ## Proposed files
 

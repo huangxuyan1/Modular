@@ -148,3 +148,14 @@ renewed approval for the *revised* exact root tree before staging a root commit.
 This approval does not authorize publication to a particular GitHub target or
 removal of old local branches. No staging, commit, history replacement, repository
 creation or push was performed in ticket 01.
+
+## Comments
+
+**2026-11-02: complete; its approval was consumed by ticket 02.** The renewed
+approval required above was given on 2026-09-29. After this ticket recorded the
+first approval, the revised tree was fingerprinted again in the same record
+format. The maintainer approved that revised tree, and it became the public root
+commit. [Ticket 02](02-single-root-public-main.md) records the new fingerprint,
+the publication and its evidence. The `ca8e6652...` fingerprint above predates this ticket's approval
+edit. It could not be reproduced on 2026-11-02 from `main`, `public-root-prep`
+or the working tree, and no current tree is expected to match it.
