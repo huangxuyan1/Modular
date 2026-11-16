@@ -100,3 +100,15 @@ with the type-inference cost attached.
 
 Ruled by `.scratch/roadmap/issues/12-channel-layout-vs-count.md`, from the oracle checklist in
 `.scratch/roadmap/research/01-plugin-host-obligations.md` §4.2 and §10.
+
+## Persistence clarification (2026-11-15)
+
+Save/Open landed after this ruling and stores an audio port's channel count in the `PORT`
+record's `sub` field (`docs/graph-persistence.md`), so the mechanical estimate above, and its
+"nothing in `tests/`", no longer cover the whole change. Adopting the third field moves the
+container to `MODULAR_GRAPH 2`, which writes `sub` and `channels` separately. Version 1 files
+still open: an audio port's single number is read as `channels` with `sub` 0, and a value or
+event port's as `sub`. Persistence code and tests change with it; nothing under `nodes/` does.
+
+The user decided this on 2026-11-15. As the first save-format change, it sets the precedent
+that format changes are versioned and older versions remain readable.

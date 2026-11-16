@@ -169,3 +169,17 @@ This records the placement of an explicit operation, not a change to the default
 deletion rule or a claim that the shared command layer is implemented. Undo/redo
 likewise belongs to Modular's shared editing facilities and has lower priority
 than the first editor's essential authoring/audio/persistence path.
+
+## Supernode face clarification (2026-11-15)
+
+The ruling above refuses deleting a boundary node that carries a wire in its own inner graph.
+It does not make the kernel refuse deleting a boundary node whose outer port is still wired
+from outside: a node keeps no pointer to its graph (see the `IdSource` paragraph), so an inner
+graph cannot see outward. The user ruled that this case belongs to shared editing instead.
+`workspace/` compares a supernode's outer port ids before and after each edit to its inner
+graph, removes outer wires on ports that vanished or no longer type-match as part of the same
+edit, and reports them, so one Undo restores both. A caller that bypasses the workspace still
+gets the compile-time error for a wire naming a missing outer port.
+
+Like the 2026-09-13 note, this places an explicit editing operation; it does not change the
+kernel's RESTRICT default. Recorded in `.scratch/identity/issues/03-supernode-face-by-id.md`.

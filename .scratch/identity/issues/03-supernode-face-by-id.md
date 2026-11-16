@@ -34,8 +34,10 @@ it. The close-out review follows it and is not part of it.
       wire a later one from outside; delete an earlier boundary node; render. The surviving
       outer wire still delivers to the same inner consumer and the output is byte-for-byte
       unchanged.
-- [ ] Deleting a boundary node that still backs a wire throws, the same RESTRICT rule as
-      ports and nodes — one rule for all three kinds.
+- [ ] A boundary node with wires in its own inner graph cannot be deleted: the inner graph's
+      ordinary RESTRICT rule, unchanged. An outer wire left on a vanished outer port still
+      fails at compile with the existing error, before anything renders. The kernel gains no
+      delete-time check for outer wires (D7 below).
 - [ ] ADR-0001's "known fragility, waiting on deletion" note is retired in the ADR itself,
       matching the strike-through already recorded in CLAUDE.md.
 - [ ] Full regression: the milestone render, the grouped supernode render, the nested
@@ -49,3 +51,20 @@ it. The close-out review follows it and is not part of it.
 - [ ] Map ticket 03 (`.scratch/roadmap/issues/03-variable-arity-after-graph-add.md`) noted as
       implemented, and its requirements handoff to map ticket 10 (`prepare` on recompile)
       left open and unchanged — that ticket is out of scope here.
+
+## Decisions (2026-11-15)
+
+- **D7: outer wires follow the face; the kernel does not refuse.** Refusing to delete a
+  boundary node that backs an outer wire would make an author leave the supernode, remove
+  the outer wire by hand and come back. Instead, shared editing in `workspace/` compares the
+  supernode's outer port ids before and after each edit to its inner graph. Outer wires on a
+  port that vanished, or whose type changed so the wire no longer connects, are removed as
+  part of the same edit and reported to the user, so a later Undo restores both together.
+  Stable port ids make this a set comparison. The kernel does not change: a node keeps no
+  pointer to its graph (ADR-0004 rejected one because graphs move), so an inner graph cannot
+  see outward, and a caller that skips the workspace still gets the existing compile error.
+  The reconciliation arrives with supernode editing in the editor, not in this ticket.
+- **D8: close-out review and commit.** Tickets 01 and 02 landed inside the single public root
+  commit, so they have no diff to review against. The close-out review is `/code-review` on
+  this ticket's PR plus a read-through of ADR-0004 against the current code. The squash
+  commit is titled `Close: <the claim>`, per the claim anatomy in `.scratch/roadmap/map.md`.

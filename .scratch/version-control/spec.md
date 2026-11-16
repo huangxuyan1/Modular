@@ -102,9 +102,10 @@ pull-request rule.
   Keep code, directly related documentation, ticket status and review evidence
   together. Do not slip roadmap or architecture decisions into the ticket branch;
   pause for a separate planning decision if implementation exposes a real gap.
-  Agents may create scoped checkpoint commits during authorized ticket work only
-  after the standing workflow is recorded and active. Ambiguous scope or unrelated
-  changes do not fall under that authority.
+  Agents may create scoped checkpoint commits during authorized ticket work, then
+  push that ticket branch and open its PR, only after the standing workflow is
+  recorded and active. Ambiguous scope or unrelated changes do not fall under that
+  authority.
 - **Worktrees:** Use the primary checkout for sequential ticket work. Create an
   additional worktree when concurrent work requires isolation; retire worktrees
   and source branches when their work is integrated. A branch is the unit of ticket
@@ -134,8 +135,10 @@ pull-request rule.
 - **Instruction transition:** The current repo rule remains “commit only when
   asked” until the approved workflow explicitly updates both identical root
   instruction files. The eventual standing rule applies to scoped checkpoint
-  commits on authorized ticket branches, not to the initial-root operation,
-  arbitrary planning commits, unrelated working-tree edits, merging or pushing.
+  commits on authorized ticket branches, and to pushing such a branch and opening
+  its PR after a public-content check of the branch diff (amended 2026-11-15; see
+  Amendments). It does not apply to the initial-root operation, arbitrary planning
+  commits, unrelated working-tree edits, pushing `main` or merging.
   Do not apply it retrospectively to this dirty checkout.
 - **Local tracker:** Project specs, tickets and relevant review notes remain
   versioned local Markdown rather than being silently migrated to GitHub Issues.
@@ -199,3 +202,12 @@ these are audit subjects, not proof that a clean baseline check just passed.
 The current Git commit restriction remains active until deliberately reconciled
 with the future workflow in both root agent instruction files. This spec is ready
 for ticket breakdown, not permission to implement any of its steps.
+
+## Amendments
+
+- **2026-11-15: standing authority reaches the ticket branch's PR.** The user
+  decided, while settling the open decisions before tickets 03–05 (D5), that the
+  standing rule also covers pushing an authorized ticket branch and opening its
+  PR. Otherwise every ticket stops to ask before pushing its own branch. Because
+  the repository is public, the push follows a public-content check of the branch
+  diff. Pushing `main` and merging remain the user's decisions.
