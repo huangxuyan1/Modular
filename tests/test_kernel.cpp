@@ -1295,42 +1295,46 @@ TEST_CASE("a derived port is not removable as a port; the boundary node is the p
 
 namespace {
 
-// Three lanes through one supernode: exposed input k feeds a weighted sum of
-// weight 1, 2 or 4, which feeds exposed output k. The weights make each lane
-// audible as itself, so which lane a wire reaches shows in the render; they
-// are exact in binary, so renders compare by equality.
-struct Lanes {
-  Placed<Supernode> super;
-  std::vector<Placed<BoundaryNode>> ins, outs;
-  std::vector<Placed<WeightedSumNode>> sums;
+// One lane across a supernode's face: an exposed input feeding a weighted sum,
+// feeding an exposed output. The weight makes the lane audible as itself, so
+// which lane a wire reaches shows in the render.
+struct Lane {
+  Placed<BoundaryNode> in;
+  Placed<WeightedSumNode> sum;
+  Placed<BoundaryNode> out;
 };
 
-Lanes addLanes(Graph& parent) {
-  Lanes lanes{place<Supernode>(parent), {}, {}, {}};
-  Graph& in = lanes.super->inner();
-  for (const float weight : {1.0f, 2.0f, 4.0f}) {
-    const std::string k = std::to_string(lanes.ins.size());
-    const auto inB = exposeInput(in, PortType::audio(1), "in" + k);
-    const auto sum = place<WeightedSumNode>(in, std::vector<float>{weight});
-    const auto outB = exposeOutput(in, PortType::audio(1), "out" + k);
-    in.connect(inB.id, inB->port(), sum.id, sum->in(0));
-    in.connect(sum.id, sum->out(), outB.id, outB->port());
-    lanes.ins.push_back(inB);
-    lanes.sums.push_back(sum);
-    lanes.outs.push_back(outB);
-  }
-  return lanes;
+Lane addLane(Graph& inner, float weight, const std::string& name) {
+  const auto inB = exposeInput(inner, PortType::audio(1), "in " + name);
+  const auto sum = place<WeightedSumNode>(inner, std::vector<float>{weight});
+  const auto outB = exposeOutput(inner, PortType::audio(1), "out " + name);
+  inner.connect(inB.id, inB->port(), sum.id, sum->in(0));
+  inner.connect(sum.id, sum->out(), outB.id, outB->port());
+  return {inB, sum, outB};
 }
 
-// Unwires lane k inside and removes its two boundary nodes, as an author
+// Unwires a lane inside and removes its two boundary nodes, as an author
 // removing one exposed pair would: the inner graph's own RESTRICT rule wants
 // the boundary nodes unwired first.
-void dropLane(const Lanes& lanes, std::size_t k) {
-  Graph& in = lanes.super->inner();
-  in.disconnect(lanes.sums[k].id, lanes.sums[k]->in(0));
-  in.disconnect(lanes.outs[k].id, lanes.outs[k]->port());
-  in.removeNode(lanes.ins[k].id);
-  in.removeNode(lanes.outs[k].id);
+void dropLane(Graph& inner, const Lane& lane) {
+  inner.disconnect(lane.sum.id, lane.sum->in(0));
+  inner.disconnect(lane.out.id, lane.out->port());
+  inner.removeNode(lane.in.id);
+  inner.removeNode(lane.out.id);
+}
+
+// A supernode with three lanes, of weight 1, 2 and 4 in face order. The
+// weights are exact in binary, so renders compare by equality.
+struct LanedSupernode {
+  Placed<Supernode> super;
+  std::vector<Lane> lanes;
+};
+
+LanedSupernode addLanedSupernode(Graph& parent) {
+  LanedSupernode s{place<Supernode>(parent), {}};
+  for (const float weight : {1.0f, 2.0f, 4.0f})
+    s.lanes.push_back(addLane(s.super->inner(), weight, std::to_string(s.lanes.size())));
+  return s;
 }
 
 } // namespace
@@ -1344,25 +1348,25 @@ TEST_CASE("deleting an earlier boundary node leaves a later outer wire on its ow
   auto renderWith = [](std::size_t lane, bool dropFirst) {
     Graph g;
     const auto synth = addSource(g);
-    const Lanes lanes = addLanes(g);
+    const LanedSupernode s = addLanedSupernode(g);
     const auto sink = place<CaptureSinkNode>(g, 1);
     // Wired by the ids the supernode's own face shows, as a view walking it
     // in display order would hand them to a wiring gesture.
-    const Node& face = g.node(lanes.super.id);
-    const PortId in = face.inputs()[lane].id;
-    const PortId out = face.outputs()[lane].id;
-    g.connect(synth.id, synth->out(), lanes.super.id, in);
-    g.connect(lanes.super.id, out, sink.id, sink->in());
+    const Node& face = g.node(s.super.id);
+    const PortId wiredIn = face.inputs()[lane].id;
+    const PortId wiredOut = face.outputs()[lane].id;
+    g.connect(synth.id, synth->out(), s.super.id, wiredIn);
+    g.connect(s.super.id, wiredOut, sink.id, sink->in());
     if (dropFirst) {
-      dropLane(lanes, 0);
+      dropLane(s.super->inner(), s.lanes[0]);
       // Both wired ports slid one place on the face, and kept their ids.
       REQUIRE(face.inputs().size() == 2);
       REQUIRE(face.outputs().size() == 2);
-      CHECK(face.inputs()[lane - 1].id == in);
-      CHECK(face.outputs()[lane - 1].id == out);
+      CHECK(face.inputs()[lane - 1].id == wiredIn);
+      CHECK(face.outputs()[lane - 1].id == wiredOut);
     }
     Engine e(g, 48000.0, 256);
-    render(e, 2003, 256); // prime: the note onset cannot align with a block
+    render(e, 2003, 256);
     return sink->samples();
   };
 
@@ -1410,28 +1414,28 @@ TEST_CASE("a supernode's outer port ids survive any edit to its inner graph") {
   Graph g;
   const auto synth = place<SineSynthNode>(g);
   const auto sink = place<CaptureSinkNode>(g, 1);
-  const Lanes lanes = addLanes(g);
-  Graph& in = lanes.super->inner();
-  const Node& face = g.node(lanes.super.id);
+  const LanedSupernode s = addLanedSupernode(g);
+  Graph& in = s.super->inner();
+  const Node& face = g.node(s.super.id);
   const PortId in1 = face.inputs()[1].id;
   const PortId in2 = face.inputs()[2].id;
   const PortId out1 = face.outputs()[1].id;
   const PortId out2 = face.outputs()[2].id;
-  g.connect(synth.id, synth->out(), lanes.super.id, in1);
-  g.connect(lanes.super.id, out2, sink.id, sink->in());
+  g.connect(synth.id, synth->out(), s.super.id, in1);
+  g.connect(s.super.id, out2, sink.id, sink->in());
 
   // An ordinary node comes and goes, wired in between.
   const auto extra = place<GainNode>(in, 1);
-  in.connect(lanes.ins[1].id, lanes.ins[1]->port(), extra.id, extra->in());
+  in.connect(s.lanes[1].in.id, s.lanes[1].in->port(), extra.id, extra->in());
   in.disconnect(extra.id, extra->in());
   in.removeNode(extra.id);
   // An inner node gains a port and loses it again.
-  const PortId added = lanes.sums[2]->addWeightedInput(8.0f);
-  in.removePort(lanes.sums[2].id, added);
+  const PortId added = s.lanes[2].sum->addWeightedInput(8.0f);
+  in.removePort(s.lanes[2].sum.id, added);
   // The face grows on both sides, then loses its first pair.
   const auto lateIn = exposeInput(in, PortType::audio(1), "late in");
   const auto lateOut = exposeOutput(in, PortType::audio(1), "late out");
-  dropLane(lanes, 0);
+  dropLane(in, s.lanes[0]);
 
   REQUIRE(face.inputs().size() == 3);
   CHECK(face.inputs()[0].id == in1);
@@ -1441,8 +1445,10 @@ TEST_CASE("a supernode's outer port ids survive any edit to its inner graph") {
   CHECK(face.outputs()[0].id == out1);
   CHECK(face.outputs()[1].id == out2);
   CHECK(face.outputs()[2].id == lateOut->port());
-  CHECK(lanes.super->boundaryFor(in1) == lanes.ins[1].id);
-  CHECK(lanes.super->boundaryFor(out2) == lanes.outs[2].id);
+  CHECK(s.super->boundaryFor(in1) == s.lanes[1].in.id);
+  CHECK(s.super->boundaryFor(in2) == s.lanes[2].in.id);
+  CHECK(s.super->boundaryFor(out1) == s.lanes[1].out.id);
+  CHECK(s.super->boundaryFor(out2) == s.lanes[2].out.id);
 
   // The outer wires were never touched, and still name ports the face has.
   REQUIRE(g.connections().size() == 2);
@@ -1456,19 +1462,15 @@ namespace {
 // port ids its boundary nodes minted.
 struct Section {
   Graph graph;
-  PortId in = kNoPort;
-  PortId out = kNoPort;
+  PortId audioIn = kNoPort;
+  PortId audioOut = kNoPort;
 };
 
 Section buildDoubler() {
   Section s;
-  const auto inB = exposeInput(s.graph, PortType::audio(1), "in");
-  const auto sum = place<WeightedSumNode>(s.graph, std::vector<float>{2.0f});
-  const auto outB = exposeOutput(s.graph, PortType::audio(1), "out");
-  s.graph.connect(inB.id, inB->port(), sum.id, sum->in(0));
-  s.graph.connect(sum.id, sum->out(), outB.id, outB->port());
-  s.in = inB->port();
-  s.out = outB->port();
+  const Lane lane = addLane(s.graph, 2.0f, "doubled");
+  s.audioIn = lane.in->port();
+  s.audioOut = lane.out->port();
   return s;
 }
 
@@ -1478,8 +1480,8 @@ TEST_CASE("an inner graph is its own id namespace, so a snapshot drops in unchan
   // Ids are minted per graph, so a section mints the same ids however often it
   // is built — nothing global leaks in that a new project would have to
   // renumber.
-  CHECK(buildDoubler().in == buildDoubler().in);
-  CHECK(buildDoubler().out == buildDoubler().out);
+  CHECK(buildDoubler().audioIn == buildDoubler().audioIn);
+  CHECK(buildDoubler().audioOut == buildDoubler().audioOut);
 
   // Dropped into projects that have minted different amounts before it
   // arrives, the snapshot keeps the ids it came with as its face, and renders
@@ -1494,12 +1496,12 @@ TEST_CASE("an inner graph is its own id namespace, so a snapshot drops in unchan
     // By value: the supernode now owns the section, and nothing else holds it.
     CHECK(section.graph.nodeCount() == 0);
     REQUIRE(g.node(super.id).inputs().size() == 1);
-    CHECK(g.node(super.id).inputs()[0].id == section.in);
-    CHECK(g.node(super.id).outputs()[0].id == section.out);
+    CHECK(g.node(super.id).inputs()[0].id == section.audioIn);
+    CHECK(g.node(super.id).outputs()[0].id == section.audioOut);
 
     const auto sink = place<CaptureSinkNode>(g, 1);
-    g.connect(synth.id, synth->out(), super.id, section.in);
-    g.connect(super.id, section.out, sink.id, sink->in());
+    g.connect(synth.id, synth->out(), super.id, section.audioIn);
+    g.connect(super.id, section.audioOut, sink.id, sink->in());
     Engine e(g, 48000.0, 256);
     render(e, 2003, 256);
     return sink->samples();

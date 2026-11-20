@@ -58,7 +58,7 @@ requirements oracle** — the engine bends to plugins, not the reverse.
 | Three domains (audio, value, event) compose in one graph — trigger → midi block → synth → gain → WAV renders offline | 2026-07-27 | — |
 | Grouping the milestone graph into a supernode changes not one sample; nesting and block-size invariance survive it | 2026-07-30 | — |
 | The event payload carries a conformant plugin note (VST3 `NoteOnEvent`, CLAP `clap_event_note`), and widening it to do so changed not one line under `nodes/` | 2026-08-05 | moderate |
-| A wired, stateful node gains and loses ports mid-project without disturbing any other wire or its DSP state | 2026-11-20 | expensive |
+| A wired, stateful node gains and loses ports mid-project without disturbing any other wire or its DSP state — the edit never replaces the node; state across a recompile is map ticket 10's, still open | 2026-11-20 | expensive |
 
 The third one is the smallest claim on this list and is kept because its *falsifier* did real
 work: "no file under `nodes/` changed" is what turned the moderate-class ruling from an
@@ -66,47 +66,8 @@ assertion into something `git diff --stat` checks. It held — `kInlineBytes` we
 `node_tests` passed untouched. ADR-0002 records why fixed stride survived and why the
 hot-path justification for it did not.
 
-## Next claim
-
-No longer provisional: it was drawn from evidence found while charting, and map ticket 03 has
-since confirmed it — enlarged, and ruled in full. Ticket 04's rate probe may still promote
-something ahead of it.
-
-**Ticket 01's checklist promoted event payload shape ahead of this, and ticket 11's probe has
-since demoted it again** — to moderate, and out of the way. The 16-byte payload genuinely
-cannot carry a plain VST3 note-on, but the fix is a widened fixed inline array, which changes
-no source under `nodes/`; the variable-stride shape that would have churned every event node
-was rejected. So the "cost rises with every event node written" urgency was conditional on a
-fix that isn't needed, and payload shape no longer competes for ordering. See
-ADR-0002 and the claim below.
-
-**Channel layout vs count (map ticket 12) has since been ruled the same way** — catastrophic on
-paper, moderate in fact, and additive. That is two overshoots in a row from the same proxy, so
-the oracle's blast-radius ranking is now treated as a prompt to measure rather than a class to
-inherit. Its claim is below; it competes for ordering no more than payload shape does.
-
-Both of the oracle's catastrophic-class items are therefore retired without churn, which leaves
-the tail's ordering resting on the map's own tickets rather than on the checklist.
-
-> **Claim.** An 80-band spectral stream and an 80-channel speaker bus cannot be connected to
-> each other by mistake — and no file under `nodes/` changed to make that true.
->
-> **Demo.** Declare `audio(80, kMel)` and `audio(80)`, attempt the connection, and require it
-> to throw; the existing suites pass untouched and the purity grep still returns nothing.
->
-> **Class.** Moderate — a defaulted `PortType` field plus two lines in `Engine.cpp`. The
-> falsifier doing the real work is again "no file under `nodes/` changed", which `git diff
-> --stat` checks. See ADR-0003.
-
-*Sharpened 2026-11-15, after Save/Open landed.* The save file stores an audio port's channel
-count in `sub` (`docs/graph-persistence.md`), so this claim also changes the save format.
-Saving writes `MODULAR_GRAPH 2` with separate `sub` and `channels` fields. Opening still reads
-version 1: an audio port's single number becomes `channels` with `sub` 0, and a value or event
-port's stays `sub`. This is the first save-format change, so it sets the rule for later ones:
-versioned, with older versions still opening. The `nodes/` falsifier stands; the change under
-`workspace/` is expected, persistence tests change with it, and the demo gains one check: a
-graph saved as version 1 still opens with every port's channel count intact. With ADR-0003 and
-this note, nothing is left to grill; the next step is `/to-spec`.
+The fourth claim headed the next-claim slot until it closed. It stays here as it was
+stated, with the reasoning that ruled it and its close:
 
 > **Claim.** A wired, stateful node gains and loses ports mid-project without disturbing any
 > other wire or its DSP state.
@@ -148,10 +109,10 @@ and a supernode once in the project.
 *Closed 2026-11-20*, cut as `.scratch/identity/` (spec, three tickets). The demo held as
 written, and a second one carried it to the supernode face: wire a later outer port, delete
 an earlier boundary node, and the render is byte-identical. Each demo was also run against a
-temporary patch reintroducing positional identity and failed on the sample comparison, so
-neither passes by construction.
-The milestone, grouped, nested and block-size renders are unchanged, and the purity grep
-still returns nothing.
+temporary kernel change reintroducing positional identity and failed on the sample
+comparison, so neither passes by construction; the face one is kept as
+`.scratch/identity/falsify-positional-face.diff`. The milestone, grouped, nested and
+block-size renders are unchanged, and the purity grep still returns nothing.
 
 Two edges are sharper than the claim's wording. **"Or its DSP state"** holds as far as
 authoring reaches: a port edit changes the node in place instead of replacing it, so its
@@ -162,6 +123,48 @@ supernode, so deleting a boundary node whose outer port is wired succeeds and th
 rejects the stale wire. The user ruled that shared editing in `workspace/` removes such wires
 with the edit, so one Undo restores both. That arrives with supernode editing (ADR-0004,
 2026-11-15).
+
+## Next claim
+
+*Re-cut 2026-11-20.* The identity claim headed this section until it closed (see Proven), so
+"this" in the next paragraph is that claim. The claim left here is channel layout vs count,
+below. Ticket 04's rate probe may still promote something ahead of it.
+
+**Ticket 01's checklist promoted event payload shape ahead of this, and ticket 11's probe has
+since demoted it again** — to moderate, and out of the way. The 16-byte payload genuinely
+cannot carry a plain VST3 note-on, but the fix is a widened fixed inline array, which changes
+no source under `nodes/`; the variable-stride shape that would have churned every event node
+was rejected. So the "cost rises with every event node written" urgency was conditional on a
+fix that isn't needed, and payload shape no longer competes for ordering. See
+ADR-0002 and the claim below.
+
+**Channel layout vs count (map ticket 12) has since been ruled the same way** — catastrophic on
+paper, moderate in fact, and additive. That is two overshoots in a row from the same proxy, so
+the oracle's blast-radius ranking is now treated as a prompt to measure rather than a class to
+inherit. Its claim is below; it competes for ordering no more than payload shape does.
+
+Both of the oracle's catastrophic-class items are therefore retired without churn, which leaves
+the tail's ordering resting on the map's own tickets rather than on the checklist.
+
+> **Claim.** An 80-band spectral stream and an 80-channel speaker bus cannot be connected to
+> each other by mistake — and no file under `nodes/` changed to make that true.
+>
+> **Demo.** Declare `audio(80, kMel)` and `audio(80)`, attempt the connection, and require it
+> to throw; the existing suites pass untouched and the purity grep still returns nothing.
+>
+> **Class.** Moderate — a defaulted `PortType` field plus two lines in `Engine.cpp`. The
+> falsifier doing the real work is again "no file under `nodes/` changed", which `git diff
+> --stat` checks. See ADR-0003.
+
+*Sharpened 2026-11-15, after Save/Open landed.* The save file stores an audio port's channel
+count in `sub` (`docs/graph-persistence.md`), so this claim also changes the save format.
+Saving writes `MODULAR_GRAPH 2` with separate `sub` and `channels` fields. Opening still reads
+version 1: an audio port's single number becomes `channels` with `sub` 0, and a value or event
+port's stays `sub`. This is the first save-format change, so it sets the rule for later ones:
+versioned, with older versions still opening. The `nodes/` falsifier stands; the change under
+`workspace/` is expected, persistence tests change with it, and the demo gains one check: a
+graph saved as version 1 still opens with every port's channel count intact. With ADR-0003 and
+this note, nothing is left to grill; the next step is `/to-spec`.
 
 ## Tail — ordered, unsized
 

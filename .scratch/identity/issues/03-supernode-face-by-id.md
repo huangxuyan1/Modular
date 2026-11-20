@@ -89,13 +89,15 @@ proof, the demo in full, and the documentation. Per item:
   keeps those ids as its face and renders identically, and the source graph is left empty.
   By-value ownership: existing *"a supernode owns its inner graph, so no two can share one"*.
 - *Face addressed by id; derivation off the block loop.* `boundaryFor(PortId)` is a lookup,
-  not a conversion. `derive()` runs only when `inputs()`/`outputs()` are read, which happens
-  while authoring and inside the `Engine` constructor. `Engine::process` walks the compiled
-  wiring only, and a supernode never executes. Read from code, since no seam observes it.
+  not a conversion. `derive()` runs only when a supernode's `inputs()`/`outputs()` are read,
+  which happens while authoring (`connect()` reads them, for one). The compile never derives
+  a face: `Flatten` crosses with `boundaryFor()`, and the `Engine` constructor reads the
+  ports of primitive nodes only. `Engine::process` walks the compiled wiring only, and a
+  supernode never executes. Read from code, since no seam observes it.
 - *Ids survive arbitrary inner edits.* New test *"a supernode's outer port ids survive any
   edit to its inner graph"*. An inner node comes and goes, an inner node gains and loses a
-  port, the face grows on both sides, and its first pair is deleted. Every surviving face id,
-  its `boundaryFor` and both outer wires are unchanged.
+  port, the face grows on both sides, and its first pair is deleted. All four surviving outer
+  ports keep their ids and their `boundaryFor`, and both outer wires are unchanged.
 - *Demo.* New test *"deleting an earlier boundary node leaves a later outer wire on its own
   lane"*. It replaces ticket 02's early version (*"deleting a boundary node leaves the rest of
   the face on its own ids"*). That version deleted an unwired boundary node, so under
@@ -107,9 +109,11 @@ proof, the demo in full, and the documentation. Per item:
   inside the single public root commit, so no pre-change build exists. To falsify it anyway,
   the face was temporarily made positional: `derive()` numbered face ports 1..n,
   `boundaryFor()` indexed by that number, and both `Flatten` crossings translated to and
-  from it. The demo then failed on `renderWith(1, true) == kept`: the wire reached lane 2.
-  14 of 44 kernel tests failed in that run, the other two new face-id tests among them. The
-  patch was reverted.
+  from it. That change is kept as `falsify-positional-face.diff` beside this ticket; to
+  rerun, `git apply` it, run `kernel_tests`, then restore the two files. On the final test
+  code the demo failed on its face-id checks and on the sample comparison
+  `renderWith(1, true) == kept`: the wire reached lane 2. 14 of 44 kernel tests failed in
+  that run, the other two new face-id tests among them. The change was reverted.
 - *Boundary RESTRICT; compile-time backstop; no delete-time check.* New test *"a boundary node
   wired inside its supernode cannot be deleted until unwired"* covers a wire leaving the node
   and one arriving. `connectionsOf` names both, and the deletes succeed once the wires are
@@ -134,7 +138,51 @@ proof, the demo in full, and the documentation. Per item:
   closed claim, byte-identical in `AGENTS.md`. The frozen-ports leftovers ticket 02 passed on
   are fixed: `CONTEXT.md`'s executed-graph entry and the roadmap's present-tense "freezes".
   `docs/project-foundations.md`'s RESTRICT sentence now states D7.
-- *Roadmap and map ticket 03.* The claim's row is added to Proven, with a *Closed* note on
-  its two sharp edges ("or its DSP state" stops at recompile, which is ticket 10; outer
-  wires are the workspace's). Map ticket 03 has a dated comment, and map ticket 10 is
-  untouched.
+- *Roadmap and map ticket 03.* The claim's row is added to Proven and carries its limit:
+  state across a recompile is ticket 10's. The claim's block moved from Next claim to
+  Proven, as the payload claim's did, with a *Closed* note on its two sharp edges ("or its
+  DSP state" stops at recompile; outer wires are the workspace's). Next claim opens with a
+  dated re-cut line and now holds only the channel-layout claim. Map ticket 03 has a dated
+  comment, and map ticket 10 is untouched.
+
+**2026-11-20 — close-out review (D8).** `/code-review` on PR #4 at 05983f9, against
+`fab2c89` (main), with the Standards and Spec axes run as separate agents. Fixes landed in
+the follow-up commit.
+
+- *Standards: no hard violations.* `CLAUDE.md` and `AGENTS.md` are identical; indent,
+  columns, naming, test-name sentences, seams and avoided vocabulary all pass. Judgement
+  calls taken: the parallel `ins`/`sums`/`outs` vectors became one `Lane` (data clump), and
+  `buildDoubler()` now reuses `addLane()` (duplication). Port ids named `in` beside the
+  file's inner-graph `in` became `wiredIn`/`wiredOut` and `audioIn`/`audioOut`.
+  `dropLane()` takes the inner `Graph&` instead of mutating through a `const` reference.
+  The demo's copied "prime: the note onset…" comment was dropped, since 2003 is the render
+  length, not the onset. "Patch" became "change" in the roadmap, because "patch" is an
+  avoided graph word. Not taken: the same inherited comment at two older call sites.
+- *Spec: nothing missing.* The demo can tell id from position: it misroutes rather than
+  throws under a positional face. Fixed:
+  - ADR-0001's note said the outer wire "is reconciled", in the present tense; it now says
+    this is not built and the compile rejects the wire.
+  - The Proven row claimed "DSP state" without its limit; it now carries it.
+  - The closed claim still sat under Next claim; it has moved to Proven.
+  - This record said `derive()` runs in the `Engine` constructor; it does not.
+  - The edit-survival test checked `boundaryFor` for two of the four surviving ports; it now
+    checks all four.
+  - The falsification change was not kept; it is now beside this ticket.
+  - The record named only the sample comparison as failing; the face-id checks failed too.
+- *ADR-0004 read-through against the code.* Every structural statement holds:
+  - `Connection` names four ids, and one heap `IdSource` per graph mints node and port ids.
+  - A node holds an `IdSource*`, never a `Graph*`.
+  - `frozen_` is gone.
+  - `addNode<T>` constructs the node in the graph.
+  - `PortSpec` carries its id.
+  - Deletion is RESTRICT, within one graph per the 2026-11-15 note.
+  - The face is addressed by id, and the engine compacts ids at compile.
+  - The purity grep is clean.
+  - The 2026-09-13 explicit delete exists as `Workspace`'s unwire-then-remove.
+
+  Two wording gaps were found. (1) The 2026-11-15 note described the workspace
+  reconciliation in the present tense; it now says the operation is not built yet. (2) The
+  ADR says an id costs "one extra array read once per port per block", but the compaction
+  is a binary search over the node's sorted port ids per accessor call (`PortLookup::find`).
+  It is still per block and not per sample, so the reasoning stands. That gap is recorded
+  here and the ADR is left as written.

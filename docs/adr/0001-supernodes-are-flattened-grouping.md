@@ -42,5 +42,6 @@ port *index*, "stable only because boundary nodes cannot be deleted or reordered
 supernode's outer port id is the port id of the boundary node backing it, so the face is
 addressed by id and its order is display order only: deleting a boundary node from the inner
 graph leaves every surviving outer wire addressing what it did. A boundary node still wired
-inside follows the inner graph's RESTRICT rule; an outer wire on its port is reconciled by
-shared editing, per ADR-0004's 2026-11-15 clarification.
+inside follows the inner graph's RESTRICT rule. An outer wire on its port is for shared
+editing to remove with the edit, per ADR-0004's 2026-11-15 clarification; that is not built
+yet, and until it is, the compile rejects the stale wire.
