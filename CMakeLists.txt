@@ -101,6 +101,8 @@ if(WIN32)
   add_test(NAME graph_editor_gesture COMMAND graph_editor_ui_tests
     "$<TARGET_FILE:graph_editor>" --gesture)
   set_tests_properties(graph_editor_gesture PROPERTIES TIMEOUT 10)
+  # Both open a real window: hosted CI excludes them with --label-exclude desktop.
+  set_tests_properties(graph_editor_app graph_editor_gesture PROPERTIES LABELS desktop)
 endif()
 
 add_executable(midi_file_tests tests/test_midi_file.cpp)
