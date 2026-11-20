@@ -97,6 +97,16 @@ the tail's ordering resting on the map's own tickets rather than on the checklis
 > falsifier doing the real work is again "no file under `nodes/` changed", which `git diff
 > --stat` checks. See ADR-0003.
 
+*Sharpened 2026-11-15, after Save/Open landed.* The save file stores an audio port's channel
+count in `sub` (`docs/graph-persistence.md`), so this claim also changes the save format.
+Saving writes `MODULAR_GRAPH 2` with separate `sub` and `channels` fields. Opening still reads
+version 1: an audio port's single number becomes `channels` with `sub` 0, and a value or event
+port's stays `sub`. This is the first save-format change, so it sets the rule for later ones:
+versioned, with older versions still opening. The `nodes/` falsifier stands; the change under
+`workspace/` is expected, persistence tests change with it, and the demo gains one check: a
+graph saved as version 1 still opens with every port's channel count intact. With ADR-0003 and
+this note, nothing is left to grill; the next step is `/to-spec`.
+
 > **Claim.** A wired, stateful node gains and loses ports mid-project without disturbing any
 > other wire or its DSP state.
 >
