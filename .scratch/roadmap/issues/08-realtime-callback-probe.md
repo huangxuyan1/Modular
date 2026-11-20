@@ -14,8 +14,10 @@ between audio and editing, and recompiling without a dropout.
 This is a **spike**, and deliberately not the device-IO work — that lands much later, with
 JUCE. No JUCE commitment here; throwaway code.
 
-- Drive the existing block loop from a real hardware callback (CoreAudio directly is
-  enough on this platform) with genuinely unstable block sizes.
+- Drive the existing block loop from a real hardware callback (WASAPI directly is enough
+  on this Windows platform; the WinMM `waveOut` sink in
+  [node I/O](../../../docs/node-io.md) waits on a buffer queue rather than serving a
+  callback) with genuinely unstable block sizes.
 - Force one recompile mid-stream — the simplest structural edit available — and measure
   whether audio glitches, drops, or survives.
 - Report numbers, not opinions: what was the callback deadline, what did the compile cost,
