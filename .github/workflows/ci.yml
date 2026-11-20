@@ -1,0 +1,115 @@
+# The one required check is the "CI gate" job. It always reports, and it passes
+# only when every job the change needs has passed, so a skipped build can never
+# stand in for a green one. See docs/windows.md, "Continuous integration".
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+  HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  classify:
+    name: Classify changed files
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.scope.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      # Documentation-only means every changed path is Markdown outside .github/.
+      # Anything else, an empty diff or an unusable base takes the build path.
+      - id: scope
+        run: |
+          docs_only=false
+          if git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            git -c core.quotepath=off diff --name-only --no-renames \
+              "$BASE_SHA...$HEAD_SHA" > changed.txt
+            not_docs=$(grep -Ev '\.md$' changed.txt || true)
+            ci_files=$(grep -E '^\.github/' changed.txt || true)
+            if [ -s changed.txt ] && [ -z "$not_docs" ] && [ -z "$ci_files" ]; then
+              docs_only=true
+            fi
+            {
+              echo "### Changed files ($(wc -l < changed.txt))"
+              echo '```'
+              cat changed.txt
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No usable base commit '$BASE_SHA'; taking the build path." \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "Documentation-only: $docs_only" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+
+  docs:
+    name: Docs checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Internal links and identical instruction files
+        run: python3 scripts/check_docs.py
+      - name: Whitespace errors and conflict markers in changed lines
+        run: |
+          if git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            git diff --check "$BASE_SHA...$HEAD_SHA"
+          else
+            echo "No usable base commit '$BASE_SHA'; nothing to compare."
+          fi
+
+  build:
+    name: Windows ${{ matrix.configuration }}
+    needs: classify
+    if: needs.classify.outputs.docs_only != 'true'
+    # CMakePresets.json names the Visual Studio 2022 generator; newer images
+    # carry Visual Studio 2026 instead, so the image moves with the preset.
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Debug, Release]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: cmake --preset windows
+      - run: cmake --build --preset windows --config ${{ matrix.configuration }} --parallel
+      # Tests labelled "desktop" open the real graph-editor window; they are
+      # verified locally until a hosted runner proves them reliable.
+      - run: ctest --preset windows --build-config ${{ matrix.configuration }} --label-exclude desktop
+
+  gate:
+    name: CI gate
+    if: always()
+    needs: [classify, docs, build]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          CLASSIFY: ${{ needs.classify.result }}
+          DOCS_ONLY: ${{ needs.classify.outputs.docs_only }}
+          DOCS: ${{ needs.docs.result }}
+          BUILD: ${{ needs.build.result }}
+        run: |
+          echo "classify=$CLASSIFY docs_only=$DOCS_ONLY docs=$DOCS build=$BUILD"
+          [ "$CLASSIFY" = success ] || { echo "::error::Change classification did not succeed."; exit 1; }
+          [ "$DOCS" = success ] || { echo "::error::Docs checks did not succeed."; exit 1; }
+          if [ "$DOCS_ONLY" = true ]; then
+            case "$BUILD" in success|skipped) ;; *) echo "::error::Build result: $BUILD."; exit 1 ;; esac
+            echo "Documentation-only change: links, format and changed-file scope passed."
+          else
+            [ "$BUILD" = success ] || { echo "::error::Windows Debug/Release build and tests: $BUILD."; exit 1; }
+            echo "Code path: Windows Debug and Release builds and headless CTest passed."
+          fi
