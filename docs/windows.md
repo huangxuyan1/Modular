@@ -40,6 +40,37 @@ environment entries that otherwise cause MSBuild error MSB6001 before compilatio
 It changes only the current process environment. MSVC compiles sources as UTF-8,
 so non-ASCII comments work regardless of the Windows display language.
 
+## Continuous integration
+
+GitHub Actions runs `.github/workflows/ci.yml` on every pull request and every
+push to `main`. The required check is the **CI gate** job. It always reports, and
+it passes only if every job the change needs has passed; a skipped or cancelled
+job makes it fail rather than pass.
+
+- **Changed-file scope:** a change is documentation-only when every changed path
+  ends in `.md` and none is under `.github/`. Anything else, including CI changes,
+  build files, an empty diff or a base commit CI cannot find, takes the build path.
+- **Every change:** `python scripts/check_docs.py` checks that each repository-internal
+  Markdown link reaches a tracked file and, for Markdown targets, an existing
+  heading, and that `AGENTS.md` and `CLAUDE.md` are byte-identical. `git diff --check`
+  rejects whitespace errors and conflict markers in the changed lines.
+- **Build path:** on the `windows-2022` image (Visual Studio 2022, the preset's
+  generator), Debug and Release each configure the `windows` preset, build every
+  target and run CTest with `--label-exclude desktop`: the kernel, node, authoring
+  and MIDI-file tests, the CLI smoke test and kernel purity.
+
+CI does not cover:
+
+- the two `desktop`-labelled tests, `graph_editor_app` and `graph_editor_gesture`,
+  which open the real graph-editor window. Run the full suite locally with the
+  script above and record that result as the ticket's GUI evidence;
+- whether external links resolve, audible playback through an audio device, or
+  builds on other platforms;
+- releases or deployment; nothing merges automatically.
+
+To run the hosted test selection locally after a build, use
+`ctest --preset windows -LE desktop`; append `--build-config Release` for Release.
+
 ## Moving between machines
 
 Keep a separate build directory for each platform. The copied root `build/`
