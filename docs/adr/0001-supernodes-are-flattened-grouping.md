@@ -33,3 +33,15 @@ neither supernodes nor boundary nodes exist at runtime.
   needed at runtime." Both classes are pure structure; the kernel-purity grep stays clean.
 - "Functionally identical to placing the inner nodes directly" is a testable claim:
   flat vs supernode renders must be bit-identical.
+
+## Identity note (2026-11-20)
+
+Sprint 2 left one known fragility here, waiting on deletion: a connection stored an outer
+port *index*, "stable only because boundary nodes cannot be deleted or reordered"
+(`.scratch/supernode/issues/02-engine-flattens-by-resolution.md`). ADR-0004 retires it. A
+supernode's outer port id is the port id of the boundary node backing it, so the face is
+addressed by id and its order is display order only: deleting a boundary node from the inner
+graph leaves every surviving outer wire addressing what it did. A boundary node still wired
+inside follows the inner graph's RESTRICT rule. An outer wire on its port is for shared
+editing to remove with the edit, per ADR-0004's 2026-11-15 clarification; that is not built
+yet, and until it is, the compile rejects the stale wire.

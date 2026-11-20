@@ -182,4 +182,6 @@ edit, and reports them, so one Undo restores both. A caller that bypasses the wo
 gets the compile-time error for a wire naming a missing outer port.
 
 Like the 2026-09-13 note, this places an explicit editing operation; it does not change the
-kernel's RESTRICT default. Recorded in `.scratch/identity/issues/03-supernode-face-by-id.md`.
+kernel's RESTRICT default. Nor is the operation built yet: nothing in `workspace/` edits an
+inner graph today, so the reconciliation arrives with supernode editing. Recorded in
+`.scratch/identity/issues/03-supernode-face-by-id.md`.

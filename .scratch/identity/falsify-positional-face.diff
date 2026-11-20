@@ -1,0 +1,62 @@
+diff --git a/kernel/src/Flatten.cpp b/kernel/src/Flatten.cpp
+index d151e5c..3501d76 100644
+--- a/kernel/src/Flatten.cpp
++++ b/kernel/src/Flatten.cpp
+@@ -124,7 +124,8 @@ private:
+         throw std::invalid_argument(
+             "engine: connection names an outer port that no longer exists");
+       const Frame inner{&s->inner(), &f, s, id};
+-      return resolveInput(inner, backing, port, trail);
++      return resolveInput(inner, backing,
++                          static_cast<BoundaryNode&>(s->inner().node(backing)).port(), trail);
+     }
+ 
+     if (dynamic_cast<BoundaryNode*>(&n) != nullptr) {
+@@ -133,9 +134,11 @@ private:
+       // what feeds the matching outer port. Same id again, on the way out.
+       assert(static_cast<BoundaryNode&>(n).direction() == BoundaryDirection::Input);
+       if (f.parent == nullptr) return std::nullopt; // no outside to climb to
+-      assert(f.super != nullptr && f.super->boundaryFor(port) == id &&
+-             "a boundary node must appear on its own face");
+-      return resolveInput(*f.parent, f.superId, port, trail);
++      const auto ins = f.super->boundaryIds(BoundaryDirection::Input);
++      PortId position = 0;
++      for (std::size_t i = 0; i < ins.size(); ++i)
++        if (ins[i] == id) position = static_cast<PortId>(i + 1);
++      return resolveInput(*f.parent, f.superId, position, trail);
+     }
+ 
+     return SourcePort{slotOf_.at(&n), positionOf(n.outputs(), port)};
+diff --git a/kernel/src/Supernode.cpp b/kernel/src/Supernode.cpp
+index 479ffc6..6ef8571 100644
+--- a/kernel/src/Supernode.cpp
++++ b/kernel/src/Supernode.cpp
+@@ -52,11 +52,8 @@ std::vector<NodeId> Supernode::boundaryIds(BoundaryDirection direction) const {
+ }
+ 
+ NodeId Supernode::boundaryFor(PortId id) const {
+-  for (const NodeId node : inner_.nodeIds()) {
+-    const auto* b = dynamic_cast<const BoundaryNode*>(&inner_.node(node));
+-    if (b != nullptr && b->port() == id) return node;
+-  }
+-  return kNoNode;
++  const auto outs = boundaryIds(BoundaryDirection::Output);
++  return (id >= 1 && id <= outs.size()) ? outs[id - 1] : kNoNode;
+ }
+ 
+ bool Supernode::erasePort(PortId) {
+@@ -68,8 +65,12 @@ bool Supernode::erasePort(PortId) {
+ std::span<const PortSpec> Supernode::derive(BoundaryDirection direction,
+                                             std::vector<PortSpec>& into) const {
+   into.clear();
+-  for (const NodeId id : boundaryIds(direction))
+-    into.push_back(static_cast<const BoundaryNode&>(inner_.node(id)).exposed());
++  PortId position = 1;
++  for (const NodeId id : boundaryIds(direction)) {
++    PortSpec spec = static_cast<const BoundaryNode&>(inner_.node(id)).exposed();
++    spec.id = position++;
++    into.push_back(spec);
++  }
+   return into;
+ }
+ 

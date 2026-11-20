@@ -58,6 +58,7 @@ requirements oracle** — the engine bends to plugins, not the reverse.
 | Three domains (audio, value, event) compose in one graph — trigger → midi block → synth → gain → WAV renders offline | 2026-07-27 | — |
 | Grouping the milestone graph into a supernode changes not one sample; nesting and block-size invariance survive it | 2026-07-30 | — |
 | The event payload carries a conformant plugin note (VST3 `NoteOnEvent`, CLAP `clap_event_note`), and widening it to do so changed not one line under `nodes/` | 2026-08-05 | moderate |
+| A wired, stateful node gains and loses ports mid-project without disturbing any other wire or its DSP state — the edit never replaces the node; state across a recompile is map ticket 10's, still open | 2026-11-20 | expensive |
 
 The third one is the smallest claim on this list and is kept because its *falsifier* did real
 work: "no file under `nodes/` changed" is what turned the moderate-class ruling from an
@@ -65,11 +66,69 @@ assertion into something `git diff --stat` checks. It held — `kInlineBytes` we
 `node_tests` passed untouched. ADR-0002 records why fixed stride survived and why the
 hot-path justification for it did not.
 
+The fourth claim headed the next-claim slot until it closed. It stays here as it was
+stated, with the reasoning that ruled it and its close:
+
+> **Claim.** A wired, stateful node gains and loses ports mid-project without disturbing any
+> other wire or its DSP state.
+>
+> **Demo.** Append a port to a wired node and delete a different one; every surviving wire
+> still points at the port it named, and rendered output is unchanged. Deleting a *connected*
+> port throws. The purity grep still returns nothing.
+>
+> **Class.** Expensive, and the first of the four rulings that earns the label — node
+> constructor signatures change, so the library genuinely churns. See ADR-0004.
+
+Why this was a live problem rather than a hypothetical: `kernel/include/modular/Node.h:56`
+froze a node's ports once it joined a graph, so a plugin Configure gesture — user ticks
+parameter #47 for automation on an already-wired plugin — required *replacing* the node.
+That loses every connection referencing its `NodeId`, churns the plugin's DSP state, and
+destroys its automation lanes. `Graph` had no deletion at all, so replacement was not merely
+awkward but unimplementable.
+
+Map ticket 03 has since ruled, and confirmed the claim while enlarging it. Ports are created
+*and deleted* by command; deleting one that still carries a wire throws, which is RESTRICT
+borrowed from referential integrity, and the same rule covers nodes and boundary nodes — so
+**node deletion lands here too**, and ADR-0001's known fragility retires with it. The
+enlargement is that "a port can be deleted" is unanswerable while a port's identity *is* its
+position in a vector: identity moves to ids minted per graph, `NodeId` stops being an index,
+and construction moves into the graph (`graph.addNode<GainNode>(1)`) because an id must be
+correct when minted and can never be rewritten afterwards.
+
+Two things the ticket killed are worth recording, since both looked like cheaper routes.
+**Port-per-parameter** needs no kernel change at all — declare a port for every knob the
+plugin publishes and let the view hide the rest — and dies on the fact that no plugin can
+enumerate its knobs up front: Serum's reverb, compressor and EQ sections switch in and out
+with their own parameters. **Params are not ports.** And the *flat* model of a supernode — a
+recorded command sequence replayed into the outer graph, which then owns every id — dissolves
+the difficulty entirely but costs structural encapsulation, since nothing would prevent a wire
+reaching into the middle of a rack. Unnecessary: ticket 02 already named the recipe half.
+Supernode is the container, **Template** the recipe, and an Ableton rack is a template on disk
+and a supernode once in the project.
+
+*Closed 2026-11-20*, cut as `.scratch/identity/` (spec, three tickets). The demo held as
+written, and a second one carried it to the supernode face: wire a later outer port, delete
+an earlier boundary node, and the render is byte-identical. Each demo was also run against a
+temporary kernel change reintroducing positional identity and failed on the sample
+comparison, so neither passes by construction; the face one is kept as
+`.scratch/identity/falsify-positional-face.diff`. The milestone, grouped, nested and
+block-size renders are unchanged, and the purity grep still returns nothing.
+
+Two edges are sharper than the claim's wording. **"Or its DSP state"** holds as far as
+authoring reaches: a port edit changes the node in place instead of replacing it, so its
+state is never rebuilt by the edit. Whether state survives the *recompile* that makes the edit
+audible is map ticket 10's, still open. And **a boundary node's outer wires** are not the
+kernel's to refuse. RESTRICT sees one graph, and an inner graph cannot see the wire into its
+supernode, so deleting a boundary node whose outer port is wired succeeds and the compile then
+rejects the stale wire. The user ruled that shared editing in `workspace/` removes such wires
+with the edit, so one Undo restores both. That arrives with supernode editing (ADR-0004,
+2026-11-15).
+
 ## Next claim
 
-No longer provisional: it was drawn from evidence found while charting, and map ticket 03 has
-since confirmed it — enlarged, and ruled in full. Ticket 04's rate probe may still promote
-something ahead of it.
+*Re-cut 2026-11-20.* The identity claim headed this section until it closed (see Proven), so
+"this" in the next paragraph is that claim. The claim left here is channel layout vs count,
+below. Ticket 04's rate probe may still promote something ahead of it.
 
 **Ticket 01's checklist promoted event payload shape ahead of this, and ticket 11's probe has
 since demoted it again** — to moderate, and out of the way. The 16-byte payload genuinely
@@ -106,43 +165,6 @@ versioned, with older versions still opening. The `nodes/` falsifier stands; the
 `workspace/` is expected, persistence tests change with it, and the demo gains one check: a
 graph saved as version 1 still opens with every port's channel count intact. With ADR-0003 and
 this note, nothing is left to grill; the next step is `/to-spec`.
-
-> **Claim.** A wired, stateful node gains and loses ports mid-project without disturbing any
-> other wire or its DSP state.
->
-> **Demo.** Append a port to a wired node and delete a different one; every surviving wire
-> still points at the port it named, and rendered output is unchanged. Deleting a *connected*
-> port throws. The purity grep still returns nothing.
->
-> **Class.** Expensive, and the first of the four rulings that earns the label — node
-> constructor signatures change, so the library genuinely churns. See ADR-0004.
-
-Why this is a live problem rather than a hypothetical: `kernel/include/modular/Node.h:56`
-freezes a node's ports once it joins a graph, so a plugin Configure gesture — user ticks
-parameter #47 for automation on an already-wired plugin — requires *replacing* the node.
-That loses every connection referencing its `NodeId`, churns the plugin's DSP state, and
-destroys its automation lanes. `Graph` has no deletion at all, so replacement is not merely
-awkward but currently unimplementable.
-
-Map ticket 03 has since ruled, and confirmed the claim while enlarging it. Ports are created
-*and deleted* by command; deleting one that still carries a wire throws, which is RESTRICT
-borrowed from referential integrity, and the same rule covers nodes and boundary nodes — so
-**node deletion lands here too**, and ADR-0001's known fragility retires with it. The
-enlargement is that "a port can be deleted" is unanswerable while a port's identity *is* its
-position in a vector: identity moves to ids minted per graph, `NodeId` stops being an index,
-and construction moves into the graph (`graph.addNode<GainNode>(1)`) because an id must be
-correct when minted and can never be rewritten afterwards.
-
-Two things the ticket killed are worth recording, since both looked like cheaper routes.
-**Port-per-parameter** needs no kernel change at all — declare a port for every knob the
-plugin publishes and let the view hide the rest — and dies on the fact that no plugin can
-enumerate its knobs up front: Serum's reverb, compressor and EQ sections switch in and out
-with their own parameters. **Params are not ports.** And the *flat* model of a supernode — a
-recorded command sequence replayed into the outer graph, which then owns every id — dissolves
-the difficulty entirely but costs structural encapsulation, since nothing would prevent a wire
-reaching into the middle of a rack. Unnecessary: ticket 02 already named the recipe half.
-Supernode is the container, **Template** the recipe, and an Ableton rack is a template on disk
-and a supernode once in the project.
 
 ## Tail — ordered, unsized
 
