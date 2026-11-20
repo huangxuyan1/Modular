@@ -83,8 +83,9 @@ The audio collected by the current WAV recorder between an accepted Start and St
 Each completed take is saved as its own WAV file.
 
 **Executed graph**:
-The graph the engine actually runs: supernodes flattened, ports frozen, delay inserted by
-the compiler. Never edited directly; always derivable from the authored graph.
+The graph the engine actually runs: supernodes flattened, ports fixed as the compile found
+them, delay inserted by the compiler. Never edited directly; always derivable from the
+authored graph.
 _Avoid_: runtime graph, compiled patch
 
 **Compile**:

@@ -33,6 +33,12 @@ struct Connection {
 // what the author meant, which is the argument that rejected fan-in. Clients
 // can explicitly opt into shared unwire-then-delete behavior above the kernel;
 // connectionsOf() provides the affected wires. Primitive removal stays RESTRICT.
+//
+// RESTRICT sees wires in this graph only. A boundary node's outer wire lives in
+// the graph holding its supernode, which this one cannot see — a node keeps no
+// pointer to its graph — so removing the boundary node leaves that wire naming
+// a vanished outer port, and the compile refuses it. Removing such wires with
+// the edit is the workspace's job (ADR-0004, 2026-11-15).
 class Graph {
 public:
   Graph() : ids_(std::make_unique<IdSource>()) {}

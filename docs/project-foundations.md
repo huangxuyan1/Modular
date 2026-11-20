@@ -69,10 +69,13 @@ not settled by the feature spec.
   `IdSource` lives per graph, separately allocated so moving a Graph cannot dangle
   a node's source; its high-water mark survives persistence so ids cannot be
   resurrected after reload. A supernode's exposed port id is its boundary node's
-  port id. Params inside a plugin are not necessarily ports. Deleting a wired
-  port, node or boundary node throws (RESTRICT);
+  port id. Params inside a plugin are not necessarily ports. Deleting a port, node
+  or boundary node that carries a wire in its own graph throws (RESTRICT);
   an explicit shared operation may unwire then delete, while media-specific cascades
-  remain client policy. See ADR-0004 and `docs/graph-persistence.md`.
+  remain client policy. RESTRICT cannot see a boundary node's outer wires: removing
+  them with the inner edit is the workspace's job (not yet built), and a wire left
+  on a vanished outer port fails at compile. See ADR-0004 and
+  `docs/graph-persistence.md`.
 - One connection per input, unlimited fan-out. A node implements fan-in with variable
   arity; the kernel must not decide how to sum audio, order events or arbitrate
   values from multiple incoming wires. A visual multi-input port is a

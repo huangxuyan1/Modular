@@ -58,6 +58,7 @@ requirements oracle** — the engine bends to plugins, not the reverse.
 | Three domains (audio, value, event) compose in one graph — trigger → midi block → synth → gain → WAV renders offline | 2026-07-27 | — |
 | Grouping the milestone graph into a supernode changes not one sample; nesting and block-size invariance survive it | 2026-07-30 | — |
 | The event payload carries a conformant plugin note (VST3 `NoteOnEvent`, CLAP `clap_event_note`), and widening it to do so changed not one line under `nodes/` | 2026-08-05 | moderate |
+| A wired, stateful node gains and loses ports mid-project without disturbing any other wire or its DSP state | 2026-11-20 | expensive |
 
 The third one is the smallest claim on this list and is kept because its *falsifier* did real
 work: "no file under `nodes/` changed" is what turned the moderate-class ruling from an
@@ -117,12 +118,12 @@ this note, nothing is left to grill; the next step is `/to-spec`.
 > **Class.** Expensive, and the first of the four rulings that earns the label — node
 > constructor signatures change, so the library genuinely churns. See ADR-0004.
 
-Why this is a live problem rather than a hypothetical: `kernel/include/modular/Node.h:56`
-freezes a node's ports once it joins a graph, so a plugin Configure gesture — user ticks
-parameter #47 for automation on an already-wired plugin — requires *replacing* the node.
+Why this was a live problem rather than a hypothetical: `kernel/include/modular/Node.h:56`
+froze a node's ports once it joined a graph, so a plugin Configure gesture — user ticks
+parameter #47 for automation on an already-wired plugin — required *replacing* the node.
 That loses every connection referencing its `NodeId`, churns the plugin's DSP state, and
-destroys its automation lanes. `Graph` has no deletion at all, so replacement is not merely
-awkward but currently unimplementable.
+destroys its automation lanes. `Graph` had no deletion at all, so replacement was not merely
+awkward but unimplementable.
 
 Map ticket 03 has since ruled, and confirmed the claim while enlarging it. Ports are created
 *and deleted* by command; deleting one that still carries a wire throws, which is RESTRICT
@@ -143,6 +144,24 @@ the difficulty entirely but costs structural encapsulation, since nothing would 
 reaching into the middle of a rack. Unnecessary: ticket 02 already named the recipe half.
 Supernode is the container, **Template** the recipe, and an Ableton rack is a template on disk
 and a supernode once in the project.
+
+*Closed 2026-11-20*, cut as `.scratch/identity/` (spec, three tickets). The demo held as
+written, and a second one carried it to the supernode face: wire a later outer port, delete
+an earlier boundary node, and the render is byte-identical. Each demo was also run against a
+temporary patch reintroducing positional identity and failed on the sample comparison, so
+neither passes by construction.
+The milestone, grouped, nested and block-size renders are unchanged, and the purity grep
+still returns nothing.
+
+Two edges are sharper than the claim's wording. **"Or its DSP state"** holds as far as
+authoring reaches: a port edit changes the node in place instead of replacing it, so its
+state is never rebuilt by the edit. Whether state survives the *recompile* that makes the edit
+audible is map ticket 10's, still open. And **a boundary node's outer wires** are not the
+kernel's to refuse. RESTRICT sees one graph, and an inner graph cannot see the wire into its
+supernode, so deleting a boundary node whose outer port is wired succeeds and the compile then
+rejects the stale wire. The user ruled that shared editing in `workspace/` removes such wires
+with the edit, so one Undo restores both. That arrives with supernode editing (ADR-0004,
+2026-11-15).
 
 ## Tail — ordered, unsized
 
