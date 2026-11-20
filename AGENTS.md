@@ -22,7 +22,7 @@ linked contract instead of treating this summary as the complete design.
   Read `.scratch/graph-editor/spec.md` for agreed scope,
   `.scratch/graph-editor/planning.md` for ticket/review evidence,
   `docs/graph-editor.md` for app behavior, `docs/node-io.md` for nodes and
-  `docs/graph-persistence.md` for Save/Open. Preserve existing uncommitted work.
+  `docs/graph-persistence.md` for Save/Open.
 - **Build and tests:** On Windows run
   `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_windows.ps1`.
   Read `docs/windows.md` for focused checks and environment details. Elsewhere use
