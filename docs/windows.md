@@ -9,12 +9,18 @@ From the repository root in PowerShell:
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_windows.ps1
 ```
 
-This configures the `windows` preset, builds Debug, and runs all eight CTest
-entries: kernel, node, authoring and MIDI-file tests, the actual graph-editor app
-check and a focused gesture regression, a CLI smoke test, and kernel purity. The app check requires a Windows
-desktop and briefly displays a test window for a rendering capture before closing
-it. Any failed step stops the script. The execution-policy option applies only to this PowerShell process;
-it allows the local script without changing the machine's policy.
+This configures the `windows` preset, builds Debug, and runs the six headless
+CTest entries: kernel, node, authoring and MIDI-file tests, a CLI smoke test, and
+kernel purity. Any failed step stops the script. The execution-policy option
+applies only to this PowerShell process; it allows the local script without
+changing the machine's policy.
+
+The two `desktop`-labelled entries, the actual graph-editor app check
+(`graph_editor_app`) and a focused gesture regression (`graph_editor_gesture`),
+are off by default: they open real windows on the screen, briefly showing a test
+window for a rendering capture before closing it. Run them only when a change
+touches the editor app, and tell whoever is at the screen first. Append
+`-IncludeDesktop` to the script to run the full suite of eight.
 
 For an optimized build, append `-Configuration Release`. Executables are under
 `build/windows/Debug/` or `build/windows/Release/`.
@@ -25,20 +31,59 @@ For the flat graph editor, launch `build/windows/Debug/graph_editor.exe` and see
 
 For a focused build/check, the script accepts `-Target` and `-TestRegex`; for
 example, `-Target authoring_tests -TestRegex '^authoring_tests$'`. With neither
-option, it builds all targets and runs the full suite.
+option, it builds all targets and runs every headless test. A `-TestRegex` that
+selects a `desktop` test also needs `-IncludeDesktop`; otherwise CTest finds no
+tests and the script fails.
 
 The equivalent individual commands are:
 
 ```powershell
 cmake --preset windows
 cmake --build --preset windows
-ctest --preset windows
+ctest --preset windows -LE desktop
 ```
+
+`-LE desktop` (`--label-exclude`) is the default headless check, the same selection
+hosted CI runs. To run only the window-opening tests deliberately, after telling
+whoever is at the screen, use `ctest --preset windows -L desktop`. Append
+`--build-config Release` to either for Release.
 
 Prefer the script in agent shells: it normalizes duplicate `Path`/`PATH`
 environment entries that otherwise cause MSBuild error MSB6001 before compilation.
 It changes only the current process environment. MSVC compiles sources as UTF-8,
 so non-ASCII comments work regardless of the Windows display language.
+
+## Continuous integration
+
+GitHub Actions runs `.github/workflows/ci.yml` on every pull request and every
+push to `main`, and again when a pull request's base branch changes. Its **CI gate**
+job is the one check for branch protection to require. It always reports, and it
+passes only if every job the change needs has passed; a skipped or cancelled job
+makes it fail rather than pass.
+
+- **Changed-file scope:** a change is documentation-only when every changed path
+  ends in `.md` and none is under `.github/`. Anything else, including CI changes,
+  build files, an empty diff or a base commit CI cannot find, takes the build path.
+- **Every change:** `python scripts/check_docs.py` (Python 3, also runnable
+  locally) checks that each repository-internal Markdown link reaches a tracked
+  file and, for Markdown targets, an existing heading, and that `AGENTS.md` and
+  `CLAUDE.md` are byte-identical. `git diff --check` rejects whitespace errors and
+  conflict markers in the changed lines. No Markdown style linter runs.
+- **Build path:** on the `windows-2022` image (Visual Studio 2022, the preset's
+  generator), Debug and Release each configure the `windows` preset, build every
+  target and run CTest with `--label-exclude desktop`: the kernel, node, authoring
+  and MIDI-file tests, the CLI smoke test and kernel purity.
+
+CI does not cover:
+
+- the two `desktop`-labelled tests, `graph_editor_app` and `graph_editor_gesture`,
+  which open the real graph-editor window. When a change affects the graph
+  editor, run them locally (the script's `-IncludeDesktop`, or
+  `ctest --preset windows -L desktop`) and record that result as the ticket's
+  GUI evidence;
+- whether external links resolve, audible playback through an audio device, or
+  builds on other platforms;
+- releases or deployment; nothing merges automatically.
 
 ## Moving between machines
 
