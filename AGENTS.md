@@ -34,8 +34,17 @@ linked contract instead of treating this summary as the complete design.
   RESTRICT on wired primitive deletion, and block-size-invariant processing. Follow
   `docs/project-foundations.md` and the surrounding code for detailed contracts.
   Kernel authoring/compile errors throw; process paths do not.
-- **Commits:** Commit only if the user asks, even when a skill suggests otherwise.
-  Do not stage or overwrite unrelated dirty changes.
+- **Commits and delivery:** Commit only if the user asks, even when a skill
+  suggests otherwise, except on a ticket the user authorized (an `/implement`
+  invocation or an explicit go-ahead for that ticket). There, without asking, make
+  scoped checkpoint commits on the ticket's own branch, check the branch diff for
+  public content (local paths, account names, emails), push that branch and open
+  its PR to `main`. Pushing `main` or any other branch, history rewrites such as
+  the one-time root migration, merging, GitHub settings and unrelated edits still
+  need the user's request. A red check, unclear file scope or a new architecture
+  or roadmap decision holds delivery for the user. Leave unrelated dirty changes
+  unstaged and intact. Read `docs/agents/ticket-delivery.md` before a ticket's
+  first commit.
 
 ## Skills and phase boundaries
 
@@ -77,8 +86,8 @@ triage and domain-doc operations are in `docs/agents/issue-tracker.md`,
   first. Generated ready tickets do not need triage.
 - `/implement` uses agreed seams, behavioral red/green TDD where possible, focused
   checks and a full suite, then `/code-review` on independent Standards and Spec
-  axes. Include actual uncommitted work in the pinned review scope; a HEAD-only
-  diff misses this checkout. Report skipped checks and review limitations honestly.
+  axes. Pin the review to the branch's diff from `main` plus any uncommitted work.
+  Report skipped checks and review limitations honestly.
   Each ticket gets a fresh session; after one, give the exact next `/implement`
   command. Keep context through tickets; hand off when needed, compact last.
 - Other invoked workflows own their outputs: `/wayfinder` decision maps/tickets,
@@ -98,7 +107,8 @@ See `docs/agents/issue-tracker.md`.
 ### Triage labels
 
 Default five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`,
-`ready-for-human`, `wontfix`) is recorded as `Status:` lines in ticket files.
+`ready-for-human`, `wontfix`), plus a local `done` for finished tickets, is
+recorded as `Status:` lines in ticket files.
 See `docs/agents/triage-labels.md`.
 
 ### Domain docs

@@ -74,7 +74,7 @@ on its own. The installed user-invocation flags agree with Codex's corresponding
 | `/grill-with-docs` | Apply both grilling and domain-modeling; investigate facts, ask decision rounds, retain resolved domain knowledge | Empty frontier with no silently assumed branch, followed by the user's confirmation of shared understanding |
 | `/to-spec` | Synthesize the existing discussion and codebase knowledge using the skill's template; check proposed public testing boundaries with the user | Publish the spec to the configured tracker, marked `ready-for-agent`; phase must have been requested |
 | `/to-tickets` | Propose independently verifiable vertical slices and genuine blockers; iterate with the user | Publish only the agreed breakdown, one ticket per file, blockers first |
-| `/implement` | Work the requested ticket at the agreed test boundaries; use TDD where possible, then two-axis code review | Report implemented behavior, validation, review findings, and remaining limitations; commit only when the user requests it |
+| `/implement` | Work the requested ticket at the agreed test boundaries; use TDD where possible, then two-axis code review | Report implemented behavior, validation, review findings, and remaining limitations; commit, push and open a PR on the ticket's own branch as [ticket delivery](ticket-delivery.md) allows; the user merges |
 
 For a multi-session build, keep the route through spec and tickets. For an explicitly
 chosen small single-session task, the router permits grilling -> implementation.
@@ -153,13 +153,15 @@ that TDD was followed.
 
 Code review runs independent Standards and Spec subagents and reports the axes
 separately. Pin a valid baseline and the actual change scope. The installed default
-`git diff <fixed-point>...HEAD` excludes uncommitted work; this dirty checkout needs
-an explicitly scoped comparison that includes ticket changes before claiming they
-were reviewed. Never commit unrelated work just to make that default diff nonempty.
-If the review cannot cover the actual changes, state that limitation.
+`git diff <fixed-point>...HEAD` excludes uncommitted work, so on a ticket branch
+review the diff from `main` together with any uncommitted changes before claiming
+they were reviewed. Never commit unrelated work just to make that default diff
+nonempty. If the review cannot cover the actual changes, state that limitation.
 
-`implement` says to commit. This repository says to commit only when the user asks;
-the repository/user rule overrides the generic skill instruction.
+`implement` says to commit. In this repository that commit goes on the authorized
+ticket's own branch, which the agent may push and open as a PR; merging stays
+with the user. See [ticket delivery](ticket-delivery.md). Outside an authorized
+ticket, commit only when the user asks.
 
 ## Context and other routes
 

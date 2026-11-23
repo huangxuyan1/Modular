@@ -10,7 +10,7 @@ must stay green throughout). Spec: `.scratch/supernode/spec.md`. Decisions: ADR-
 
 **Blocked by:** 01 — Supernode and boundary nodes exist, with derived faces.
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] Prefactor lands first with all existing tests green and no behavior change
 - [x] A supernode containing a single gain node renders bit-identically to the bare gain

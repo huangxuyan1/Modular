@@ -16,7 +16,7 @@ app, where a reader can see what it destroys.
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Watch out:** `NodeId` keeps its underlying type, so its *meaning* changes from index to id
 with no compile error to mark the sites. Every place that treats a node id as an offset into

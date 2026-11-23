@@ -4,7 +4,7 @@
 
 **Blocked by:** 02: Single-root public main.
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] Configure one consistently reported required check for pull requests and `main`; documentation-only changes validate links, format and changed-file scope without unnecessary compilation.
 - [x] Code, build and CI-definition changes run native Windows Debug and Release builds and headless CTest, including kernel purity; CI changes cannot be classified as documentation-only.

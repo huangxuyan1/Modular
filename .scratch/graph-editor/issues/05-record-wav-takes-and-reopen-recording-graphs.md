@@ -7,7 +7,7 @@ preserves recorder configuration and owned MIDI content for another session.
 
 **Blocked by:** 04: Reopen MIDI graphs with their content intact.
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] A recorder node appears with real audio, Start and Stop inputs and suitable
   configuration/status controls. The user chooses and wires it. An accepted

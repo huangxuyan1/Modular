@@ -4,7 +4,7 @@
 
 **Blocked by:** 01: Audited, green baseline candidate.
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] Require the user's approval of the exact ticket-01 candidate tree and any proposed sanitization or exclusion before replacing history. If the tree has changed since approval, re-audit the difference and obtain renewed approval.
 - [x] Create the new root commit from only the approved snapshot, with no previous commit as ancestor; verify both its ancestry and selected file tree locally.
