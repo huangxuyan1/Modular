@@ -17,6 +17,9 @@ linked contract instead of treating this summary as the complete design.
 - **Vocabulary and decisions:** `CONTEXT.md` is the canonical glossary;
   `docs/adr/` records durable trade-offs. Check both before changing behavior.
   A proposal, old code or provisional implementation is not an accepted decision.
+- **Roadmap:** `docs/roadmap.md` orders the falsifiable claims; read it before kernel
+  work. Latest closed: identity (ADR-0004) — graph-scoped ids, RESTRICT deletion,
+  supernode faces addressed by id.
 - **Current Windows GUI:** Tickets 01–05 (authoring, playback, WAV takes,
   Save/Open) are implemented; Undo/Redo and supernode import remain deferred.
   Read `.scratch/graph-editor/spec.md` for agreed scope,

@@ -143,3 +143,13 @@ not evidence that the next one will be; the class was re-derived here, not inher
 
 Ruling only, per wayfinder's plan-don't-do default. Implementation is a claim on
 `docs/roadmap.md`.
+
+## Comments
+
+**2026-11-20 — implemented.** The ruling is built as `.scratch/identity/` (spec, tickets
+01–03) and its claim is closed on `docs/roadmap.md`. One edge was settled on the way, in
+identity ticket 03's D7 and ADR-0004's 2026-11-15 clarification: RESTRICT covers a boundary
+node's wires inside its own graph, while an outer wire on its port is for shared editing in
+`workspace/` to remove with the edit. The requirements this ticket handed to map ticket 10
+(recompile re-`prepare()`s every node and preserves node state) are untouched and remain open
+there.
