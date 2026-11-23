@@ -6,7 +6,7 @@ The app stays responsive and shows the real nodes' capabilities and failures.
 
 **Blocked by:** 01: Author and edit a flat graph.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Implementation:** complete (2026-09-14; uncommitted)
 

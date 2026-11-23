@@ -7,7 +7,7 @@ non-GUI Modular client.
 
 **Blocked by:** 01: Author and edit a flat graph.
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] Public shared Modular Save/Open operations round-trip the primitive set
   delivered by 01: node kinds, authored configuration, actual ports/connections

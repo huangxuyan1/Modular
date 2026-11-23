@@ -7,7 +7,7 @@ This is a usable editing slice backed by shared Modular behavior.
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Implementation:** complete (2026-09-14; uncommitted)
 

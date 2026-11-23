@@ -7,7 +7,7 @@ graph. The saved graph contains the node-owned sequence, not a playback checkpoi
 **Blocked by:** 02: Play MIDI through placed Start/Stop nodes; 03: Save and reopen
 an authored graph.
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] Shared Save/Open and the GUI support every node kind needed for the playable
   graph from 02, including manual trigger nodes, MIDI block/file nodes, synth,

@@ -18,7 +18,7 @@ a node wrapping one must be able to create and delete ports while wired.
 
 **Blocked by:** 01 — Node identity and node deletion.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **This is a big-bang, deliberately.** Expand–contract was considered and rejected: ADR-0004
 settles that a node takes its graph as a constructor parameter, and running old and new
