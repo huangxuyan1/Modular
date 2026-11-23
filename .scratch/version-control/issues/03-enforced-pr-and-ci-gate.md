@@ -6,14 +6,14 @@
 
 **Status:** ready-for-agent
 
-- [ ] Configure one consistently reported required check for pull requests and `main`; documentation-only changes validate links, format and changed-file scope without unnecessary compilation.
+- [x] Configure one consistently reported required check for pull requests and `main`; documentation-only changes validate links, format and changed-file scope without unnecessary compilation.
 - [x] Code, build and CI-definition changes run native Windows Debug and Release builds and headless CTest, including kernel purity; CI changes cannot be classified as documentation-only.
 - [x] Do not count the real window-launching GUI test as a hosted headless success until it is proven reliable on the runner. Record local actual-app smoke evidence separately when relevant.
 - [x] Exercise representative documentation-only and code/CI PRs to show the required check appears and runs the correct validation, including a failure or skipped-job scenario that cannot falsely appear green.
-- [ ] Protect `main` from routine direct pushes and force pushes, require the passing PR check and verify the restriction through actual GitHub behavior. Avoid a mandatory self-review requirement that the sole maintainer cannot satisfy.
+- [x] Protect `main` from routine direct pushes and force pushes, require the passing PR check and verify the restriction through actual GitHub behavior. Avoid a mandatory self-review requirement that the sole maintainer cannot satisfy.
 - [x] Record what CI does and does not cover, with reproducible evidence from the real GitHub checks. Do not auto-merge, release or deploy.
 
-The first and fifth items stay open until the user approves the `main` protection: the `CI gate` check is configured and reports on every PR and push to `main`, but nothing requires it yet.
+The first and fifth items closed on 2026-11-23, when the user approved the `main` protection and it was applied; see "Protection evidence".
 
 ## Decisions (2026-11-15)
 
@@ -33,6 +33,10 @@ The first and fifth items stay open until the user approves the `main` protectio
   - `scripts/build_windows.ps1` runs the window tests only with `-IncludeDesktop`; `ctest --preset windows -L desktop` runs them alone.
   - They run only when a change touches the editor app, and the user is told first.
   - The rule also goes into the "Build and tests" bullet of both root instruction files.
+- **Superseded later the same day: back on by default locally.** The editor's `desktop` tests now run on a private Win32 desktop, so nothing shows on the user's screen. The user then chose: "Yes, on by default (Recommended)".
+  - Local runs include them again; hosted CI still excludes them with `--label-exclude desktop`.
+  - Another session's PR makes the change in `scripts/build_windows.ps1` and the docs.
+  - The instruction-file rule above was never added: it is no longer needed.
 
 ## Evidence (2026-11-23)
 
@@ -67,4 +71,20 @@ The workflow is `.github/workflows/ci.yml`; `docs/windows.md`, "Continuous integ
   - the base-commit guard repeated in two jobs;
   - coverage restated in the workflow comments and `docs/windows.md`;
   - indented code blocks and GitHub's full slug rules, which the checker only approximates. These can only cause false failures, never a false pass.
-- **After PR 2 merges.** Retargeting PR 3 to `main` re-runs CI on the code path, because the squash leaves PR 2's commits in PR 3's diff. Rebase it with `git rebase --onto origin/main <PR 2 head> docs/records-cleanup`, push, and confirm that its run takes the documentation-only path again.
+- **After PR 2 merged.** PR 2 was squash-merged as `a8c433b`, with the same tree as its head `536dd4a`. PR 3 was rebased onto `main`, retargeted to it, and passed on the documentation-only path (run 45148729045, base `a8c433b`). The `ticket/vc03-ci-gate` branch was then deleted.
+
+## Protection evidence (2026-11-23)
+
+The user approved all four proposals: "Approve all four (Recommended)", relayed by the planning session, then confirmed directly with "Yes, apply all four".
+
+- **Repository settings.** Squash merging is the only method allowed (`allow_merge_commit` and `allow_rebase_merge` are false), and `delete_branch_on_merge` is true.
+- **Ruleset `main`** (id 27887846, `enforcement: active`, targets `refs/heads/main`). Its rules:
+  - `deletion` and `non_fast_forward`;
+  - `pull_request` with 0 required approvals, no code-owner, last-push or thread-resolution requirement, and `allowed_merge_methods: [squash]`;
+  - `required_status_checks` requiring `CI gate` from GitHub Actions (`integration_id` 15368), with `strict_required_status_checks_policy: true`, so a branch must be up to date with `main`.
+
+  GitHub added `require_extra_approval_for_unattributed_changes: true` by default. Its documentation limits it to unattributed Copilot pull requests and says it has no effect when zero approvals are required.
+- **No bypass (D2).** The ruleset reports `bypass_actors: []` and `current_user_can_bypass: never` for the owner.
+- **A direct push is rejected.** Commit `badb049` was empty and had `main` (`819301b`) as its parent, so it would have been harmless if accepted. Pushing it straight to `main` failed with `GH013: Repository rule violations found for refs/heads/main`, listing "Changes must be made through a pull request." and "Required status check "CI gate" is expected." Afterwards `main` was still `819301b`.
+- **A stale branch cannot merge.** After PRs 5 and 6 merged, PR 3 at `b8597d8` reported `mergeStateStatus: BEHIND` until it was rebased onto `819301b`.
+- **Not exercised live:** a force push or a deletion of `main`, because either would be destructive if accepted. Both rules are active according to `gh api repos/<owner>/Modular/rules/branches/main`.

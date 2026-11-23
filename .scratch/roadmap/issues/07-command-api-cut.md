@@ -9,8 +9,10 @@ Blocked by: 02, 03
 The DAW is a mapping from user gestures to engine operations: drag a MIDI file in, and the
 app calls the engine to add a midi-block node connected to the track supernode. That
 presupposes a layer that doesn't exist. Today `Graph` exposes `addNode` and connection
-edits directly, with no ids stable across sessions, no atomicity, no undo, and no story for
-editing a graph an `Engine` is currently running.
+edits directly, with no atomicity, no undo, and no story for editing a graph an `Engine` is
+currently running. Ids are no longer missing: map ticket 03 has them minted per graph at
+authoring time ([ADR-0004](../../../docs/adr/0004-ports-and-nodes-have-graph-scoped-ids.md)),
+and Save/Open restores every saved id ([graph persistence](../../../docs/graph-persistence.md)).
 
 The work is entangled, so the decision is mostly about where to cut:
 
