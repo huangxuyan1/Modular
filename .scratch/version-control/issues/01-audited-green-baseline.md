@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] Inventory tracked, untracked and relevant ignored files, including pending work from earlier milestones; account for every candidate rather than relying on the current branch diff alone.
 - [x] Review the exact proposed public file list and inspect included content for private inputs, local paths, credentials, generated files, fixtures, third-party provenance and reproducible investigation evidence. Propose explicit sanitization or exclusion for unsuitable material without silently dropping work.

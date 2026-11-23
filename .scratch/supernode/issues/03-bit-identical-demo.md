@@ -10,7 +10,7 @@ full-vector comparison shape.
 
 **Blocked by:** 02 — The engine flattens supernodes by resolution.
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] Milestone-1 graph with its midi-clip section as a supernode renders bit-identically
       to the flat build (full sample-vector equality, graphs built fresh per render)

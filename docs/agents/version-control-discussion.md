@@ -2,10 +2,10 @@
 
 Status: grilling complete; shared understanding confirmed 2026-09-24.
 This is a decision record for a later workflow/spec phase, **not an active Git policy**.
-The current instruction to commit only when explicitly asked remains in force until
-an authorized change to the agent instructions records the new workflow. No reset,
-branch deletion, commit, remote creation, push or CI change was authorized by this
-interview.
+It describes the rules as they stood on 2026-09-24. No reset, branch deletion,
+commit, remote creation, push or CI change was authorized by this interview. The
+active workflow is the root **Commits and delivery** rule and
+[ticket delivery](ticket-delivery.md), recorded by version-control ticket 04.
 
 ## Destination
 

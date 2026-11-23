@@ -10,7 +10,7 @@ vocabulary in CONTEXT.md.
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] A supernode owns its inner graph by value and exposes it for authoring edits
 - [x] Boundary nodes declare one exposed port each (direction + opaque PortType); they are

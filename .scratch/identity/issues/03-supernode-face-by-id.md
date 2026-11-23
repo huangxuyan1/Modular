@@ -18,7 +18,7 @@ it. The close-out review follows it and is not part of it.
 
 **Blocked by:** 02 — Port identity, port mutation, and the claim's demo.
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] A supernode's outer port id is the port id of the boundary node backing it, with no
       conversion step.
