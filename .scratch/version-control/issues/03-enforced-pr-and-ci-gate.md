@@ -37,9 +37,26 @@ The workflow is `.github/workflows/ci.yml`; `docs/windows.md`, "Continuous integ
 | 44689982152, 45144867268 | PR 3, `ae3dcfb` and rebased `a7139fd` | docs-only | `docs_only=true`; `check_docs.py` reported 0 problems in 64 Markdown files; `git diff --check` was clean; `windows` was skipped; `CI gate` succeeded without compiling. |
 | 45144947740 | PR 3, `20279bb`, deliberately broken link | docs-only | Docs checks failed with `.scratch/roadmap/issues/08-realtime-callback-probe.md:19: link target not in the repository: ../../docs/node-io.md`. `CI gate` failed with "Docs checks did not succeed." |
 | 45145054128 | PR 3, `1b7d092`, link fixed | docs-only | `CI gate` succeeded. |
+| 45146164840, attempt 1 | PR 2, `d44c04d`, cancelled during the build | code | Both `windows` jobs were cancelled while building. `CI gate` still ran and failed with `build=cancelled`: "Windows Debug/Release build and tests: cancelled." |
+| 45146164840, attempt 2 | PR 2, `d44c04d`, re-run | code | 6/6 in Debug and Release; `CI gate` succeeded. |
+| 45146555184 | PR 3, `c1fbb83`, after the review fixes | docs-only | Same result under the revised workflow and checker: "links, whitespace and changed-file scope passed". |
 
-- **A skip cannot pass as green.** `CI gate` runs with `if: always()`. It fails unless classification and the docs checks succeed. It accepts a skipped `windows` job only when classification reported documentation-only; on the code path, anything but success fails. A change to `.github/`, an empty diff or a base commit CI cannot find always takes the code path. The live failure is run 45144947740. A skipped build on the code path was not forced live, because that would mean breaking the workflow itself.
+- **A skip cannot pass as green.** `CI gate` runs with `if: always()`. It fails unless classification and the docs checks succeed. It accepts a skipped `windows` job only when classification reported documentation-only; on the code path, anything but success fails. A change to `.github/`, an empty diff or a base commit CI cannot find always takes the code path. Two failures were shown live: a broken link (run 45144947740), and a code-path build cancelled mid-run (run 45146164840, attempt 1). `if: !cancelled()` would have left the gate skipped instead, and branch protection counts a skipped required check as passing. The workflow also re-runs when a PR is edited, so a PR retargeted to a new base is classified again rather than keeping a pass computed against its old base.
+- **Format means whitespace.** Docs checks cover internal links and anchors, byte-identical instruction files, and `git diff --check` (whitespace errors and conflict markers in changed lines). No Markdown style linter runs.
 - **Merge state.** While run 45144947740 was failing, PR 3 reported `mergeStateStatus: UNSTABLE`, not `BLOCKED`: its base is PR 2's branch, and no check is required there. Blocking on `main` is verified with the protection item.
 - **GUI tests stay local.** CI excludes the `desktop`-labelled `graph_editor_app` and `graph_editor_gesture`, which open the real window. This ticket changes CI and documentation, not the editor, so actual-app evidence is not relevant to it. Full local suites that happened to run earlier passed 8/8, but they are not part of this ticket's evidence. On 2026-11-23 the user asked that agents stop running the window tests, which flash on their screen, so later local checks for this ticket ran only the headless selection.
 - **Runner image.** `windows-2025` and `windows-latest` now carry Visual Studio 2026, while `CMakePresets.json` names the Visual Studio 2022 generator. The job therefore pins `windows-2022`; when GitHub retires that image, the preset and the runner change together.
-- **After PR 2 merges.** Rebase PR 3 onto `main` with `git rebase --onto origin/main <PR 2 head> docs/records-cleanup`, retarget it to `main`, and confirm that its run takes the documentation-only path again.
+- **Review.** `/code-review` ran on 2026-11-23 on separate Standards and Spec axes, covering both PRs. Fixed as a result:
+  - a retargeted PR kept a stale documentation-only pass;
+  - pushes to `main` could cancel each other while queued;
+  - the checker skipped wrapped links and drive paths, and accepted `..` above the root;
+  - fences closed on info-string lines;
+  - HTML anchors were supported but unused;
+  - the check was called "required" too early;
+  - the out-of-scope "Since answered" line in roadmap ticket 07.
+
+  Left as is:
+  - the base-commit guard repeated in two jobs;
+  - coverage restated in the workflow comments and `docs/windows.md`;
+  - indented code blocks and GitHub's full slug rules, which the checker only approximates. These can only cause false failures, never a false pass.
+- **After PR 2 merges.** Retargeting PR 3 to `main` re-runs CI on the code path, because the squash leaves PR 2's commits in PR 3's diff. Rebase it with `git rebase --onto origin/main <PR 2 head> docs/records-cleanup`, push, and confirm that its run takes the documentation-only path again.
