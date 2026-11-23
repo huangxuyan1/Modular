@@ -31,6 +31,41 @@ void require(bool condition, const std::string& message) {
   if (!condition) throw std::runtime_error(message);
 }
 
+// A private Win32 desktop that is never the input desktop: the editor's main
+// window, file choosers and task dialogs exist and paint there, but nothing
+// reaches the user's screen or taskbar. This thread moves there before it
+// touches any window, so window enumeration and launch() use the same desktop.
+// It must outlive every RunningApp so the editor is closed before it is.
+class PrivateDesktop {
+public:
+  PrivateDesktop() : original_(GetThreadDesktop(GetCurrentThreadId())) {
+    const auto name = L"ModularGuiTest-" + std::to_wstring(GetCurrentProcessId());
+    desktop_ = CreateDesktopW(name.c_str(), nullptr, nullptr, 0, GENERIC_ALL, nullptr);
+    require(desktop_ != nullptr, "could not create a private test desktop");
+    if (!SetThreadDesktop(desktop_)) {
+      CloseDesktop(desktop_);
+      throw std::runtime_error("could not move the test thread to its private desktop");
+    }
+  }
+  PrivateDesktop(const PrivateDesktop&) = delete;
+  PrivateDesktop& operator=(const PrivateDesktop&) = delete;
+  ~PrivateDesktop() {
+    // A desktop cannot be closed while it is this thread's desktop; process
+    // exit releases it anyway if switching back ever fails.
+    if (SetThreadDesktop(original_)) CloseDesktop(desktop_);
+  }
+private:
+  HDESK original_;
+  HDESK desktop_ = nullptr;
+};
+
+std::wstring objectName(HANDLE object) {
+  wchar_t name[256]{};
+  require(GetUserObjectInformationW(object, UOI_NAME, name, sizeof(name), nullptr) != 0,
+          "could not name the test desktop");
+  return name;
+}
+
 struct RunningApp {
   PROCESS_INFORMATION process{};
   HWND window = nullptr;
@@ -59,8 +94,12 @@ BOOL CALLBACK findWindow(HWND window, LPARAM parameter) {
 }
 
 void launch(RunningApp& app, const wchar_t* executable) {
+  // Start the editor on this thread's desktop, the one EnumWindows searches.
+  auto desktop = objectName(GetProcessWindowStation()) + L"\\" +
+                 objectName(GetThreadDesktop(GetCurrentThreadId()));
   STARTUPINFOW startup{};
   startup.cb = sizeof(startup);
+  startup.lpDesktop = desktop.data();
   startup.dwFlags = STARTF_USESHOWWINDOW;
   startup.wShowWindow = SW_HIDE;
   std::wstring command = L"\"" + std::wstring(executable) + L"\"";
@@ -568,6 +607,7 @@ void recorderRecoveryAndCloseCheck(const wchar_t* executable) {
 #include "WindowsPlaybackProbe.h"
 
 void capture(HWND window, const std::filesystem::path& path) {
+  // Shown only for the capture; on the private desktop nobody sees it.
   ShowWindow(window, SW_SHOWNOACTIVATE);
   RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
   RECT rect{};
@@ -610,6 +650,7 @@ void capture(HWND window, const std::filesystem::path& path) {
 
 int wmain(int argc, wchar_t** argv) {
   try {
+    const PrivateDesktop desktop;
     const bool gesture = argc == 3 && std::wstring(argv[2]) == L"--gesture";
     require(argc == 2 || argc == 3 || (argc == 4 && std::wstring(argv[3]) == L"--audio"),
             "usage: graph_editor_ui_tests path-to-graph_editor.exe [capture.bmp [--audio] | --gesture]");
