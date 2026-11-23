@@ -93,7 +93,25 @@ BOOL CALLBACK findWindow(HWND window, LPARAM parameter) {
   return TRUE;
 }
 
+// Every editor joins one job whose only handle is held until this process
+// ends. Closing it kills the job's processes, so an editor cannot outlive the
+// test, even when CTest's timeout terminates the test without unwinding.
+HANDLE editorJob() {
+  static const HANDLE job = [] {
+    const HANDLE created = CreateJobObjectW(nullptr, nullptr);
+    require(created != nullptr, "could not create the graph editor job");
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    require(SetInformationJobObject(created, JobObjectExtendedLimitInformation,
+                                    &limits, sizeof(limits)) != 0,
+            "could not make the graph editor job kill on close");
+    return created;
+  }();
+  return job;
+}
+
 void launch(RunningApp& app, const wchar_t* executable) {
+  const HANDLE job = editorJob();
   // Start the editor on this thread's desktop, the one EnumWindows searches.
   auto desktop = objectName(GetProcessWindowStation()) + L"\\" +
                  objectName(GetThreadDesktop(GetCurrentThreadId()));
@@ -103,9 +121,15 @@ void launch(RunningApp& app, const wchar_t* executable) {
   startup.dwFlags = STARTF_USESHOWWINDOW;
   startup.wShowWindow = SW_HIDE;
   std::wstring command = L"\"" + std::wstring(executable) + L"\"";
-  require(CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, 0,
+  require(CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_SUSPENDED,
                           nullptr, nullptr, &startup, &app.process) != 0,
           "could not launch graph editor");
+  // Join the job before the editor runs any code.
+  if (!AssignProcessToJobObject(job, app.process.hProcess)) {
+    TerminateProcess(app.process.hProcess, 1);
+    throw std::runtime_error("could not tie the graph editor to the test process");
+  }
+  ResumeThread(app.process.hThread);
   for (int attempt = 0; attempt < 100 && !app.window; ++attempt) {
     EnumWindows(findWindow, reinterpret_cast<LPARAM>(&app));
     if (!app.window) std::this_thread::sleep_for(std::chrono::milliseconds(50));

@@ -189,13 +189,13 @@ Cancel or a failed Save leaves the current running capture intact.
 
 ## Verification
 
-The normal build script runs the headless CTest suite. The app test is
-`desktop`-labelled and opens real windows, so it runs only with `-IncludeDesktop`
+The normal build script runs the full CTest suite, including the
+`desktop`-labelled app test, which drives the real editor on a private desktop
 (see [windows.md](windows.md)). Focused authoring checks:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_windows.ps1 -Target authoring_tests -TestRegex '^authoring_tests$'
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_windows.ps1 -Target graph_editor_ui_tests -TestRegex '^graph_editor_app$' -IncludeDesktop
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_windows.ps1 -Target graph_editor_ui_tests -TestRegex '^graph_editor_app$'
 ```
 
 The integration tests use real Graph, Engine and node implementations to verify
@@ -207,9 +207,11 @@ The app test launches the real executable and drives ordinary Windows mouse and
 control messages. It reads visible inspector, status and graph-count controls;
 there is no test-only graph access. It checks palette placement, settings, valid
 and rejected wires, movement, disconnection, deletion and cancellation. The test
-briefly shows its window without activating it to capture real rendering, then
-closes it. Captures are `build/windows/graph-editor-Debug.bmp` and
-`graph-editor-Release.bmp`. Windows desktop access is required for this check.
+runs the editor on a private Win32 desktop of its own, so its window and dialogs
+never appear on the user's screen. It shows the window there without activating
+it to capture real rendering, then hides it. Captures are
+`build/windows/graph-editor-Debug.bmp` and `graph-editor-Release.bmp`. Windows
+desktop access is required for this check.
 
 The app test also covers Run/Edit, cycle and readiness failures, MIDI import
 repair, manual node buttons, disabled edits, movement in Run, and normal close
