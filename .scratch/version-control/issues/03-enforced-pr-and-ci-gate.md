@@ -26,6 +26,14 @@ The first and fifth items stay open until the user approves the `main` protectio
 
   The failure scenario runs on the same PR: push a commit with a deliberately broken link, see the required check report failure, then fix it.
 
+## Decisions (2026-11-23)
+
+- **Window tests are off by default.** The real-window tests flashed windows on the user's screen during agent runs. The user chose the recommended option: "sure i take your recommendation Label + default off (Recommended)". The tests keep the `desktop` CTest label this ticket introduced, because the name describes the requirement.
+  - CI, the build script and agents run the headless selection by default (`-LE desktop`).
+  - `scripts/build_windows.ps1` runs the window tests only with `-IncludeDesktop`; `ctest --preset windows -L desktop` runs them alone.
+  - They run only when a change touches the editor app, and the user is told first.
+  - The rule also goes into the "Build and tests" bullet of both root instruction files.
+
 ## Evidence (2026-11-23)
 
 The workflow is `.github/workflows/ci.yml`; `docs/windows.md`, "Continuous integration", records what it covers and what it does not. The code/CI PR is [PR 2](https://github.com/huangxuyan1/Modular/pull/2). The documentation-only PR is [PR 3](https://github.com/huangxuyan1/Modular/pull/3), stacked on PR 2's branch so the workflow runs before it reaches `main`. Each run below is reproducible with `gh run view <run> --log`.
@@ -44,7 +52,7 @@ The workflow is `.github/workflows/ci.yml`; `docs/windows.md`, "Continuous integ
 - **A skip cannot pass as green.** `CI gate` runs with `if: always()`. It fails unless classification and the docs checks succeed. It accepts a skipped `windows` job only when classification reported documentation-only; on the code path, anything but success fails. A change to `.github/`, an empty diff or a base commit CI cannot find always takes the code path. Two failures were shown live: a broken link (run 45144947740), and a code-path build cancelled mid-run (run 45146164840, attempt 1). `if: !cancelled()` would have left the gate skipped instead, and branch protection counts a skipped required check as passing. The workflow also re-runs when a PR is edited, so a PR retargeted to a new base is classified again rather than keeping a pass computed against its old base.
 - **Format means whitespace.** Docs checks cover internal links and anchors, byte-identical instruction files, and `git diff --check` (whitespace errors and conflict markers in changed lines). No Markdown style linter runs.
 - **Merge state.** While run 45144947740 was failing, PR 3 reported `mergeStateStatus: UNSTABLE`, not `BLOCKED`: its base is PR 2's branch, and no check is required there. Blocking on `main` is verified with the protection item.
-- **GUI tests stay local.** CI excludes the `desktop`-labelled `graph_editor_app` and `graph_editor_gesture`, which open the real window. This ticket changes CI and documentation, not the editor, so actual-app evidence is not relevant to it. Full local suites that happened to run earlier passed 8/8, but they are not part of this ticket's evidence. On 2026-11-23 the user asked that agents stop running the window tests, which flash on their screen, so later local checks for this ticket ran only the headless selection.
+- **GUI tests stay local.** CI excludes the `desktop`-labelled `graph_editor_app` and `graph_editor_gesture`, which open the real window. This ticket changes CI and documentation, not the editor, so actual-app evidence is not relevant to it. Full local suites that happened to run earlier passed 8/8, but they are not part of this ticket's evidence. On 2026-11-23 the user asked that agents stop running the window tests, which flash on their screen, so later local checks for this ticket ran only the headless selection. The decision above made that the default.
 - **Runner image.** `windows-2025` and `windows-latest` now carry Visual Studio 2026, while `CMakePresets.json` names the Visual Studio 2022 generator. The job therefore pins `windows-2022`; when GitHub retires that image, the preset and the runner change together.
 - **Review.** `/code-review` ran on 2026-11-23 on separate Standards and Spec axes, covering both PRs. Fixed as a result:
   - a retargeted PR kept a stale documentation-only pass;

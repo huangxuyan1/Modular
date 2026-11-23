@@ -189,11 +189,13 @@ Cancel or a failed Save leaves the current running capture intact.
 
 ## Verification
 
-The normal build script runs the complete CTest suite. Focused authoring checks:
+The normal build script runs the headless CTest suite. The app test is
+`desktop`-labelled and opens real windows, so it runs only with `-IncludeDesktop`
+(see [windows.md](windows.md)). Focused authoring checks:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_windows.ps1 -Target authoring_tests -TestRegex '^authoring_tests$'
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_windows.ps1 -Target graph_editor_ui_tests -TestRegex '^graph_editor_app$'
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_windows.ps1 -Target graph_editor_ui_tests -TestRegex '^graph_editor_app$' -IncludeDesktop
 ```
 
 The integration tests use real Graph, Engine and node implementations to verify

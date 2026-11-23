@@ -2,7 +2,9 @@ param(
   [ValidateSet('Debug', 'Release', 'RelWithDebInfo', 'MinSizeRel')]
   [string]$Configuration = 'Debug',
   [string]$Target = 'ALL_BUILD',
-  [string]$TestRegex = ''
+  [string]$TestRegex = '',
+  # Tests labelled "desktop" open real windows on the user's screen; opt in.
+  [switch]$IncludeDesktop
 )
 
 $ErrorActionPreference = 'Stop'
@@ -22,6 +24,7 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'CMake build failed.' }
   $ctestArguments = @('--preset', 'windows', '--build-config', $Configuration)
   if ($TestRegex) { $ctestArguments += @('-R', $TestRegex) }
+  if (-not $IncludeDesktop) { $ctestArguments += @('--label-exclude', 'desktop') }
   & ctest @ctestArguments
   if ($LASTEXITCODE -ne 0) { throw 'CTest failed.' }
 } finally {
