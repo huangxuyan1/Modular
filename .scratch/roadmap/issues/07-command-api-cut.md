@@ -19,7 +19,6 @@ The work is entangled, so the decision is mostly about where to cut:
 - **Stable node ids** pull in serialization, which pulls in the deferred
   `value<T>`/`event<T>` parameterized-vs-dynamic ruling, since type ids must survive a
   round trip. Does the API need persistence-grade ids on day one, or session-scoped ones?
-  *Since answered:* ids are persistence-grade; they survive Save/Open.
 - **Atomicity.** "Add a node and connect it" must not half-apply. Is that a transaction
   concept, or is it avoided by making the whole edit-then-recompile step the unit?
 - **Undo/redo.** If the graph is the single source of truth and apps issue commands, undo
