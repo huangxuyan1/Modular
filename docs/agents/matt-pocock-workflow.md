@@ -154,7 +154,7 @@ that TDD was followed.
 Code review runs independent Standards and Spec subagents and reports the axes
 separately. Pin a valid baseline and the actual change scope. The installed default
 `git diff <fixed-point>...HEAD` excludes uncommitted work, so on a ticket branch
-review the diff from `main` together with any uncommitted changes before claiming
+review the diff from `origin/main` together with any uncommitted changes before claiming
 they were reviewed. Never commit unrelated work just to make that default diff
 nonempty. If the review cannot cover the actual changes, state that limitation.
 

@@ -27,8 +27,8 @@ The standing commit rule takes effect only once approved and recorded; it does n
 
 This ticket ran on its own branch and worktree under the user's go-ahead for it ("Start both", relayed by the planning session). The standing rule it records takes effect only once its PR merges.
 
-- **Instruction files.** Both root files replace the **Commits** bullet with **Commits and delivery**. It grants the standing authority of D5 and keeps every other gate with the user: pushing `main` or any other branch, history rewrites such as the root migration, merging, GitHub settings and unrelated edits. The `/implement` bullet now pins review to the branch's diff from `main` plus uncommitted work, and the triage-label summary names `done`. `cmp` reports the two files identical, as does `scripts/check_docs.py`. Each is 7,481 bytes, within Codex's default 32 KiB budget.
-- **Procedure.** `docs/agents/ticket-delivery.md` holds the steps, the public-content check and the stops. Three agent docs that restated "commit only when asked" now point at it: `matt-pocock-workflow.md`, `matt-skills-catalog.md` and `version-control-discussion.md`. The last is a historical record and now says so.
+- **Instruction files.** Both root files replace the **Commits** bullet with **Commits and delivery**. It grants the standing authority of D5 and keeps every other gate with the user: other commits, pushing `main` or any other branch, rewriting pushed history or anything like the root migration, merging, GitHub settings and unrelated edits. The `/implement` bullet now pins review to the branch's diff from `origin/main` plus uncommitted work, and the triage-label summary names `done`. `cmp` reports the two files identical, as does `scripts/check_docs.py`. Each is 7,515 bytes as committed, within Codex's default 32 KiB budget.
+- **Procedure.** `docs/agents/ticket-delivery.md` holds the steps, the public-content check, and the holds and stops. Every agent doc that restated "commit only when asked" now defers to the root rule: `matt-pocock-workflow.md`, four places in `matt-skills-catalog.md`, and `version-control-discussion.md`. The last is a historical record and now says so.
 - **`done`.** Added to `docs/agents/triage-labels.md`. Ticket 03's cleanup PR changed no `Status:` line, because `done` did not exist yet. This branch sets `done` on 14 tickets. Each has every checklist item ticked, and its recorded evidence shows the work finished and on `main`:
   - graph-editor 01–05: implementation notes and review records `01-review.md` to `05-review.md`, published in the root commit;
   - identity 01–03: the claim closed on 2026-11-20, and ticket 03 merged as PR 4;
@@ -41,7 +41,7 @@ This ticket ran on its own branch and worktree under the user's go-ahead for it 
 ### Isolation and cleanup
 
 - **Isolation.** While this ticket ran, `git worktree list` showed it in its own worktree on its own branch. The audio-subtype session worked beside it in another worktree, on another branch, writing `.scratch/audio-subtype/issues/`. Both started from `main` at `71fc29b`, and the primary checkout stayed on `main`. This branch's diff has no path under `.scratch/audio-subtype/`.
-- **Cleanup, not yet shown.** No head branch of merged PRs 1–6 is left on GitHub; PR 3's was deleted two seconds after its merge (`head_ref_deleted` in its event log). Three local worktrees and their branches from those PRs remain; they belong to other sessions, so this ticket leaves them alone. Cleanup is shown when this ticket's own worktree and local branch are removed after it merges (step 10 of the procedure).
+- **Cleanup, not yet shown.** No head branch of merged PRs 1–6 is left on GitHub; PR 3's was deleted two seconds after its merge (`head_ref_deleted` in its event log). Locally, three worktrees and five branches from earlier sessions remain: the heads of PRs 3, 4, 5 and 6, and one session's unused starting branch. They belong to other sessions, so this ticket leaves them alone. Cleanup is shown when this ticket's own worktree and local branch are removed after it merges (step 10 of the procedure).
 
 ### End to end
 
@@ -49,9 +49,36 @@ Ticket 03's PR 2 passed through every stage before the standing rule existed: ch
 
 ### Stops
 
-The rule is in both root files and in the procedure's "Stops" section. A red check blocks merging: ticket 03 showed `CI gate` failing on a broken link and on a cancelled build, and the protection on `main` requires it. Nothing merges automatically. A stop for unclear file scope or a new architecture decision has not yet happened under the standing rule. Staging one would be invented work, so this item waits for a real occurrence.
+The rule is in both root files and in the procedure's "Holds and stops" section. A red check blocks merging: ticket 03 showed `CI gate` failing on a broken link and on a cancelled build, and the protection on `main` requires it. Nothing merges automatically. A stop for unclear file scope or a new architecture decision has not yet happened under the standing rule. Staging one would be invented work, so this item waits for a real occurrence.
+
+### Closing the open items
+
+A later ticket's branch cannot edit this ticket, because that is outside its scope. Once the evidence above exists, a records PR the user asks for ticks items 4–6, records the evidence and sets `done`.
 
 ### Choices made in this ticket
 
-- **No force push.** Catching up with `main` merges `origin/main` into the ticket branch, and the squash drops that merge commit. A force push counts as a history rewrite and needs the user's request.
+- **No force push.** Catching up with `main` merges `origin/main` into the ticket branch, and the squash drops that merge commit. A force push rewrites pushed history and needs the user's request.
+- **Unpushed checkpoints may be rewritten.** When the public-content check finds something in a commit that was never pushed, the agent may amend or squash it, since nothing public changes. Content already pushed goes to the user.
+- **Cleanup is the user's.** D5's authority ends at the PR, so the user removes a merged ticket's worktree and local branch, or asks a session to.
 - **Commit identity.** Commit metadata is published with every push, so the public-content check covers author addresses. This branch's commits use the account's GitHub noreply address, as the squash commits on `main` do.
+
+### Review (2026-11-23)
+
+`/code-review` ran on separate Standards and Spec axes over `git diff origin/main...HEAD` at `5c07f15`; nothing was uncommitted. The Spec axis confirmed the 14 `done` changes, found no finished ticket missed, and checked the root files' identity and the Git facts above.
+
+Fixed:
+- The procedure counted a relayed go-ahead and a delegated merge that the root rule did not. The root rule now names the relay, and in both documents merging needs the user's request.
+- The root rule and the procedure worded red checks differently. Both now say a red check holds delivery until it is green, and an out-of-scope fix, unclear scope or a new decision stops it.
+- The public-content check read only the net diff. It now reads every checkpoint with `git log -p` and says what to do with what it finds.
+- The root rule's pointer fired at a ticket's first commit, after branching. It now fires before the ticket starts.
+- The root rule led with a prohibition. It now states the authorized work first.
+- The procedure restated the root rule's gates and the `done` criterion. It now defers to both.
+- The review baseline read `main` in some places and `origin/main` in others.
+- `matt-skills-catalog.md` still restated the old rule in two more places.
+- The root rule listed fewer public-content categories than D5's check. It now gives examples and points to the procedure's list.
+- The evidence miscounted the leftover local branches, gave the root files' working-copy size, and did not say how the open items close.
+
+Left as is:
+- The `## Evidence` heading, where `issue-tracker.md` names `## Comments`: ticket 03 set this precedent for version-control tickets.
+- The root migration named in the root rule: the first checklist item requires that gate.
+- Holds and stops restated in the procedure: it adds detail the always-loaded root rule leaves out.

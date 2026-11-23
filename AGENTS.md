@@ -34,17 +34,19 @@ linked contract instead of treating this summary as the complete design.
   RESTRICT on wired primitive deletion, and block-size-invariant processing. Follow
   `docs/project-foundations.md` and the surrounding code for detailed contracts.
   Kernel authoring/compile errors throw; process paths do not.
-- **Commits and delivery:** Commit only if the user asks, even when a skill
-  suggests otherwise, except on a ticket the user authorized (an `/implement`
-  invocation or an explicit go-ahead for that ticket). There, without asking, make
-  scoped checkpoint commits on the ticket's own branch, check the branch diff for
-  public content (local paths, account names, emails), push that branch and open
-  its PR to `main`. Pushing `main` or any other branch, history rewrites such as
-  the one-time root migration, merging, GitHub settings and unrelated edits still
-  need the user's request. A red check, unclear file scope or a new architecture
-  or roadmap decision holds delivery for the user. Leave unrelated dirty changes
-  unstaged and intact. Read `docs/agents/ticket-delivery.md` before a ticket's
-  first commit.
+- **Commits and delivery:** On a ticket the user authorized (an `/implement`
+  invocation, or the user's explicit go-ahead for that ticket, which another
+  session may relay), work without asking: make scoped checkpoint commits on the
+  ticket's own branch, check every commit on it for content unfit to publish
+  (local paths, account names, emails; the procedure lists the rest), push that
+  branch and open its PR to `main`. Everything else needs the user's request, even
+  when a skill suggests otherwise: other commits, pushing `main` or any other
+  branch, rewriting pushed history (a force push) or anything like the one-time
+  root migration, merging, GitHub settings and unrelated edits. A red check holds
+  delivery until it is green; unclear file scope or a new architecture or roadmap
+  decision stops it for the user. Leave unrelated dirty changes unstaged and
+  intact. Read `docs/agents/ticket-delivery.md` before starting an authorized
+  ticket.
 
 ## Skills and phase boundaries
 
@@ -86,7 +88,8 @@ triage and domain-doc operations are in `docs/agents/issue-tracker.md`,
   first. Generated ready tickets do not need triage.
 - `/implement` uses agreed seams, behavioral red/green TDD where possible, focused
   checks and a full suite, then `/code-review` on independent Standards and Spec
-  axes. Pin the review to the branch's diff from `main` plus any uncommitted work.
+  axes. Pin the review to the branch's diff from `origin/main` plus any uncommitted
+  work.
   Report skipped checks and review limitations honestly.
   Each ticket gets a fresh session; after one, give the exact next `/implement`
   command. Keep context through tickets; hand off when needed, compact last.
