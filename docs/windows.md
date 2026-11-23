@@ -43,17 +43,19 @@ so non-ASCII comments work regardless of the Windows display language.
 ## Continuous integration
 
 GitHub Actions runs `.github/workflows/ci.yml` on every pull request and every
-push to `main`. The required check is the **CI gate** job. It always reports, and
-it passes only if every job the change needs has passed; a skipped or cancelled
-job makes it fail rather than pass.
+push to `main`, and again when a pull request's base branch changes. Its **CI gate**
+job is the one check for branch protection to require. It always reports, and it
+passes only if every job the change needs has passed; a skipped or cancelled job
+makes it fail rather than pass.
 
 - **Changed-file scope:** a change is documentation-only when every changed path
   ends in `.md` and none is under `.github/`. Anything else, including CI changes,
   build files, an empty diff or a base commit CI cannot find, takes the build path.
-- **Every change:** `python scripts/check_docs.py` checks that each repository-internal
-  Markdown link reaches a tracked file and, for Markdown targets, an existing
-  heading, and that `AGENTS.md` and `CLAUDE.md` are byte-identical. `git diff --check`
-  rejects whitespace errors and conflict markers in the changed lines.
+- **Every change:** `python scripts/check_docs.py` (Python 3, also runnable
+  locally) checks that each repository-internal Markdown link reaches a tracked
+  file and, for Markdown targets, an existing heading, and that `AGENTS.md` and
+  `CLAUDE.md` are byte-identical. `git diff --check` rejects whitespace errors and
+  conflict markers in the changed lines. No Markdown style linter runs.
 - **Build path:** on the `windows-2022` image (Visual Studio 2022, the preset's
   generator), Debug and Release each configure the `windows` preset, build every
   target and run CTest with `--label-exclude desktop`: the kernel, node, authoring
@@ -62,14 +64,16 @@ job makes it fail rather than pass.
 CI does not cover:
 
 - the two `desktop`-labelled tests, `graph_editor_app` and `graph_editor_gesture`,
-  which open the real graph-editor window. Run the full suite locally with the
-  script above and record that result as the ticket's GUI evidence;
+  which open the real graph-editor window. When a change affects the graph
+  editor, run the full suite locally with the script above and record that
+  result as the ticket's GUI evidence;
 - whether external links resolve, audible playback through an audio device, or
   builds on other platforms;
 - releases or deployment; nothing merges automatically.
 
 To run the hosted test selection locally after a build, use
-`ctest --preset windows -LE desktop`; append `--build-config Release` for Release.
+`ctest --preset windows --label-exclude desktop`; append `--build-config Release`
+for Release.
 
 ## Moving between machines
 

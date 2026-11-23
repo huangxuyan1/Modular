@@ -1,18 +1,22 @@
-# The one required check is the "CI gate" job. It always reports, and it passes
-# only when every job the change needs has passed, so a skipped build can never
-# stand in for a green one. See docs/windows.md, "Continuous integration".
+# "CI gate" is the one check for branch protection to require. It always reports,
+# and it passes only when every job the change needs has passed, so a skipped
+# build can never stand in for a green one. See docs/windows.md, "Continuous
+# integration".
 name: CI
 
 on:
   pull_request:
+    # "edited" covers a changed base branch: a retargeted PR is classified again.
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
 
 permissions:
   contents: read
 
+# A PR's newer run replaces its older one; every push to main keeps its own run.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -94,6 +98,8 @@ jobs:
 
   gate:
     name: CI gate
+    # Not !cancelled(): a cancelled run would then leave the gate skipped, and
+    # branch protection counts a skipped required check as passing.
     if: always()
     needs: [classify, docs, windows]
     runs-on: ubuntu-latest
@@ -109,7 +115,7 @@ jobs:
           [ "$DOCS" = success ] || { echo "::error::Docs checks did not succeed."; exit 1; }
           if [ "$DOCS_ONLY" = true ]; then
             case "$BUILD" in success|skipped) ;; *) echo "::error::Build result: $BUILD."; exit 1 ;; esac
-            echo "Documentation-only change: links, format and changed-file scope passed."
+            echo "Documentation-only change: links, whitespace and changed-file scope passed."
           else
             [ "$BUILD" = success ] || { echo "::error::Windows Debug/Release build and tests: $BUILD."; exit 1; }
             echo "Code path: Windows Debug and Release builds and headless CTest passed."

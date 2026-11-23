@@ -1,4 +1,4 @@
-"""Documentation checks for the CI gate; also runnable locally.
+"""Documentation checks for the CI gate; also runnable locally with Python 3.
 
 Checks every tracked Markdown file for repository-internal links whose target
 file or heading anchor does not exist, and that AGENTS.md and CLAUDE.md are
@@ -8,6 +8,7 @@ depend on the network and other sites. Exits non-zero on any problem.
 Usage, from anywhere in the checkout:  python scripts/check_docs.py
 """
 
+import posixpath
 import re
 import subprocess
 import sys
@@ -17,13 +18,15 @@ from pathlib import Path, PurePosixPath
 ROOT = Path(__file__).resolve().parent.parent
 IDENTICAL_FILES = ("AGENTS.md", "CLAUDE.md")
 
-FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 INLINE_CODE = re.compile(r"(`+)(?:(?!\1).)+?\1")
-INLINE_LINK = re.compile(r"!?\[(?:[^\[\]]|\[[^\[\]]*\])*\]\(\s*(<[^>]*>|[^\s()]*(?:\([^\s()]*\)[^\s()]*)*)")
-REFERENCE_DEFINITION = re.compile(r"^ {0,3}\[[^\]]+\]:\s*(<[^>]*>|\S+)")
+# Link text may wrap across lines; the target is <...> or a run without spaces.
+INLINE_LINK = re.compile(
+    r"!?\[(?:[^\[\]]|\[[^\[\]]*\])*\]\(\s*(<[^>]*>|[^\s()]*(?:\([^\s()]*\)[^\s()]*)*)")
+REFERENCE_DEFINITION = re.compile(r"^ {0,3}\[[^\]]+\]:\s*(<[^>]*>|\S+)", re.MULTILINE)
 HEADING = re.compile(r"^ {0,3}#{1,6}\s+(.*?)\s*#*\s*$")
-HTML_ANCHOR = re.compile(r"<a\s[^>]*\b(?:id|name)\s*=\s*[\"']([^\"']+)[\"']", re.IGNORECASE)
-SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+# Two or more letters, so a drive path such as C:/ is checked rather than skipped.
+SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]+:")
 
 
 def tracked_files():
@@ -32,19 +35,22 @@ def tracked_files():
   return [PurePosixPath(name) for name in output.decode("utf-8").split("\0") if name]
 
 
-def prose_lines(text):
-  """Yield (line number, line) for lines outside fenced code blocks."""
-  fence = None
-  for number, line in enumerate(text.splitlines(), 1):
+def prose(text):
+  """Return the lines outside fenced code blocks; code lines become empty."""
+  lines, fence = [], None
+  for line in text.splitlines():
     match = FENCE.match(line)
     if fence:
-      if match and match.group(1)[0] == fence[0] and len(match.group(1)) >= len(fence):
+      if (match and match.group(1)[0] == fence[0] and len(match.group(1)) >= len(fence)
+          and not match.group(2).strip()):
         fence = None
-      continue
-    if match:
+      lines.append("")
+    elif match:
       fence = match.group(1)
-      continue
-    yield number, line
+      lines.append("")
+    else:
+      lines.append(line)
+  return lines
 
 
 def slug(heading):
@@ -57,8 +63,7 @@ def slug(heading):
 
 def anchors(text):
   found, counts = set(), {}
-  for _, line in prose_lines(text):
-    found.update(HTML_ANCHOR.findall(line))
+  for line in prose(text):
     heading = HEADING.match(line)
     if heading:
       base = slug(heading.group(1))
@@ -69,13 +74,19 @@ def anchors(text):
 
 
 def link_targets(text):
-  for number, line in prose_lines(text):
-    line = INLINE_CODE.sub("", line)
-    for match in INLINE_LINK.finditer(line):
-      yield number, match.group(1)
-    definition = REFERENCE_DEFINITION.match(line)
-    if definition:
-      yield number, definition.group(1)
+  """Yield (line number, target) for inline links and reference definitions."""
+  body = "\n".join(INLINE_CODE.sub("", line) for line in prose(text))
+  for pattern in (INLINE_LINK, REFERENCE_DEFINITION):
+    for match in pattern.finditer(body):
+      yield body.count("\n", 0, match.start(1)) + 1, match.group(1)
+
+
+def resolve(source, path):
+  """Repository path a link names, or None if it climbs above the root."""
+  joined = path.lstrip("/") if path.startswith("/") else posixpath.join(
+      str(source.parent), path)
+  normal = posixpath.normpath(joined)
+  return None if normal == ".." or normal.startswith("../") else PurePosixPath(normal)
 
 
 def check_links(files):
@@ -96,29 +107,13 @@ def check_links(files):
       if not target or SCHEME.match(target):
         continue
       path_part, _, fragment = target.partition("#")
-      path_part = urllib.parse.unquote(path_part)
-      if path_part:
-        base = PurePosixPath("/") if path_part.startswith("/") else PurePosixPath("/", source.parent)
-        resolved = PurePosixPath(*_normalize(base / path_part).parts[1:])
-      else:
-        resolved = source
+      resolved = resolve(source, urllib.parse.unquote(path_part)) if path_part else source
       if resolved not in file_set and resolved not in directories:
         problems.append(f"{source}:{number}: link target not in the repository: {target}")
       elif fragment and resolved.suffix.lower() == ".md" and resolved in file_set:
         if urllib.parse.unquote(fragment).lower() not in anchors_of(resolved):
           problems.append(f"{source}:{number}: no heading for anchor: {target}")
   return problems
-
-
-def _normalize(path):
-  parts = []
-  for part in path.parts[1:]:
-    if part == "..":
-      if parts:
-        parts.pop()
-    elif part not in ("", "."):
-      parts.append(part)
-  return PurePosixPath("/", *parts)
 
 
 def check_identical():
