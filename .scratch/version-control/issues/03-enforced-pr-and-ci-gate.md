@@ -33,6 +33,10 @@ The first and fifth items stay open until the user approves the `main` protectio
   - `scripts/build_windows.ps1` runs the window tests only with `-IncludeDesktop`; `ctest --preset windows -L desktop` runs them alone.
   - They run only when a change touches the editor app, and the user is told first.
   - The rule also goes into the "Build and tests" bullet of both root instruction files.
+- **Superseded later the same day: back on by default locally.** The editor's `desktop` tests now run on a private Win32 desktop, so nothing shows on the user's screen. The user then chose: "Yes, on by default (Recommended)".
+  - Local runs include them again; hosted CI still excludes them with `--label-exclude desktop`.
+  - Another session's PR makes the change in `scripts/build_windows.ps1` and the docs.
+  - The instruction-file rule above was never added: it is no longer needed.
 
 ## Evidence (2026-11-23)
 
