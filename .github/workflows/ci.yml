@@ -72,8 +72,9 @@ jobs:
             echo "No usable base commit '$BASE_SHA'; nothing to compare."
           fi
 
-  build:
-    name: Windows ${{ matrix.configuration }}
+  # No job name: a skipped matrix job would report its unexpanded name, so the
+  # checks read "windows (Debug)", "windows (Release)" or a skipped "windows".
+  windows:
     needs: classify
     if: needs.classify.outputs.docs_only != 'true'
     # CMakePresets.json names the Visual Studio 2022 generator; newer images
@@ -94,14 +95,14 @@ jobs:
   gate:
     name: CI gate
     if: always()
-    needs: [classify, docs, build]
+    needs: [classify, docs, windows]
     runs-on: ubuntu-latest
     steps:
       - env:
           CLASSIFY: ${{ needs.classify.result }}
           DOCS_ONLY: ${{ needs.classify.outputs.docs_only }}
           DOCS: ${{ needs.docs.result }}
-          BUILD: ${{ needs.build.result }}
+          BUILD: ${{ needs.windows.result }}
         run: |
           echo "classify=$CLASSIFY docs_only=$DOCS_ONLY docs=$DOCS build=$BUILD"
           [ "$CLASSIFY" = success ] || { echo "::error::Change classification did not succeed."; exit 1; }
