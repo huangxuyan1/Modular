@@ -31,6 +31,41 @@ void require(bool condition, const std::string& message) {
   if (!condition) throw std::runtime_error(message);
 }
 
+// A private Win32 desktop that is never the input desktop: the editor's main
+// window, file choosers and task dialogs exist and paint there, but nothing
+// reaches the user's screen or taskbar. This thread moves there before it
+// touches any window, so window enumeration and launch() use the same desktop.
+// It must outlive every RunningApp so the editor is closed before it is.
+class PrivateDesktop {
+public:
+  PrivateDesktop() : original_(GetThreadDesktop(GetCurrentThreadId())) {
+    const auto name = L"ModularGuiTest-" + std::to_wstring(GetCurrentProcessId());
+    desktop_ = CreateDesktopW(name.c_str(), nullptr, nullptr, 0, GENERIC_ALL, nullptr);
+    require(desktop_ != nullptr, "could not create a private test desktop");
+    if (!SetThreadDesktop(desktop_)) {
+      CloseDesktop(desktop_);
+      throw std::runtime_error("could not move the test thread to its private desktop");
+    }
+  }
+  PrivateDesktop(const PrivateDesktop&) = delete;
+  PrivateDesktop& operator=(const PrivateDesktop&) = delete;
+  ~PrivateDesktop() {
+    // A desktop cannot be closed while it is this thread's desktop; process
+    // exit releases it anyway if switching back ever fails.
+    if (SetThreadDesktop(original_)) CloseDesktop(desktop_);
+  }
+private:
+  HDESK original_;
+  HDESK desktop_ = nullptr;
+};
+
+std::wstring objectName(HANDLE object) {
+  wchar_t name[256]{};
+  require(GetUserObjectInformationW(object, UOI_NAME, name, sizeof(name), nullptr) != 0,
+          "could not name the test desktop");
+  return name;
+}
+
 struct RunningApp {
   PROCESS_INFORMATION process{};
   HWND window = nullptr;
@@ -58,15 +93,43 @@ BOOL CALLBACK findWindow(HWND window, LPARAM parameter) {
   return TRUE;
 }
 
+// Every editor joins one job whose only handle is held until this process
+// ends. Closing it kills the job's processes, so an editor cannot outlive the
+// test, even when CTest's timeout terminates the test without unwinding.
+HANDLE editorJob() {
+  static const HANDLE job = [] {
+    const HANDLE created = CreateJobObjectW(nullptr, nullptr);
+    require(created != nullptr, "could not create the graph editor job");
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    require(SetInformationJobObject(created, JobObjectExtendedLimitInformation,
+                                    &limits, sizeof(limits)) != 0,
+            "could not make the graph editor job kill on close");
+    return created;
+  }();
+  return job;
+}
+
 void launch(RunningApp& app, const wchar_t* executable) {
+  const HANDLE job = editorJob();
+  // Start the editor on this thread's desktop, the one EnumWindows searches.
+  auto desktop = objectName(GetProcessWindowStation()) + L"\\" +
+                 objectName(GetThreadDesktop(GetCurrentThreadId()));
   STARTUPINFOW startup{};
   startup.cb = sizeof(startup);
+  startup.lpDesktop = desktop.data();
   startup.dwFlags = STARTF_USESHOWWINDOW;
   startup.wShowWindow = SW_HIDE;
   std::wstring command = L"\"" + std::wstring(executable) + L"\"";
-  require(CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, 0,
+  require(CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_SUSPENDED,
                           nullptr, nullptr, &startup, &app.process) != 0,
           "could not launch graph editor");
+  // Join the job before the editor runs any code.
+  if (!AssignProcessToJobObject(job, app.process.hProcess)) {
+    TerminateProcess(app.process.hProcess, 1);
+    throw std::runtime_error("could not tie the graph editor to the test process");
+  }
+  ResumeThread(app.process.hThread);
   for (int attempt = 0; attempt < 100 && !app.window; ++attempt) {
     EnumWindows(findWindow, reinterpret_cast<LPARAM>(&app));
     if (!app.window) std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -568,6 +631,7 @@ void recorderRecoveryAndCloseCheck(const wchar_t* executable) {
 #include "WindowsPlaybackProbe.h"
 
 void capture(HWND window, const std::filesystem::path& path) {
+  // Shown only for the capture; on the private desktop nobody sees it.
   ShowWindow(window, SW_SHOWNOACTIVATE);
   RedrawWindow(window, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
   RECT rect{};
@@ -610,6 +674,7 @@ void capture(HWND window, const std::filesystem::path& path) {
 
 int wmain(int argc, wchar_t** argv) {
   try {
+    const PrivateDesktop desktop;
     const bool gesture = argc == 3 && std::wstring(argv[2]) == L"--gesture";
     require(argc == 2 || argc == 3 || (argc == 4 && std::wstring(argv[3]) == L"--audio"),
             "usage: graph_editor_ui_tests path-to-graph_editor.exe [capture.bmp [--audio] | --gesture]");

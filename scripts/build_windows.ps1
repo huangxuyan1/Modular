@@ -3,8 +3,9 @@ param(
   [string]$Configuration = 'Debug',
   [string]$Target = 'ALL_BUILD',
   [string]$TestRegex = '',
-  # Tests labelled "desktop" open real windows on the user's screen; opt in.
-  [switch]$IncludeDesktop
+  # Tests labelled "desktop" drive the real editor on a private, unseen desktop;
+  # -ExcludeDesktop leaves them out, as hosted CI does.
+  [switch]$ExcludeDesktop
 )
 
 $ErrorActionPreference = 'Stop'
@@ -24,7 +25,7 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'CMake build failed.' }
   $ctestArguments = @('--preset', 'windows', '--build-config', $Configuration)
   if ($TestRegex) { $ctestArguments += @('-R', $TestRegex) }
-  if (-not $IncludeDesktop) { $ctestArguments += @('--label-exclude', 'desktop') }
+  if ($ExcludeDesktop) { $ctestArguments += @('--label-exclude', 'desktop') }
   & ctest @ctestArguments
   if ($LASTEXITCODE -ne 0) { throw 'CTest failed.' }
 } finally {
