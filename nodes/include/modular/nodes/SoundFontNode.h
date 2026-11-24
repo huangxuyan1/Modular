@@ -139,7 +139,8 @@ private:
     std::uint64_t ordinal = 0; // which of its key's note-ons started it
     std::uint64_t noteOff = 0; // its note-off's number, once released
     std::uint8_t channel = 0, key = 0;
-    // A taken voice's frames left to fade out, its next frame's gain being
+    std::uint8_t exclusiveClass = 0; // 0 for none
+    // An ended voice's frames left to fade out, its next frame's gain being
     // fadeLeft over the fade's length; 0 for a voice that is not fading.
     std::uint32_t fadeLeft = 0;
     // Its points: the first it plays, in the sample data, and from there the
@@ -173,9 +174,9 @@ private:
     Filter filter;
   };
 
-  // One place in the pool: its voice and, beside it, the last voice taken
-  // from it while that one fades out. The tail does not count against the
-  // voice limit.
+  // One place in the pool: its voice and, beside it, the last voice ended
+  // early there, taken or ended by its exclusive class, while that one fades
+  // out. The tail does not count against the voice limit.
   struct Slot {
     Voice voice, tail;
   };
@@ -197,6 +198,7 @@ private:
              std::uint8_t velocity) const;
   void scaleToKey(Voice& voice, const SoundFont::Values& generators, int key) const;
   std::size_t takeNote();
+  void endClass(std::uint8_t exclusiveClass);
   void fadeOut(Slot& slot) const;
   static void startRelease(Voice& voice);
   void render(Voice& voice, float* left, float* right, std::uint32_t from,
@@ -217,6 +219,7 @@ private:
   std::uint32_t fade_frames_ = 1; // a taken voice's fade, 6 ms
   std::vector<PreparedZone> plans_;
   std::vector<Slot> slots_;    // the pool, one slot per voice of the limit
+  std::vector<Voice> starting_; // a note's voices before they take slots
   std::vector<KeyNotes> keys_; // 16 channels of 128 keys
   std::uint64_t events_ = 0;   // note-ons and note-offs so far, which numbers each
 };

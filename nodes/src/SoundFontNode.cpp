@@ -236,6 +236,7 @@ void SoundFontNode::prepare(const PrepareInfo& info) {
     plans_.push_back(std::move(plan));
   }
   slots_.assign(voice_limit_, Slot{});
+  starting_.assign(voices_per_note_, Voice{});
   keys_.assign(kKeys, KeyNotes{});
   events_ = 0;
 }
@@ -274,24 +275,34 @@ void SoundFontNode::noteOn(std::uint8_t channel, std::uint8_t key, std::uint8_t 
   // Every note-on is a held note of its key, even one that starts no voice.
   const auto number = ++events_;
   const auto ordinal = keys_[keyIndex(channel, key)].noteOns++;
+  // The note's voices, one for each zone it matches, made before any takes a
+  // slot. prepare() made room for the most one note starts.
   std::size_t needed = 0;
-  for (const auto& plan : plans_) needed += matches(plan.zone, key, velocity) ? 1 : 0;
-  if (needed == 0) return;
-  // A full pool takes whole notes until this one has its voices. prepare()
-  // made the pool at least as large as any one note.
-  auto idle = static_cast<std::size_t>(std::count_if(
-      slots_.begin(), slots_.end(), [](const Slot& slot) { return !slot.voice.active; }));
-  while (idle < needed) idle += takeNote();
-  std::size_t slot = 0;
   for (const auto& plan : plans_) {
     if (!matches(plan.zone, key, velocity)) continue;
-    while (slots_[slot].voice.active) ++slot;
-    auto& voice = slots_[slot].voice;
+    auto& voice = starting_[needed++];
     start(voice, plan, key, velocity);
     voice.note = number;
     voice.ordinal = ordinal;
     voice.channel = channel;
     voice.key = key;
+  }
+  if (needed == 0) return;
+  // Its exclusive classes end every other sounding voice of theirs, on any
+  // channel, which frees their slots first.
+  for (std::size_t i = 0; i < needed; ++i)
+    if (starting_[i].exclusiveClass != 0) endClass(starting_[i].exclusiveClass);
+  // A full pool takes whole notes until this one has its voices. prepare()
+  // made the pool at least as large as any one note.
+  auto idle = static_cast<std::size_t>(std::count_if(
+      slots_.begin(), slots_.end(), [](const Slot& slot) { return !slot.voice.active; }));
+  while (idle < needed) idle += takeNote();
+  // A voice that ends before its first frame takes no slot.
+  std::size_t slot = 0;
+  for (std::size_t i = 0; i < needed; ++i) {
+    if (!starting_[i].active) continue;
+    while (slots_[slot].voice.active) ++slot;
+    slots_[slot].voice = starting_[i];
   }
 }
 
@@ -321,6 +332,7 @@ void SoundFontNode::start(Voice& voice, const PreparedZone& plan, std::uint8_t k
 
   voice = Voice{};
   voice.active = voice.held = true;
+  voice.exclusiveClass = static_cast<std::uint8_t>(g[SoundFont::kExclusiveClass]);
 
   // sampleModes 1 loops for the voice's whole life, 3 while it is held; 0, 2
   // and any other value play to the sample's end, as does a zone whose loop
@@ -465,6 +477,13 @@ std::size_t SoundFontNode::takeNote() {
       ++taken;
     }
   return taken;
+}
+
+// Ends every sounding voice of an exclusive class, on every channel (map ticket
+// 09, D8): each fades out as a taken voice does, and its slot is free at once.
+void SoundFontNode::endClass(std::uint8_t exclusiveClass) {
+  for (auto& slot : slots_)
+    if (slot.voice.active && slot.voice.exclusiveClass == exclusiveClass) fadeOut(slot);
 }
 
 // Ends a slot's voice early: it moves to the slot's tail, which stops an older

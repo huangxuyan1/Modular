@@ -2576,6 +2576,124 @@ TEST_CASE("an illegal modulator is ignored unlisted, and replaces no default") {
         play(filteredTone(9000, {}), note, run).left);
 }
 
+namespace {
+
+// A drum kit of steady samples that hold, each heard apart by its side and
+// level: the open hi-hat (key 46) left and the closed one (42) right, both in
+// exclusive class 1; a snare (38), in no class, and a crash (49), in class 2,
+// both left; and on key 51 a stereo pair in class 1. The open hi-hat's release
+// lasts 0.5 s.
+Bytes drumKit() {
+  const auto drum = [](int key, int group, int pan, int attenuation,
+                       std::vector<Generator> more = {}) {
+    std::vector<Generator> generators{range(gen::kKeyRange, key, key),
+                                      set(gen::kExclusiveClass, group),
+                                      set(gen::kPan, pan),
+                                      set(gen::kInitialAttenuation, attenuation)};
+    generators.insert(generators.end(), more.begin(), more.end());
+    generators.push_back(set(gen::kSampleId, 0));
+    return Zone{generators};
+  };
+  File file;
+  file.samples = {{"steady", steady(8192, 60000)}};
+  file.instruments.push_back(
+      {"kit", {drum(46, 1, -500, 0, {set(gen::kReleaseVolEnv, -1200)}), drum(42, 1, 500, 60),
+               drum(38, 0, -500, 120), drum(49, 2, -500, 180), drum(51, 1, -500, 240),
+               drum(51, 1, 500, 300)}});
+  file.presets.push_back({"kit", 0, 128, {{{set(gen::kInstrument, 0)}}}});
+  return build(file);
+}
+
+constexpr int kOpenHat = 46, kClosedHat = 42, kSnare = 38, kCrash = 49, kPair = 51;
+
+} // namespace
+
+TEST_CASE("a note in an exclusive class fades every other sounding voice of its class over 6 ms from its frame") {
+  const auto kit = drumKit();
+  for (const double rate : {44100.0, 48000.0}) {
+    // Held, or released and still sounding, the open hi-hat is ended by the
+    // closed one: from the closed one's frame it falls in equal steps to zero
+    // over 6 ms, rounded to whole frames.
+    for (const bool released : {false, true}) {
+      CAPTURE(rate);
+      CAPTURE(released);
+      const Run run{rate, 128, 6000};
+      std::vector<Timed> open{{13, noteOn(9, kOpenHat, 100)}};
+      if (released) open.push_back({1001, noteOff(9, kOpenHat)});
+      const Timed closed{2003, noteOn(9, kClosedHat, 100)};
+      auto both = open;
+      both.push_back(closed);
+      const auto out = play(kit, both, run);
+      const auto alone = play(kit, open, run);
+      REQUIRE(alone.left.at(2600) != 0);
+      CHECK(firstDifference(out.left, alone.left, 2003) == 2003);
+      const auto fade = static_cast<std::size_t>(std::llround(0.006 * rate));
+      CHECK(lastSounding(out.left) == 2003 + fade - 1);
+      for (std::size_t j = 0; j < fade; ++j) {
+        CAPTURE(j);
+        CHECK(out.left[2003 + j] ==
+              doctest::Approx(alone.left[2003 + j] * static_cast<double>(fade - j) /
+                              static_cast<double>(fade)));
+      }
+      // The closed hi-hat plays from its own frame as it would alone.
+      CHECK(out.right == play(kit, {closed}, run).right);
+    }
+  }
+}
+
+TEST_CASE("a note spares its own voices and other classes' and ends its class's on every channel") {
+  // The pair on key 51, in class 1, ends the open hi-hat struck on another
+  // channel, and both its sides sound. The snare, in no class, and the crash,
+  // in class 2, sound on. A hi-hat struck again ends the one before it. (The
+  // notes take the same slots in each render, so they sum in the same order.)
+  const auto kit = drumKit();
+  const Run run{48000, 128, 6000};
+  const Timed snare{13, noteOn(0, kSnare, 100)}, crash{51, noteOn(0, kCrash, 100)},
+      pair{2003, noteOn(3, kPair, 100)};
+  const auto out = play(kit, {snare, crash, {101, noteOn(9, kOpenHat, 100)}, pair}, run);
+  CHECK(out.left[2002] != play(kit, {snare, crash}, run).left[2002]);
+  CHECK(agreeFrom(out, play(kit, {snare, crash, pair}, run), 2003 + kFade));
+  const Timed again{2003, noteOn(5, kOpenHat, 90)};
+  CHECK(agreeFrom(play(kit, {{13, noteOn(9, kOpenHat, 100)}, again}, run),
+                  play(kit, {again}, run), 2003 + kFade));
+}
+
+TEST_CASE("an ended voice's slot is free at once, so the note takes no other note") {
+  // Two voices, full with the snare and the open hi-hat. The closed hi-hat
+  // ends the open one, takes its slot and leaves the snare sounding.
+  const auto kit = drumKit();
+  const Run run{48000, 128, 6000};
+  const Timed snare{13, noteOn(0, kSnare, 100)}, closed{2003, noteOn(0, kClosedHat, 100)};
+  const auto out = play(kit, {snare, {503, noteOn(0, kOpenHat, 100)}, closed}, run,
+                        voiceLimit(2));
+  CHECK(agreeFrom(out, play(kit, {snare, closed}, run), 2003 + kFade));
+}
+
+TEST_CASE("a modulated exclusive class ends its class as the generator's does") {
+  // The closed hi-hat's class taken to 0 by a constant modulator ends nothing.
+  auto file = [] {
+    File kit;
+    kit.samples = {{"steady", steady(8192, 60000)}};
+    kit.instruments.push_back(
+        {"kit", {{{range(gen::kKeyRange, 46, 46), set(gen::kExclusiveClass, 1),
+                   set(gen::kPan, -500), set(gen::kSampleId, 0)}},
+                 {{range(gen::kKeyRange, 42, 42), set(gen::kExclusiveClass, 1),
+                   set(gen::kPan, 500), set(gen::kSampleId, 0)},
+                  {constant(gen::kExclusiveClass, -1)}}}});
+    kit.presets.push_back({"kit", 0, 0, {{{set(gen::kInstrument, 0)}}}});
+    return kit;
+  }();
+  const Run run{48000, 128, 6000};
+  const Timed open{13, noteOn(0, kOpenHat, 100)}, closed{2003, noteOn(0, kClosedHat, 100)};
+  CHECK(play(build(file), {open, closed}, run).left == play(build(file), {open}, run).left);
+  // At +1 it is class 2: still not the open hi-hat's.
+  file.instruments[0].zones[1].modulators = {constant(gen::kExclusiveClass, 1)};
+  CHECK(play(build(file), {open, closed}, run).left == play(build(file), {open}, run).left);
+  // At 0 it chokes.
+  file.instruments[0].zones[1].modulators = {constant(gen::kExclusiveClass, 0)};
+  CHECK(lastSounding(play(build(file), {open, closed}, run).left) == 2003 + kFade - 1);
+}
+
 // Counts the global allocations made while `counting` is set.
 namespace {
 bool counting = false;
