@@ -1,0 +1,86 @@
+diff -ru a/nodes/include/modular/nodes/MidiFile.h b/nodes/include/modular/nodes/MidiFile.h
+--- a/nodes/include/modular/nodes/MidiFile.h
++++ b/nodes/include/modular/nodes/MidiFile.h
+@@ -15,23 +15,23 @@
+ class MidiFile {
+ public:
+   struct Entry {
+-    long double seconds;
++    double seconds;
+     MidiMsg message;
+   };
+
+   static MidiFile read(const std::filesystem::path& path);
+   static MidiFile parse(std::span<const std::uint8_t> bytes);
+   // Reconstruct owned authored meaning, before sample-rate preparation.
+-  static MidiFile fromEntries(std::vector<Entry> entries, long double durationSeconds,
++  static MidiFile fromEntries(std::vector<Entry> entries, double durationSeconds,
+                               std::uint32_t skippedSysEx = 0);
+
+   const std::vector<Entry>& entries() const { return entries_; }
+-  long double durationSeconds() const { return duration_seconds_; }
++  double durationSeconds() const { return duration_seconds_; }
+   std::uint32_t skippedSysExEvents() const { return skipped_sysex_; }
+
+ private:
+   std::vector<Entry> entries_;
+-  long double duration_seconds_ = 0;
++  double duration_seconds_ = 0;
+   std::uint32_t skipped_sysex_ = 0;
+ };
+
+diff -ru a/nodes/include/modular/nodes/MidiFileNode.h b/nodes/include/modular/nodes/MidiFileNode.h
+--- a/nodes/include/modular/nodes/MidiFileNode.h
++++ b/nodes/include/modular/nodes/MidiFileNode.h
+@@ -38,10 +38,10 @@
+     if (!ready()) throw std::invalid_argument("midi file: select and load a MIDI file first");
+     if (!std::isfinite(info.sampleRate) || info.sampleRate <= 0)
+       throw std::invalid_argument("midi file: invalid sample rate");
+-    const auto frameAt = [&](long double seconds) {
+-      const long double frame = std::round(seconds * info.sampleRate);
++    const auto frameAt = [&](double seconds) {
++      const double frame = std::round(seconds * info.sampleRate);
+       if (!std::isfinite(frame) || frame < 0 ||
+-          frame >= static_cast<long double>(std::numeric_limits<std::uint64_t>::max()))
++          frame >= static_cast<double>(std::numeric_limits<std::uint64_t>::max()))
+         throw std::invalid_argument("midi file: frame count overflow");
+       return static_cast<std::uint64_t>(frame);
+     };
+diff -ru a/nodes/src/MidiFile.cpp b/nodes/src/MidiFile.cpp
+--- a/nodes/src/MidiFile.cpp
++++ b/nodes/src/MidiFile.cpp
+@@ -112,11 +112,11 @@
+   return parse(bytes);
+ }
+
+-MidiFile MidiFile::fromEntries(std::vector<Entry> entries, long double durationSeconds,
++MidiFile MidiFile::fromEntries(std::vector<Entry> entries, double durationSeconds,
+                               std::uint32_t skippedSysEx) {
+   if (!std::isfinite(durationSeconds) || durationSeconds < 0)
+     invalid("invalid stored duration");
+-  long double previous = 0;
++  double previous = 0;
+   for (const auto& entry : entries) {
+     if (!std::isfinite(entry.seconds) || entry.seconds < previous ||
+         entry.seconds > durationSeconds)
+@@ -167,15 +167,15 @@
+                    [](const Timed& a, const Timed& b) { return a.tick < b.tick; });
+   std::uint64_t previous = 0;
+   std::uint32_t tempo = 500000;
+-  long double seconds = 0;
++  double seconds = 0;
+   for (const auto& event : events) {
+-    seconds += static_cast<long double>(event.tick - previous) * tempo /
+-               (static_cast<long double>(division) * 1000000);
++    seconds += static_cast<double>(event.tick - previous) * tempo /
++               (static_cast<double>(division) * 1000000);
+     previous = event.tick;
+     if (event.tempo != 0) tempo = event.tempo;
+     else result.entries_.push_back({seconds, event.message});
+   }
+-  result.duration_seconds_ = seconds + static_cast<long double>(endTick - previous) *
+-      tempo / (static_cast<long double>(division) * 1000000);
++  result.duration_seconds_ = seconds + static_cast<double>(endTick - previous) *
++      tempo / (static_cast<double>(division) * 1000000);
+   return result;
+ }
