@@ -1,7 +1,7 @@
 # Is the soundfont node one primitive or a supernode of voices, and where do its samples live?
 
 Type: grilling
-Status: open
+Status: claimed
 
 ## Question
 
