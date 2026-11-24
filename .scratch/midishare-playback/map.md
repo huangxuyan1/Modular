@@ -87,6 +87,11 @@ build, as roadmap ticket 04's did. Research findings live under `research/` here
   file, so the site ships a single-preset extract. Recommended default: FluidR3_GM's acoustic
   grand piano (MIT, today's sound), fallback FreePats' Upright Piano KW small (CC0); the extract's
   size needs the file, so measuring it is a new task.
+- [Install an Emscripten toolchain the probe can use](issues/01-install-emscripten.md)
+  — Emscripten 6.0.13 is installed in its own emsdk folder (2.0 GB) and activated per shell with
+  `emsdk_env.ps1`, which changes no lasting environment variable. `emcc`, `emcmake` with the
+  Ninja already present, and a C++20 hello-world that throws and catches with `-fexceptions` all
+  work. Link C++ with `em++`.
 
 ## Not yet specified
 
