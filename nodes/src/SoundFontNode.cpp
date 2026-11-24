@@ -218,8 +218,8 @@ void SoundFontNode::noteOn(std::uint8_t channel, std::uint8_t key, std::uint8_t 
     voice.key = key;
     voice.increment = maths::exp2((key - plan.root) / 12.0) * plan.rateRatio;
     // The default velocity-to-attenuation modulator adds to the zone's.
-    const double attenuation =
-        std::clamp(plan.attenuation + concaveAttenuation(velocity), 0.0, kMostAttenuation);
+    const double attenuation = std::clamp(
+        plan.attenuation + concaveAttenuation(velocity), 0.0, kMostAttenuation);
     voice.gain = maths::exp10(-attenuation / 200);
     // And the velocity-to-cutoff one to initialFilterFc.
     voice.cutoff = plan.zone.generators[SoundFont::kInitialFilterFc] +
@@ -313,7 +313,8 @@ double SoundFontNode::volume(const Voice& voice, const PreparedZone& plan) {
   case Stage::kOff:
     return 0;
   case Stage::kAttack: // a linear rise in amplitude, reaching the peak on its last frame
-    return static_cast<double>(envelope.frame + 1) / static_cast<double>(plan.volume.attack);
+    return static_cast<double>(envelope.frame + 1) /
+           static_cast<double>(plan.volume.attack);
   case Stage::kHold:
     return 1;
   default:
@@ -411,7 +412,8 @@ void SoundFontNode::render(Voice& voice, float* left, float* right, std::uint32_
       right[i] += static_cast<float>(sample * plan.panRight);
       voice.position += voice.increment;
       if (voice.looping && voice.position >= plan.loopEnd)
-        voice.position = plan.loopStart + std::fmod(voice.position - plan.loopStart, loopLength);
+        voice.position =
+            plan.loopStart + std::fmod(voice.position - plan.loopStart, loopLength);
       if (envelope.stage == Stage::kDecay) envelope.level *= plan.decayFactor;
       else if (envelope.stage == Stage::kRelease) envelope.level *= plan.releaseFactor;
     }

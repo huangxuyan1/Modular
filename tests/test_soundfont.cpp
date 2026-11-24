@@ -199,7 +199,8 @@ TEST_CASE("a loaded soundfont plays a note in both channels until its sample end
   CHECK(lastSounding(out.left) == onset + 599);
   // After the default attack and hold (1 ms each), a centred zone is 3 dB
   // down: 4000 / 32768 times 1/sqrt(2), times the default modulators' gain.
-  CHECK(out.left[onset + 300] == doctest::Approx(0.0863167 * noteGain(100)).epsilon(1e-5));
+  CHECK(out.left[onset + 300] ==
+        doctest::Approx(0.0863167 * noteGain(100)).epsilon(1e-5));
 }
 
 TEST_CASE("a note sounds at its pitch from the root key and the sample's rate at two graph rates") {
@@ -365,7 +366,8 @@ TEST_CASE("velocity attenuates a note by 40 log10(v / 127) dB") {
   // The default velocity-to-attenuation modulator: 960 cB on a concave curve.
   const auto font = envelopeFont({});
   const auto heard = [&](int velocity) {
-    return db(play(font, {{13, noteOn(0, 60, velocity)}}, {48000, 128, 1000}).left.at(500));
+    const auto out = play(font, {{13, noteOn(0, 60, velocity)}}, {48000, 128, 1000});
+    return db(out.left.at(500));
   };
   const double loudest = heard(127);
   for (const auto& [velocity, gainDb] :
@@ -430,7 +432,8 @@ Bytes toneFont(std::vector<Generator> generators, double hertz, double rate,
 // against the steady sample's level in the middle of the window.
 double toneGainDb(const Stereo& out, std::size_t from, std::size_t to) {
   double sum = 0;
-  for (std::size_t i = from; i < to; ++i) sum += double(out.right.at(i)) * out.right.at(i);
+  for (std::size_t i = from; i < to; ++i)
+    sum += double(out.right.at(i)) * out.right.at(i);
   return db(std::sqrt(2 * sum / static_cast<double>(to - from)) /
             out.left.at((from + to) / 2));
 }
@@ -457,8 +460,8 @@ TEST_CASE("the filter is a two-pole low-pass 3 dB down at its derived cutoff") {
       const auto out = play(font, {{13, noteOn(0, 60, 127)}},
                             {rate, 128, static_cast<std::uint64_t>(rate / 2)});
       const auto window = static_cast<std::size_t>(rate / 10);
-      CHECK(std::abs(toneGainDb(out, 2000, 2000 + window) - butterworthDb(hertz, 999.966)) <=
-            1);
+      const double gain = toneGainDb(out, 2000, 2000 + window);
+      CHECK(std::abs(gain - butterworthDb(hertz, 999.966)) <= 1);
     }
   }
 }
@@ -531,10 +534,12 @@ TEST_CASE("the modulation envelope moves the cutoff by modEnvToFilterFc times it
                         {48000, 128, 22000});
   // Windows well inside the delay, the hold, the sustain and after the
   // release, which ends 3000 frames after the note-off.
-  for (const auto& [from, cutoff] : {std::pair{613, 2000.0}, std::pair{6613, 500.0},
-                                     std::pair{12613, 1000.0}, std::pair{18613, 2000.0}}) {
+  for (const auto& [from, cutoff] :
+       {std::pair{613, 2000.0}, std::pair{6613, 500.0}, std::pair{12613, 1000.0},
+        std::pair{18613, 2000.0}}) {
     CAPTURE(from);
-    CHECK(std::abs(toneGainDb(out, from, from + 2400) - butterworthDb(2000, cutoff)) <= 1);
+    const double gain = toneGainDb(out, from, from + 2400);
+    CHECK(std::abs(gain - butterworthDb(2000, cutoff)) <= 1);
   }
 }
 
@@ -552,8 +557,9 @@ TEST_CASE("the modulation envelope's stages begin and end within one frame of th
   };
   // The delay ends when the attack starts to move the cutoff, which a zone
   // with no depth never does. (A repeated generator keeps its last value.)
-  CHECK(withinAFrame(firstDifferentFrame(with({}), with({set(gen::kModEnvToFilterFc, 0)}), note),
-                     13 + 375));
+  CHECK(withinAFrame(
+      firstDifferentFrame(with({}), with({set(gen::kModEnvToFilterFc, 0)}), note),
+      13 + 375));
   // The attack and hold end when the decay starts: here falling to a sustain
   // of 0 over 375 frames, or over 750 (-7200).
   CHECK(withinAFrame(
@@ -565,11 +571,10 @@ TEST_CASE("the modulation envelope's stages begin and end within one frame of th
   // sustain 75 % down falls on.
   const std::vector<Generator> toHalf{set(gen::kDecayModEnv, -8400),
                                       set(gen::kSustainModEnv, 500)};
-  CHECK(withinAFrame(
-      firstDifferentFrame(with(toHalf),
-                          with({set(gen::kDecayModEnv, -8400), set(gen::kSustainModEnv, 750)}),
-                          note),
-      13 + 3 * 375 + 187.5));
+  const std::vector<Generator> toQuarter{set(gen::kDecayModEnv, -8400),
+                                         set(gen::kSustainModEnv, 750)};
+  CHECK(withinAFrame(firstDifferentFrame(with(toHalf), with(toQuarter), note),
+                     13 + 3 * 375 + 187.5));
   // The release starts on the note-off's frame.
   const std::vector<Timed> released{{13, noteOn(0, 60, 127)}, {3011, noteOff(0, 60)}};
   auto quick = toHalf, slow = toHalf;
@@ -1074,14 +1079,15 @@ bool soundsThroughout(const Stereo& out, std::size_t from, std::size_t to) {
 // A ramp of `points` points, each 48 above the last.
 std::vector<std::int16_t> ramp(std::size_t points) {
   std::vector<std::int16_t> result(points);
-  for (std::size_t i = 0; i < points; ++i) result[i] = static_cast<std::int16_t>(48 * i + 64);
+  for (std::size_t i = 0; i < points; ++i)
+    result[i] = static_cast<std::int16_t>(48 * i + 64);
   return result;
 }
 
 // What a loop plays, written out: `points` from `first` to the loop's end,
 // then the loop `times` more times.
-std::vector<std::int16_t> unrolled(const std::vector<std::int16_t>& points, std::size_t first,
-                                   Loop loop, int times) {
+std::vector<std::int16_t> unrolled(const std::vector<std::int16_t>& points,
+                                   std::size_t first, Loop loop, int times) {
   std::vector<std::int16_t> result(points.begin() + first, points.begin() + loop.end);
   for (int i = 0; i < times; ++i)
     result.insert(result.end(), points.begin() + loop.start, points.begin() + loop.end);
@@ -1101,8 +1107,9 @@ TEST_CASE("sampleModes 0 and 2 play to the sample's end") {
 TEST_CASE("a mode 1 loop sounds through the release until the envelope's 96 dB floor") {
   // Release -1200 timecents falls 100 dB in 0.5 s: from full level the voice
   // ends 0.48 s after its note-off, though its sample has 600 points.
-  const auto out = play(loopedFont({set(gen::kSampleModes, 1), set(gen::kReleaseVolEnv, -1200)}),
-                        {{13, noteOn(0, 60, 100)}, {12007, noteOff(0, 60)}},
+  const auto font =
+      loopedFont({set(gen::kSampleModes, 1), set(gen::kReleaseVolEnv, -1200)});
+  const auto out = play(font, {{13, noteOn(0, 60, 100)}, {12007, noteOff(0, 60)}},
                         {48000, 128, 40000});
   const auto onset = firstSounding(out.left);
   CHECK(soundsThroughout(out, onset, 12007 + 23000));
@@ -1112,21 +1119,22 @@ TEST_CASE("a mode 1 loop sounds through the release until the envelope's 96 dB f
 TEST_CASE("a held mode 1 loop ends only when its decay has fallen 96 dB") {
   // As on the default piano: a 100 dB sustain lies below the floor. Decay
   // -2400 timecents falls 100 dB in 0.25 s, so 96 dB takes 11520 frames.
-  const auto out = play(loopedFont({set(gen::kSampleModes, 1), set(gen::kDecayVolEnv, -2400),
-                                    set(gen::kSustainVolEnv, 1000), set(gen::kPan, -500)}),
-                        kOneNote, {48000, 128, 14000});
+  const auto font = loopedFont({set(gen::kSampleModes, 1), set(gen::kDecayVolEnv, -2400),
+                                 set(gen::kSustainVolEnv, 1000), set(gen::kPan, -500)});
+  const auto out = play(font, kOneNote, {48000, 128, 14000});
   const auto onset = firstSounding(out.left);
   CHECK(soundsThroughout(out, onset, lastSounding(out.left)));
   // The decay starts after the default attack and hold, 47 frames each.
-  CHECK(std::abs(static_cast<double>(lastSounding(out.left) + 1) - (onset + 94 + 11520)) <= 1);
+  const double end = static_cast<double>(onset + 94 + 11520);
+  CHECK(std::abs(static_cast<double>(lastSounding(out.left) + 1) - end) <= 1);
 }
 
 TEST_CASE("a mode 3 loop repeats while held then plays on through its end to the sample's end") {
   // The note-off comes 1943 points into the sample: past the loop's first
   // end, so 243 points into its fifth pass, at point 343. The voice then plays
   // its last 257 points and ends, long before its 1 s release would.
-  const auto out = play(loopedFont({set(gen::kSampleModes, 3), set(gen::kReleaseVolEnv, 0)}),
-                        {{13, noteOn(0, 60, 100)}, {2003, noteOff(0, 60)}},
+  const auto font = loopedFont({set(gen::kSampleModes, 3), set(gen::kReleaseVolEnv, 0)});
+  const auto out = play(font, {{13, noteOn(0, 60, 100)}, {2003, noteOff(0, 60)}},
                         {48000, 128, 6000});
   const auto onset = firstSounding(out.left);
   REQUIRE(onset == 60); // the default delay holds the sample back 47 frames
@@ -1447,7 +1455,8 @@ Bytes busyFont() {
   const Zone envelope{{set(gen::kDelayVolEnv, -9000), set(gen::kAttackVolEnv, -7000),
                        set(gen::kHoldVolEnv, -8000), set(gen::kDecayVolEnv, -3000),
                        set(gen::kSustainVolEnv, 150), set(gen::kReleaseVolEnv, -6000),
-                       set(gen::kInitialFilterFc, 9000), set(gen::kModEnvToFilterFc, -1500),
+                       set(gen::kInitialFilterFc, 9000),
+                       set(gen::kModEnvToFilterFc, -1500),
                        set(gen::kDelayModEnv, -8000), set(gen::kAttackModEnv, -7500),
                        set(gen::kHoldModEnv, -9000), set(gen::kDecayModEnv, -5000),
                        set(gen::kSustainModEnv, 400), set(gen::kReleaseModEnv, -5500)}};

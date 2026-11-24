@@ -84,10 +84,11 @@ The file rules follow the [Standard MIDI Files specification](https://midi.org/s
 
 ## SoundFontNode
 
-Status: soundfont-node ticket 01, the tracer, and ticket 06, persistence. Ticket 02
-adds loops and the piano's tone, 03 the full voice policy, 04 the rest of the voice
-and the ignored list, and 05 file modulators and exclusive class. The rules marked
-*interim* below change then. See `.scratch/soundfont-node/spec.md` for the end state.
+Status: soundfont-node ticket 01, the tracer, ticket 02, loops and the piano's tone,
+and ticket 06, persistence. Ticket 03 adds the full voice policy, 04 the rest of the
+voice and the ignored list, and 05 file modulators and exclusive class. The rules
+marked *interim* below change then. See `.scratch/soundfont-node/spec.md` for the end
+state.
 
 Include `modular/nodes/SoundFontNode.h` and link `modular_soundfont`. That library
 holds the SoundFont 2 reader (`SoundFont`) and the node, and links only the
@@ -97,7 +98,8 @@ header-only node library. The node is one polyphonic primitive with its own voic
 numbered by a *bank* and a program. A preset's *zones* point to instruments, and an
 instrument's zones point to samples. Each zone has key and velocity ranges and
 *generators*, the settings a sample plays with. *Modulators* adjust generators from
-the note or controllers; the node does not read them yet. A *voice* is one sounding
+the note or controllers; the node applies the specification's default modulators
+and does not read a file's own yet. A *voice* is one sounding
 sample. The *voice limit* sizes the node's fixed pool of voices. A note-off starts a
 voice's *release*.
 
@@ -162,19 +164,53 @@ generator are ignored, and a repeated generator keeps its last value.
   where 255 or an illegal value means 60) and the sample's rate against the graph's:
   `2^((key - root) / 12) * sample rate / graph rate` points per frame;
 - linear interpolation, with the sample silent past its last point;
-- `initialAttenuation` in centibels, and equal-power `pan`: a centred zone is 3 dB
-  down on each side, and +-500 is fully one-sided. A stereo pair is two voices;
+- the points played: the sample header's start, end and loop points, each plus the
+  zone's address offsets, the fine offset plus 32768 times the coarse one. The start
+  and end stay within the header's sample;
+- loops, by `sampleModes`. 0 and 2, and any value but 1 and 3, play to the sample's
+  end. 1 loops for the voice's whole life, its release included, as on the
+  default piano. 3 loops while the note is held, then plays on through the loop's end
+  to the sample's end. While a voice loops, interpolation follows the loop's last
+  point with its first, so no point past the loop is read. Loops shorter than 32
+  points, or closer than 8 points to an end of the sample, play as given. A loop that
+  is empty or lies outside the points the zone plays plays unlooped;
+- `initialAttenuation` plus the default modulators' attenuation, in centibels, the
+  total clamped to 0 to 1440 cB, so no voice is louder than its sample;
+- equal-power `pan`: a centred zone is 3 dB down on each side, and +-500 is fully
+  one-sided. A stereo pair is two voices;
 - the volume envelope: delay is silent and holds the sample back, the attack rises
   linearly in amplitude, hold is flat, and decay and release fall at a constant rate
   in decibels, a stage's time being a full 100 dB fall. Sustain is an attenuation in
   centibels. A release starts from the current level, so it ends sooner the lower it
-  starts.
+  starts;
+- the filter: the specification's two-pole low-pass, before the volume envelope as
+  in its synthesis model. At Q 0 cB it is a Butterworth response, 3 dB down at the
+  cutoff. Its cutoff in cents is `initialFilterFc`, plus the velocity-to-cutoff
+  default modulator, plus `modEnvToFilterFc` times the modulation envelope. The
+  filter follows it frame by frame in whole cents, and keeps it below 0.45 of the
+  graph's rate. `initialFilterQ` is not read yet;
+- the modulation envelope: the volume envelope's stage timing, with its own
+  generators. Its level rises linearly from 0 to 1 in the attack, holds at 1, and its
+  decay and release move linearly, a stage's time being a full change between 1 and
+  0. Sustain is a decrease in 0.1 % steps. A release starts from the current level.
 
-A voice ends once its envelope has fallen 96 dB below its peak after its attack,
-held or released, or when it passes its sample's end. After the last voice the
-output is exact zeros, and its slot is free from the frame after its last sound.
-The filter, the modulation envelope on its cutoff and the velocity modulators come
-in ticket 02; tuning (`modEnvToPitch` included), key scaling and the LFOs in ticket
+**Default modulators.** The node follows no controller, so the specification's
+default modulators read every controller at General MIDI's power-on value:
+
+- velocity to attenuation, 960 cB on a concave curve: a gain of
+  `40 log10(velocity / 127)` dB, so -3.3 dB at 105, -7.0 at 85 and -11.9 at 64;
+- velocity to cutoff, -2400 cents times `(128 - velocity) / 128`: linear at every
+  velocity, with no velocity switch, so a softer note is never brighter;
+- the controller defaults: CC7 at 100 attenuates every voice by a constant 4.2 dB on
+  the same concave curve. CC11 at 127, CC10 at 64, the pitch wheel centred and every
+  other source at 0, the sustain pedal included, add nothing. Controllers in the MIDI
+  stream change nothing.
+
+A voice ends once its volume envelope has fallen 96 dB below its peak after its
+attack, held or released, or when, with no loop left, it passes its sample's end. A
+voice on a mode 1 loop ends only by its envelope. After the last voice the output is
+exact zeros, and its slot is free from the frame after its last sound. Tuning
+(`modEnvToPitch` included), key scaling, `initialFilterQ` and the LFOs come in ticket
 04; the file's own modulators in ticket 05.
 
 **Notes.** Every channel, channel 10 included, plays the one preset. Velocity is the
@@ -185,20 +221,19 @@ its key's oldest held note; with none held, it does nothing.
 
 **Interim rules**, replaced by the tickets named:
 
-- *Loops (02):* every zone plays its sample once, to its end, whatever its
-  `sampleModes`.
 - *Pool full (03):* a note-on that finds too few free voices for all its zones is
   not started.
 - *Unplayable zones (04):* refused at load, as listed under Errors.
 - *Silent ignoring (04):* generators and modulators the node does not read are
-  ignored silently, effects sends included. There is no ignored list yet.
+  ignored silently, effects sends included. There is no ignored list yet, so a loop
+  that plays unlooped is not listed.
 
 `process()` allocates nothing. Voices render in slot order between events, so the
 output is bit-identical at every block size. Every transcendental function whose
 result reaches the output goes through one internal header,
-`nodes/src/SoundFontMaths.h`, which wraps the standard library for now. If map
-ticket 08 rules that a browser render must match a native one bit for bit, a
-portable implementation replaces it there.
+`nodes/src/SoundFontMaths.h`, which wraps the standard library for now. Map ticket
+08 decided that a browser render must match a native one bit for bit, so the soundfont
+spec's ticket 08 replaces it there with portable routines.
 
 ## AudioOutputNode
 

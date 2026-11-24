@@ -417,7 +417,8 @@ std::vector<SoundFont::Zone> SoundFont::zones(PresetNumber number) const {
           address(sample.loopEnd, kEndloopAddrsOffset, kEndloopAddrsCoarseOffset);
       // A loop that is empty or lies outside the points played plays unlooped,
       // and ticket 04 lists it.
-      if (zone.sampleStart <= loopStart && loopStart < loopEnd && loopEnd <= zone.sampleEnd) {
+      if (zone.sampleStart <= loopStart && loopStart < loopEnd &&
+          loopEnd <= zone.sampleEnd) {
         zone.loopStart = static_cast<std::uint32_t>(loopStart);
         zone.loopEnd = static_cast<std::uint32_t>(loopEnd);
       }
