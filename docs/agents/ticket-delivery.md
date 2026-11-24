@@ -63,6 +63,8 @@ in `.scratch/version-control/spec.md`.
   unknown origin.
 - **A new architecture decision or roadmap change** stops delivery. It becomes
   its own planning decision, delivered as [planning delivery](planning-delivery.md)
-  describes when the user asks; the ticket branch carries none.
+  describes when the user asks; the ticket branch carries none. Choosing or
+  re-cutting the next roadmap claim is such a change, even in the ticket that
+  closes the current one.
 
 A stop leaves the work as it is and reports to the user.

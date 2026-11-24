@@ -4,9 +4,11 @@ How a provisional roadmap or architecture proposal travels on its own planning
 branch and draft PR, to `main` when the user accepts it or to a closed PR when
 the user rejects it. Implementation tickets follow
 [ticket delivery](ticket-delivery.md) instead; the steps named below are its
-[Steps](ticket-delivery.md#steps). The decisions behind both are in
+[Steps](ticket-delivery.md#steps). Wayfinder decision tickets go up this way,
+research tickets included. The decisions behind both procedures are in
 `.scratch/version-control/spec.md` (**Planning maturity**, **Integration** and
-**Local tracker**).
+**Local tracker**). D12–D15 in version-control ticket 05 settle claims,
+review, research tickets and closing a roadmap claim.
 
 ## Accepted records
 
@@ -30,28 +32,33 @@ user.
 
 ## Steps
 
-1. **Branch.** Each proposal gets its own short-lived planning branch, started
+1. **Claim.** An open planning PR claims the decision ticket it resolves.
+   Before claiming a map ticket, check the open PRs, drafts included
+   (`gh pr list`), for one whose body names that ticket's file. If one does,
+   the ticket is taken.
+2. **Branch.** Each proposal gets its own short-lived planning branch, started
    from a freshly fetched `origin/main` as in ticket delivery's **Branch** step.
    There is no permanent planning branch.
-2. **Content.** Write the proposal as the change it would make to the accepted
+3. **Content.** Write the proposal as the change it would make to the accepted
    records: the map ticket's answer and status, `docs/roadmap.md`, an ADR or
    `CONTEXT.md`. The branch carries only this proposal. A wayfinder claim and
    resolution made on a planning branch (see
    [issue-tracker.md](issue-tracker.md#wayfinding-operations)) stay provisional
    until its PR merges: its `claimed` and `resolved` statuses and its line in the
    map's Decisions so far. Until then `main` shows the ticket as it was before
-   the claim.
-3. **Checks.** Run `python scripts/check_docs.py` and `git diff --check`. A
+   the claim, and the open PR stands as its claim.
+4. **Checks.** Run `python scripts/check_docs.py` and `git diff --check`. A
    branch that changes more than Markdown also runs the focused checks and full
-   suite `docs/windows.md` names.
-4. **Public-content check.** Before every push, as in ticket delivery's
+   suite `docs/windows.md` names. The user's review of the draft PR is its
+   review; `/code-review` is optional.
+5. **Public-content check.** Before every push, as in ticket delivery's
    **Public-content check** step.
-5. **Draft PR.** `git push -u origin <branch>`, then
+6. **Draft PR.** `git push -u origin <branch>`, then
    `gh pr create --draft --base main`. The body states the question (naming
    its decision ticket's file, if it has one), the proposal and what it would
    change in the accepted records. `CI gate` runs on a draft PR as on any
    other. Revisions the user asks for go to the same branch.
-6. **The user decides.**
+7. **The user decides.**
    - **Accepted.** The branch states the direction as the user accepted it. At
      the user's request, mark the PR ready (`gh pr ready`; GitHub cannot merge
      a draft) and bring the branch up to date with `main` as in ticket
@@ -68,7 +75,7 @@ user.
      direction. The decision ticket it tried to resolve stays open and
      unclaimed on `main`, because its resolution never merged. A new planning
      branch may attempt it again, starting from the closed PR's reason.
-7. **Cleanup.** Every decided planning branch is deleted: GitHub deletes the
+8. **Cleanup.** Every decided planning branch is deleted: GitHub deletes the
    remote branch on merge, and the rejection step above deletes it on close.
    The user then removes the local worktree and branch, or asks a session to:
    `git worktree remove <path>`, then `git branch -D <branch>`.
@@ -81,6 +88,10 @@ A new decision met during a ticket stops it (ticket delivery,
 through its own planning PR when the user asks for one. In the other direction,
 an accepted planning change gets its own PR rather than waiting for an
 unrelated ticket to carry it.
+
+A ticket that closes a roadmap claim moves only that claim to Proven in
+`docs/roadmap.md` and records its close. Choosing or re-cutting the next claim
+is a roadmap change, so it stops the ticket and goes up as its own planning PR.
 
 ## Finding past planning
 
