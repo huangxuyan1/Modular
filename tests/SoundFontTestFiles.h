@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -19,8 +20,22 @@ using Bytes = std::vector<std::uint8_t>;
 
 // Generator numbers, from section 8.1.2 of the specification.
 namespace gen {
+inline constexpr std::uint16_t kStartAddrsOffset = 0;
+inline constexpr std::uint16_t kEndAddrsOffset = 1;
+inline constexpr std::uint16_t kStartloopAddrsOffset = 2;
+inline constexpr std::uint16_t kEndloopAddrsOffset = 3;
+inline constexpr std::uint16_t kStartAddrsCoarseOffset = 4;
+inline constexpr std::uint16_t kInitialFilterFc = 8;
+inline constexpr std::uint16_t kModEnvToFilterFc = 11;
+inline constexpr std::uint16_t kEndAddrsCoarseOffset = 12;
 inline constexpr std::uint16_t kReverbEffectsSend = 16;
 inline constexpr std::uint16_t kPan = 17;
+inline constexpr std::uint16_t kDelayModEnv = 25;
+inline constexpr std::uint16_t kAttackModEnv = 26;
+inline constexpr std::uint16_t kHoldModEnv = 27;
+inline constexpr std::uint16_t kDecayModEnv = 28;
+inline constexpr std::uint16_t kSustainModEnv = 29;
+inline constexpr std::uint16_t kReleaseModEnv = 30;
 inline constexpr std::uint16_t kDelayVolEnv = 33;
 inline constexpr std::uint16_t kAttackVolEnv = 34;
 inline constexpr std::uint16_t kHoldVolEnv = 35;
@@ -30,7 +45,9 @@ inline constexpr std::uint16_t kReleaseVolEnv = 38;
 inline constexpr std::uint16_t kInstrument = 41;
 inline constexpr std::uint16_t kKeyRange = 43;
 inline constexpr std::uint16_t kVelRange = 44;
+inline constexpr std::uint16_t kStartloopAddrsCoarseOffset = 45;
 inline constexpr std::uint16_t kInitialAttenuation = 48;
+inline constexpr std::uint16_t kEndloopAddrsCoarseOffset = 50;
 inline constexpr std::uint16_t kCoarseTune = 51;
 inline constexpr std::uint16_t kSampleId = 53;
 inline constexpr std::uint16_t kSampleModes = 54;
@@ -83,12 +100,20 @@ struct Instrument {
   std::vector<Zone> zones;
 };
 
+// A loop's first point and the point after its last, counted from the
+// sample's first point. Either may lie outside the sample, for a bad loop.
+struct Loop {
+  std::int64_t start = 0;
+  std::int64_t end = 0;
+};
+
 struct Sample {
   std::string name = "sample";
   std::vector<std::int16_t> points;
   std::uint32_t rate = 48000;
   std::uint8_t originalPitch = 60;
   std::uint16_t type = kMonoSample;
+  std::optional<Loop> loop; // without one, the header's loop is the whole sample
 };
 
 struct File {
@@ -189,8 +214,9 @@ inline Parts parts(const File& file) {
     name(headers, sample.name);
     le(headers, start, 4);
     le(headers, end, 4);
-    le(headers, start, 4); // loop points: the whole sample
-    le(headers, end, 4);
+    const auto loop = sample.loop.value_or(Loop{0, end - start});
+    le(headers, static_cast<std::uint32_t>(start + loop.start), 4);
+    le(headers, static_cast<std::uint32_t>(start + loop.end), 4);
     le(headers, sample.rate, 4);
     headers.push_back(sample.originalPitch);
     headers.push_back(0); // pitch correction

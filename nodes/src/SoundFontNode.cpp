@@ -105,6 +105,16 @@ void SoundFontNode::prepare(const PrepareInfo& info) {
     plan.panRight = maths::sin((500 + pan) / 1000 * kPi / 2);
     plan.attenuation = g[SoundFont::kInitialAttenuation];
     plan.points = zone.sampleEnd - zone.sampleStart;
+    // sampleModes 1 loops for the voice's whole life, 3 while it is held; 0,
+    // 2 and any other value play to the sample's end, as does a zone whose
+    // loop is empty or lies outside its points.
+    const auto mode = g[SoundFont::kSampleModes];
+    plan.loops = zone.loopEnd > zone.loopStart && (mode == 1 || mode == 3);
+    plan.loopsInRelease = plan.loops && mode == 1;
+    if (plan.loops) {
+      plan.loopStart = zone.loopStart - zone.sampleStart;
+      plan.loopEnd = zone.loopEnd - zone.sampleStart;
+    }
 
     plan.volume.delay = frames(g[SoundFont::kDelayVolEnv]);
     plan.volume.attack = frames(g[SoundFont::kAttackVolEnv]);
@@ -166,6 +176,7 @@ void SoundFontNode::noteOn(std::uint8_t channel, std::uint8_t key, std::uint8_t 
     auto& voice = voices_[slot];
     voice = Voice{};
     voice.active = voice.held = true;
+    voice.looping = plan.loops;
     voice.plan = p;
     voice.note = note_ons_;
     voice.channel = channel;
@@ -187,10 +198,12 @@ void SoundFontNode::noteOff(std::uint8_t channel, std::uint8_t key) {
 }
 
 // The release falls from the envelope's current level at its own rate, so it
-// ends sooner the lower it starts.
+// ends sooner the lower it starts. A loop that lasts only while the note is
+// held lets the voice play on through its end.
 void SoundFontNode::startRelease(Voice& voice) {
   voice.held = false;
   const auto& plan = plans_[voice.plan];
+  voice.looping = voice.looping && plan.loopsInRelease;
   if (!voice.volume.settle(plan.volume)) {
     voice.active = false;
     return;
@@ -272,18 +285,25 @@ void SoundFontNode::render(Voice& voice, float* left, float* right, std::uint32_
                            std::uint32_t to) {
   const auto& plan = plans_[voice.plan];
   const auto start = plan.zone.sampleStart;
+  const auto loopLength = static_cast<double>(plan.loopEnd - plan.loopStart);
   for (std::uint32_t i = from; i < to; ++i) {
     auto& envelope = voice.volume;
     if (envelope.stage != Stage::kDelay) { // in the delay, silent, and the sample waits
-      // Linear interpolation; past the last point the sample is silent.
+      // Linear interpolation. While looping, the loop's last point is followed
+      // by its first, so no point past the loop is read; past the sample's
+      // last point the sample is silent.
       const auto index = static_cast<std::uint64_t>(voice.position);
+      auto next = index + 1;
+      if (voice.looping && next == plan.loopEnd) next = plan.loopStart;
       const double a = sound_font_->point(start + index);
-      const double b = index + 1 < plan.points ? sound_font_->point(start + index + 1) : 0.0;
+      const double b = next < plan.points ? sound_font_->point(start + next) : 0.0;
       const double sample = (a + (b - a) * (voice.position - index)) / 32768.0 *
                             volume(voice, plan) * voice.gain;
       left[i] += static_cast<float>(sample * plan.panLeft);
       right[i] += static_cast<float>(sample * plan.panRight);
       voice.position += voice.increment;
+      if (voice.looping && voice.position >= plan.loopEnd)
+        voice.position = plan.loopStart + std::fmod(voice.position - plan.loopStart, loopLength);
       if (envelope.stage == Stage::kDecay) envelope.level *= plan.decayFactor;
       else if (envelope.stage == Stage::kRelease) envelope.level *= plan.releaseFactor;
     }

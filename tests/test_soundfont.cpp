@@ -691,17 +691,174 @@ TEST_CASE("a voice's slot is free from the frame after its last sound") {
   CHECK(firstSounding(both.left, last + 1) < both.left.size());
 }
 
-TEST_CASE("for now every zone plays its sample once to its end, whatever its sampleModes") {
-  // Interim rule until loops (ticket 02). The test file's loop spans the
-  // whole sample, so a looping zone would sound past its 600 points.
-  const auto once = play(build(oneZone(steady(4000, 600))), kOneNote);
-  REQUIRE(lastSounding(once.left) - firstSounding(once.left) == 599);
+namespace {
+
+// A steady sample of 600 points looping over [100, 500), played point for
+// point. `generators` sets its sampleModes and envelope.
+Bytes loopedFont(std::vector<Generator> generators, Loop loop = {100, 500}) {
+  auto file = oneZone(steady(4000, 600), std::move(generators));
+  file.samples[0].loop = loop;
+  return build(file);
+}
+
+// The frames from a voice's first sound to its last.
+std::size_t soundingFrames(const Stereo& out) {
+  return lastSounding(out.left) + 1 - firstSounding(out.left);
+}
+
+// Whether the left channel sounds on every frame of [from, to).
+bool soundsThroughout(const Stereo& out, std::size_t from, std::size_t to) {
+  for (std::size_t i = from; i < to; ++i)
+    if (out.left.at(i) == 0) return false;
+  return true;
+}
+
+// The first of the first `count` frames on which two renders differ, or
+// `count` if they agree on all of them.
+std::size_t firstDifference(const std::vector<float>& a, const std::vector<float>& b,
+                            std::size_t count) {
+  for (std::size_t i = 0; i < count; ++i)
+    if (a.at(i) != b.at(i)) return i;
+  return count;
+}
+
+// A ramp of `points` points, each 48 above the last.
+std::vector<std::int16_t> ramp(std::size_t points) {
+  std::vector<std::int16_t> result(points);
+  for (std::size_t i = 0; i < points; ++i) result[i] = static_cast<std::int16_t>(48 * i + 64);
+  return result;
+}
+
+// What a loop plays, written out: `points` from `first` to the loop's end,
+// then the loop `times` more times.
+std::vector<std::int16_t> unrolled(const std::vector<std::int16_t>& points, std::size_t first,
+                                   Loop loop, int times) {
+  std::vector<std::int16_t> result(points.begin() + first, points.begin() + loop.end);
+  for (int i = 0; i < times; ++i)
+    result.insert(result.end(), points.begin() + loop.start, points.begin() + loop.end);
+  return result;
+}
+
+} // namespace
+
+TEST_CASE("sampleModes 0 and 2 play to the sample's end") {
+  for (const int mode : {0, 2}) {
+    CAPTURE(mode);
+    const auto out = play(loopedFont({set(gen::kSampleModes, mode)}), kOneNote);
+    CHECK(soundingFrames(out) == 600);
+  }
+}
+
+TEST_CASE("a mode 1 loop sounds through the release until the envelope's 96 dB floor") {
+  // Release -1200 timecents falls 100 dB in 0.5 s: from full level the voice
+  // ends 0.48 s after its note-off, though its sample has 600 points.
+  const auto out = play(loopedFont({set(gen::kSampleModes, 1), set(gen::kReleaseVolEnv, -1200)}),
+                        {{13, noteOn(0, 60, 100)}, {12007, noteOff(0, 60)}},
+                        {48000, 128, 40000});
+  const auto onset = firstSounding(out.left);
+  CHECK(soundsThroughout(out, onset, 12007 + 23000));
+  CHECK(std::abs(static_cast<double>(lastSounding(out.left) + 1) - (12007 + 23040)) <= 1);
+}
+
+TEST_CASE("a held mode 1 loop ends only when its decay has fallen 96 dB") {
+  // As on the default piano: a 100 dB sustain lies below the floor. Decay
+  // -2400 timecents falls 100 dB in 0.25 s, so 96 dB takes 11520 frames.
+  const auto out = play(loopedFont({set(gen::kSampleModes, 1), set(gen::kDecayVolEnv, -2400),
+                                    set(gen::kSustainVolEnv, 1000), set(gen::kPan, -500)}),
+                        kOneNote, {48000, 128, 14000});
+  const auto onset = firstSounding(out.left);
+  CHECK(soundsThroughout(out, onset, lastSounding(out.left)));
+  // The decay starts after the default attack and hold, 47 frames each.
+  CHECK(std::abs(static_cast<double>(lastSounding(out.left) + 1) - (onset + 94 + 11520)) <= 1);
+}
+
+TEST_CASE("a mode 3 loop repeats while held then plays on through its end to the sample's end") {
+  // The note-off comes 1943 points into the sample: past the loop's first
+  // end, so 243 points into its fifth pass, at point 343. The voice then plays
+  // its last 257 points and ends, long before its 1 s release would.
+  const auto out = play(loopedFont({set(gen::kSampleModes, 3), set(gen::kReleaseVolEnv, 0)}),
+                        {{13, noteOn(0, 60, 100)}, {2003, noteOff(0, 60)}},
+                        {48000, 128, 6000});
+  const auto onset = firstSounding(out.left);
+  REQUIRE(onset == 60); // the default delay holds the sample back 47 frames
+  CHECK(soundsThroughout(out, onset, 2003));
+  CHECK(lastSounding(out.left) == 2003 + 257 - 1);
+}
+
+TEST_CASE("a looping voice interpolates across its loop's seam and never reads beyond it") {
+  // Played an octave down, the voice reads every point and every midpoint. The
+  // points after the loop are loud: a voice reading them would differ from the
+  // same ramp written out loop after loop. Short loops and loops near the
+  // sample's ends play as given.
+  std::size_t points = 0;
+  Loop loop;
+  SUBCASE("a loop in the middle") {
+    points = 400;
+    loop = {100, 200};
+  }
+  SUBCASE("a loop shorter than 32 points") {
+    points = 60;
+    loop = {20, 25};
+  }
+  SUBCASE("a loop 3 points from the start and 5 from the end") {
+    points = 60;
+    loop = {3, 55};
+  }
+  CAPTURE(points);
+  auto samplePoints = ramp(points);
+  std::fill(samplePoints.begin() + loop.end, samplePoints.end(), std::int16_t{30000});
+  const std::vector<Generator> octaveDown{set(gen::kOverridingRootKey, 72),
+                                          set(gen::kPan, -500)};
+  auto looped = oneZone(samplePoints, octaveDown);
+  looped.instruments[0].zones[0].generators.insert(
+      looped.instruments[0].zones[0].generators.begin(), set(gen::kSampleModes, 1));
+  looped.samples[0].loop = loop;
+  // Written out to at least 1400 points, which take 2800 frames.
+  const auto times = static_cast<int>(1400 / (loop.end - loop.start));
+  const auto writtenOut = oneZone(unrolled(samplePoints, 0, loop, times), octaveDown);
+  const auto expected = play(build(writtenOut), kOneNote, {48000, 128, 3000});
+  const auto out = play(build(looped), kOneNote, {48000, 128, 3000});
+  const auto onset = firstSounding(expected.left);
+  REQUIRE(lastSounding(expected.left) > onset + 2700);
+  CHECK(firstDifference(out.left, expected.left, onset + 2700) == onset + 2700);
+}
+
+TEST_CASE("a loop outside its sample or an empty loop plays unlooped") {
+  Loop loop;
+  SUBCASE("starting before the sample") { loop = {-10, 500}; }
+  SUBCASE("ending past the sample") { loop = {100, 601}; }
+  SUBCASE("empty") { loop = {300, 300}; }
+  SUBCASE("ending before it starts") { loop = {400, 300}; }
   for (const int mode : {1, 3}) {
     CAPTURE(mode);
-    const auto out = play(build(oneZone(steady(4000, 600), {set(gen::kSampleModes, mode)})),
-                          {{13, noteOn(0, 60, 100)}, {1201, noteOff(0, 60)}});
-    CHECK(out.left == once.left);
+    const auto out = play(loopedFont({set(gen::kSampleModes, mode)}, loop), kOneNote);
+    CHECK(soundingFrames(out) == 600);
   }
+}
+
+TEST_CASE("address offsets move the start end and loop points by fine plus 32768 times coarse") {
+  // Each point moves by a small net offset made of a coarse and a fine part:
+  // the start by +18, the end by -28, the loop's start by +22 and its end by
+  // +16. The voice plays points 18 to 571 and loops over [122, 416).
+  const auto samplePoints = ramp(600);
+  const std::vector<Generator> offsets{
+      set(gen::kStartAddrsCoarseOffset, 1),     set(gen::kStartAddrsOffset, -32750),
+      set(gen::kEndAddrsCoarseOffset, -1),      set(gen::kEndAddrsOffset, 32740),
+      set(gen::kStartloopAddrsCoarseOffset, 1), set(gen::kStartloopAddrsOffset, -32746),
+      set(gen::kEndloopAddrsCoarseOffset, 1),   set(gen::kEndloopAddrsOffset, -32752),
+      set(gen::kPan, -500)};
+  auto file = oneZone(samplePoints, offsets);
+  file.samples[0].loop = Loop{100, 400};
+  const auto once = play(build(file), kOneNote, {48000, 128, 3000});
+  CHECK(soundingFrames(once) == 572 - 18);
+
+  file.instruments[0].zones[0].generators.insert(
+      file.instruments[0].zones[0].generators.begin(), set(gen::kSampleModes, 1));
+  const auto looped = play(build(file), kOneNote, {48000, 128, 3000});
+  const auto expected = play(
+      build(oneZone(unrolled(samplePoints, 18, {122, 416}, 10), {set(gen::kPan, -500)})),
+      kOneNote, {48000, 128, 3000});
+  CHECK(firstDifference(looped.left, expected.left, 2000) == 2000);
 }
 
 namespace {
