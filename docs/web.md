@@ -16,7 +16,9 @@ preset then runs every test the web build registers, under emsdk's own Node, whi
 configure preset names as CMake's emulator:
 
 - the kernel, node, authoring, MIDI-file and soundfont tests, graph persistence included;
-- kernel purity;
+  the soundfont tests' golden clips give the same bits under Node as natively;
+- kernel purity and the soundfont node's portable-maths check
+  (`soundfont_portable_maths`), which read the source;
 - the render core's tests (`web_core_tests`), the [golden clips](#golden-clips) among them,
   and the module's smoke test (`web_smoke`, with `web_smoke_fixture`, which writes its
   soundfonts and the golden preview first).
