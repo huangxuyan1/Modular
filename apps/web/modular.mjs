@@ -12,6 +12,12 @@ export async function loadModular(options = {}) {
   const settings = {};
   if (options.locateFile !== undefined) settings.locateFile = options.locateFile;
   const module = await createModule(settings);
+  // What built the module, baked in by the build (apps/web/Version.cpp).
+  const version = {
+    commit: module.UTF8ToString(module._modular_version_commit()),
+    dirty: module._modular_version_dirty() !== 0,
+    emscripten: module.UTF8ToString(module._modular_version_emscripten()),
+  };
 
   let queue = Promise.resolve();
   // Runs `work` once every call made before it has settled, whether or not it failed.
@@ -70,6 +76,7 @@ export async function loadModular(options = {}) {
   });
 
   return {
+    version,
     async createInstrument(soundfont) {
       // The instrument's own copy, made once and never the page's array, which the page
       // may change or transfer.

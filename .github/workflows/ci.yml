@@ -96,12 +96,72 @@ jobs:
       # verified locally until a hosted runner proves them reliable.
       - run: ctest --preset windows --build-config ${{ matrix.configuration }} --label-exclude desktop
 
+  # The web build (docs/web.md): Emscripten builds every target, CTest runs the web scope
+  # under emsdk's Node, and the module's files and manifest are uploaded for a client.
+  web:
+    needs: classify
+    if: needs.classify.outputs.docs_only != 'true'
+    runs-on: ubuntu-24.04
+    env:
+      # The one place the Emscripten version is pinned: the emsdk tag, the SDK it installs,
+      # and the commit that tag must resolve to. They move together, in one pull request.
+      EMSCRIPTEN_VERSION: 6.0.13
+      EMSDK_COMMIT: 35659964bc2762fffec0d257997fb61475f765b7
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Outside the checkout, so the tree the module is built from stays clean. No cache.
+      - name: Install Emscripten ${{ env.EMSCRIPTEN_VERSION }}
+        run: |
+          emsdk="$RUNNER_TEMP/emsdk"
+          git -c advice.detachedHead=false clone --depth 1 --branch "$EMSCRIPTEN_VERSION" \
+            https://github.com/emscripten-core/emsdk.git "$emsdk"
+          tagged=$(git -C "$emsdk" rev-parse HEAD)
+          if [ "$tagged" != "$EMSDK_COMMIT" ]; then
+            echo "::error::emsdk tag $EMSCRIPTEN_VERSION is $tagged, not $EMSDK_COMMIT."
+            exit 1
+          fi
+          "$emsdk/emsdk" install "$EMSCRIPTEN_VERSION"
+          "$emsdk/emsdk" activate "$EMSCRIPTEN_VERSION"
+      # emsdk_env.sh sets EMSDK and EMSDK_NODE, which the web presets read, for one step.
+      - name: Configure
+        run: |
+          . "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+          cmake --preset web
+      - name: Build
+        run: |
+          . "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+          cmake --build --preset web
+      - name: Test under Node
+        run: |
+          . "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+          ctest --preset web
+      - name: Show the manifest
+        run: |
+          {
+            echo '### Web module manifest'
+            echo '```json'
+            cat build/web/dist/modular.manifest.json
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      # A PR's run builds GitHub's merge of the branch into main, so its commit is that
+      # merge; a client takes the artifact of a push to main.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: modular-web-${{ github.sha }}
+          path: |
+            build/web/dist/modular.mjs
+            build/web/dist/modular.d.mts
+            build/web/dist/modular_web.mjs
+            build/web/dist/modular_web.wasm
+            build/web/dist/modular.manifest.json
+          if-no-files-found: error
+
   gate:
     name: CI gate
     # Not !cancelled(): a cancelled run would then leave the gate skipped, and
     # branch protection counts a skipped required check as passing.
     if: always()
-    needs: [classify, docs, windows]
+    needs: [classify, docs, windows, web]
     runs-on: ubuntu-latest
     steps:
       - env:
@@ -109,14 +169,17 @@ jobs:
           DOCS_ONLY: ${{ needs.classify.outputs.docs_only }}
           DOCS: ${{ needs.docs.result }}
           BUILD: ${{ needs.windows.result }}
+          WEB: ${{ needs.web.result }}
         run: |
-          echo "classify=$CLASSIFY docs_only=$DOCS_ONLY docs=$DOCS build=$BUILD"
+          echo "classify=$CLASSIFY docs_only=$DOCS_ONLY docs=$DOCS build=$BUILD web=$WEB"
           [ "$CLASSIFY" = success ] || { echo "::error::Change classification did not succeed."; exit 1; }
           [ "$DOCS" = success ] || { echo "::error::Docs checks did not succeed."; exit 1; }
           if [ "$DOCS_ONLY" = true ]; then
             case "$BUILD" in success|skipped) ;; *) echo "::error::Build result: $BUILD."; exit 1 ;; esac
+            case "$WEB" in success|skipped) ;; *) echo "::error::Web build result: $WEB."; exit 1 ;; esac
             echo "Documentation-only change: links, whitespace and changed-file scope passed."
           else
             [ "$BUILD" = success ] || { echo "::error::Windows Debug/Release build and tests: $BUILD."; exit 1; }
-            echo "Code path: Windows Debug and Release builds and headless CTest passed."
+            [ "$WEB" = success ] || { echo "::error::Web build and tests under Node: $WEB."; exit 1; }
+            echo "Code path: Windows Debug and Release builds, headless CTest and the web build passed."
           fi

@@ -89,7 +89,25 @@ target_link_libraries(modular_web_core PUBLIC modular_kernel modular_midi modula
 # dist/: the hand-written loader and its declarations, and the module's glue and .wasm.
 if(EMSCRIPTEN)
   set(MODULAR_WEB_DIST "${CMAKE_CURRENT_BINARY_DIR}/dist")
-  add_executable(modular_web apps/web/Exports.cpp)
+  # The module's version: the commit, read each time the module is built, not only when
+  # CMake configures, and the Emscripten version. The stamp rewrites its files only when
+  # they change, so an unchanged tree relinks nothing.
+  find_package(Git REQUIRED)
+  set(MODULAR_WEB_VERSION_DIR "${CMAKE_CURRENT_BINARY_DIR}/web-version")
+  add_custom_target(modular_web_version
+    COMMAND "${CMAKE_COMMAND}"
+      "-DGIT=${GIT_EXECUTABLE}"
+      "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+      "-DEMSCRIPTEN_VERSION=${EMSCRIPTEN_VERSION}"
+      "-DOUTPUT_DIR=${MODULAR_WEB_VERSION_DIR}"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/apps/web/stamp_version.cmake"
+    BYPRODUCTS "${MODULAR_WEB_VERSION_DIR}/WebVersion.h"
+      "${MODULAR_WEB_VERSION_DIR}/WebVersion.cmake"
+    COMMENT "Reading the commit the web module is built from"
+    VERBATIM)
+  add_executable(modular_web apps/web/Exports.cpp apps/web/Version.cpp)
+  add_dependencies(modular_web modular_web_version)
+  target_include_directories(modular_web PRIVATE "${MODULAR_WEB_VERSION_DIR}")
   target_link_libraries(modular_web PRIVATE modular_web_core)
   set_target_properties(modular_web PROPERTIES
     SUFFIX ".mjs"
@@ -100,6 +118,35 @@ if(EMSCRIPTEN)
     -sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPF32,UTF8ToString)
   configure_file(apps/web/modular.mjs "${MODULAR_WEB_DIST}/modular.mjs" COPYONLY)
   configure_file(apps/web/modular.d.mts "${MODULAR_WEB_DIST}/modular.d.mts" COPYONLY)
+
+  # The manifest beside them, written by the build so a local build and CI's artifact carry
+  # the same one. Its flags are those CMake passes: every source in the module compiles
+  # with the first, and the module links with the second.
+  string(TOUPPER "${CMAKE_BUILD_TYPE}" web_config)
+  set(web_flags "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${web_config}}")
+  if(DEFINED CMAKE_CXX_EXTENSIONS AND NOT CMAKE_CXX_EXTENSIONS)
+    set(web_standard "${CMAKE_CXX${CMAKE_CXX_STANDARD}_STANDARD_COMPILE_OPTION}")
+  else()
+    set(web_standard "${CMAKE_CXX${CMAKE_CXX_STANDARD}_EXTENSION_COMPILE_OPTION}")
+  endif()
+  set(web_compile_options "$<JOIN:$<TARGET_PROPERTY:modular_web,COMPILE_OPTIONS>, >")
+  set(web_linker_flags
+    "${CMAKE_EXE_LINKER_FLAGS} ${CMAKE_EXE_LINKER_FLAGS_${web_config}}")
+  set(web_link_options "$<JOIN:$<TARGET_PROPERTY:modular_web,LINK_OPTIONS>, >")
+  set(MODULAR_WEB_MANIFEST "${MODULAR_WEB_DIST}/modular.manifest.json")
+  add_custom_command(OUTPUT "${MODULAR_WEB_MANIFEST}"
+    COMMAND "${CMAKE_COMMAND}"
+      "-DDIST=${MODULAR_WEB_DIST}"
+      "-DVERSION_FILE=${MODULAR_WEB_VERSION_DIR}/WebVersion.cmake"
+      "-DCOMPILE_FLAGS=${web_flags} ${web_standard} ${web_compile_options}"
+      "-DLINK_FLAGS=${web_flags} ${web_linker_flags} ${web_link_options}"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/apps/web/write_manifest.cmake"
+    DEPENDS modular_web "${MODULAR_WEB_DIST}/modular.mjs" "${MODULAR_WEB_DIST}/modular.d.mts"
+      "${MODULAR_WEB_VERSION_DIR}/WebVersion.cmake"
+      "${CMAKE_CURRENT_SOURCE_DIR}/apps/web/write_manifest.cmake"
+    COMMENT "Writing the web module's manifest"
+    VERBATIM)
+  add_custom_target(modular_web_manifest ALL DEPENDS "${MODULAR_WEB_MANIFEST}")
 endif()
 
 if(WIN32)
@@ -128,6 +175,18 @@ endif()
 
 # --- tests ---
 enable_testing()
+
+# Sets `out` to the arguments that leave the named doctest cases out under Node, where the
+# web build cannot run them; natively it is empty. docs/web.md gives each case's reason.
+function(modular_web_excluded_cases out)
+  set(arguments "")
+  if(EMSCRIPTEN AND ARGN)
+    list(JOIN ARGN "," names)
+    set(arguments "--test-case-exclude=${names}")
+  endif()
+  set(${out} "${arguments}" PARENT_SCOPE)
+endfunction()
+
 add_executable(kernel_tests tests/test_kernel.cpp)
 target_include_directories(kernel_tests PRIVATE third_party/doctest)
 target_link_libraries(kernel_tests PRIVATE modular_nodes)
@@ -147,7 +206,11 @@ target_compile_definitions(authoring_tests PRIVATE
 if(WIN32)
   target_link_libraries(authoring_tests PRIVATE modular_windows_audio)
 endif()
-add_test(NAME authoring_tests COMMAND authoring_tests)
+# The web build has no threads, so a graph cannot run on a worker.
+modular_web_excluded_cases(authoring_excluded
+  "a client can run and release a graph on a worker before editing and running again"
+  "a worker reports a processing boundary failure and releases execution")
+add_test(NAME authoring_tests COMMAND authoring_tests ${authoring_excluded})
 
 if(WIN32)
   add_executable(graph_editor_ui_tests tests/test_graph_editor_app.cpp)
@@ -214,11 +277,28 @@ if(EMSCRIPTEN)
   set_tests_properties(web_smoke PROPERTIES FIXTURES_REQUIRED web_smoke_soundfont)
 endif()
 
-add_test(NAME midi_cli_smoke COMMAND "${CMAKE_COMMAND}"
-  "-DCLI=$<TARGET_FILE:midi_cli>"
-  "-DFIXTURE=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/one-note.mid"
-  "-DWORK_ROOT=${CMAKE_CURRENT_BINARY_DIR}/midi-cli-tests"
-  -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_midi_cli.cmake")
+# Native only: the test's CMake script runs the CLI directly, with no cross-compiling
+# emulator.
+if(NOT CMAKE_CROSSCOMPILING)
+  add_test(NAME midi_cli_smoke COMMAND "${CMAKE_COMMAND}"
+    "-DCLI=$<TARGET_FILE:midi_cli>"
+    "-DFIXTURE=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/one-note.mid"
+    "-DWORK_ROOT=${CMAKE_CURRENT_BINARY_DIR}/midi-cli-tests"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_midi_cli.cmake")
+endif()
+
+# Under Node, every doctest executable grows its memory as the module does, since the
+# soundfont tests need more than the default 16 MiB. Those that read or write files also
+# link Node's raw file system, so they see the host's files as the native tests do.
+if(EMSCRIPTEN)
+  foreach(tests kernel_tests node_tests authoring_tests midi_file_tests soundfont_tests
+                web_core_tests)
+    target_link_options(${tests} PRIVATE -sALLOW_MEMORY_GROWTH=1)
+  endforeach()
+  foreach(tests node_tests authoring_tests midi_file_tests soundfont_tests)
+    target_link_options(${tests} PRIVATE -sNODERAWFS=1)
+  endforeach()
+endif()
 
 # The layering rule the kernel exists to keep: it names no media concept.
 # Checked on the source, so it is a script rather than a doctest case.
