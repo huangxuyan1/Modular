@@ -138,7 +138,8 @@ target_link_libraries(soundfont_tests PRIVATE modular_soundfont)
 add_test(NAME soundfont_tests COMMAND soundfont_tests)
 
 # The soundfont extract tool, scripts/soundfont_extract.py, checked through its command
-# line against renders by the node. Native only: the script runs the helper directly.
+# line against renders by the node. Native only: the test's CMake script runs the
+# helper executable directly, with no cross-compiling emulator.
 if(NOT CMAKE_CROSSCOMPILING)
   find_package(Python3 3.8 COMPONENTS Interpreter)
   add_executable(soundfont_extract_helper tests/soundfont_extract_helper.cpp)

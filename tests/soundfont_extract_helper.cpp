@@ -2,8 +2,9 @@
 //
 //   soundfont_extract_helper write <directory>
 //     Writes the test's soundfonts, built with the test-side builder, into an
-//     existing directory: source.sf2, with several presets, and one file for
-//     each refusal (sf3, compressed, sm24, truncated, bad-index).
+//     existing directory: source.sf2, with several presets and its own
+//     copyright and sound engine; plain.sf2, the same with neither; and one
+//     file for each refusal (sf3, compressed, sm24, truncated, bad-index).
 //
 //   soundfont_extract_helper compare <source.sf2> <bank> <program> <extract.sf2>
 //     Renders one clip through SoundFontNode at 44.1 and 48 kHz, with the
@@ -150,9 +151,19 @@ void editSampleHeaders(Parts& parts) {
   }
 }
 
-Bytes sourceBytes(const File& file) {
+// `info` adds the INFO fields a real bank carries and the builder leaves out.
+Bytes sourceBytes(const File& file, bool info = true) {
   auto parts = sf2test::parts(file);
   editSampleHeaders(parts);
+  if (info) {
+    const auto text = [](const std::string& value) {
+      Bytes bytes(value.begin(), value.end());
+      bytes.push_back(0);
+      return bytes;
+    };
+    parts.info.push_back({"isng", text("Test Engine")});
+    parts.info.push_back({"ICOP", text("A Bank Author 2026")});
+  }
   return assemble(parts);
 }
 
@@ -169,6 +180,7 @@ int write(const std::filesystem::path& directory) {
   // The source must load, and play the preset the test extracts.
   (void)SoundFont::parse(bytes).zones({1, 5});
   save(directory / "source.sf2", bytes);
+  save(directory / "plain.sf2", sourceBytes(file, false));
 
   auto sf3 = file;
   sf3.major = 3;
@@ -250,15 +262,17 @@ Render render(const SoundFont& font, const SoundFont::PresetNumber* preset, doub
   auto& node = static_cast<SoundFontNode&>(graph.node(synth));
   if (preset) node.setPreset(preset->bank, preset->program);
   node.setVoiceLimit(4096); // so no note of the clip is dropped for want of a voice
-  graph.connect(source, static_cast<MidiAt&>(graph.node(source)).out, synth, node.midiIn());
-  graph.connect(synth, node.out(), sink, static_cast<CaptureSinkNode&>(graph.node(sink)).in());
+  graph.connect(source, static_cast<MidiAt&>(graph.node(source)).out, synth,
+                node.midiIn());
+  graph.connect(synth, node.out(), sink,
+                static_cast<CaptureSinkNode&>(graph.node(sink)).in());
 
   constexpr std::uint32_t kBlock = 97;
   const auto frames = static_cast<std::uint64_t>(kClipSeconds * rate);
   Engine engine(graph, rate, kBlock);
   while (engine.streamTime() < frames)
-    engine.process(
-        static_cast<std::uint32_t>(std::min<std::uint64_t>(kBlock, frames - engine.streamTime())));
+    engine.process(static_cast<std::uint32_t>(
+        std::min<std::uint64_t>(kBlock, frames - engine.streamTime())));
   if (const auto error = engine.errorMessage(); !error.empty())
     throw std::runtime_error("render: " + error);
 
@@ -283,10 +297,16 @@ std::uint64_t hash(const std::vector<float>& samples) {
   return h;
 }
 
-int compare(const std::filesystem::path& sourcePath, int bank, int program,
-            const std::filesystem::path& extractPath) {
-  const SoundFont::PresetNumber preset{static_cast<std::uint16_t>(bank),
-                                       static_cast<std::uint16_t>(program)};
+// A bank or program number, 0 to 65535.
+std::uint16_t number(const std::string& text) {
+  const auto value = std::stoul(text);
+  if (value > 0xffff) throw std::out_of_range("a bank or program above 65535");
+  return static_cast<std::uint16_t>(value);
+}
+
+int compare(const std::filesystem::path& sourcePath, std::uint16_t bank,
+            std::uint16_t program, const std::filesystem::path& extractPath) {
+  const SoundFont::PresetNumber preset{bank, program};
   const auto source = SoundFont::read(sourcePath);
   const auto extract = SoundFont::read(extractPath);
   if (!(extract.lowestPreset() == preset)) {
@@ -329,7 +349,7 @@ int main(int argc, char** argv) {
     const std::vector<std::string> args(argv + 1, argv + argc);
     if (args.size() == 2 && args[0] == "write") return write(args[1]);
     if (args.size() == 5 && args[0] == "compare")
-      return compare(args[1], std::stoi(args[2]), std::stoi(args[3]), args[4]);
+      return compare(args[1], number(args[2]), number(args[3]), args[4]);
     return usage();
   } catch (const std::exception& e) {
     std::cerr << "error: " << e.what() << "\n";
