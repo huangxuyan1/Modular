@@ -76,8 +76,8 @@ the user's delegation, from ticket 01's open note on held notes whose voices end
 
 **2026-11-24 — implemented.** Branch `claude/soundfont-node-03-voice-stealing`, cut from a
 freshly fetched `origin/main` at `95a1a1a`. Before the push it was rebased onto `6f1d9eb`
-(web build 04, the soundfont extract tool), which touches none of this ticket's files. The
-rebase was clean.
+(web build 04, the soundfont extract tool) and then onto `5952479` (web build 02, the render
+core, which plays the node). Neither touches this ticket's code, and both rebases were clean.
 
 - *What was built*, all in `nodes/src/SoundFontNode.cpp` and its header:
   - **Held notes, counted per key.** For each of the 16 × 128 keys, the node counts its
@@ -151,11 +151,12 @@ rebase was clean.
   - events handled at the block's start: the block-size test, among many;
   - a fade that advances once per render call: the fade, re-take and block-size tests;
   - a note-on that matches no zone left uncounted: the ruling's test, at velocity 10.
-- *Checks, on the final tree*, after the rebase and the review fixes:
+- *Checks, on the final tree*, after both rebases and the review fixes:
   - Script focused check: `-Target soundfont_tests -TestRegex '^soundfont_tests$'`.
-  - Full suite through the script: Debug 10/10 and Release 10/10 CTest entries. These include
-    both `desktop` tests, kernel purity and `soundfont_extract`, which the rebase brought in.
-    Before the rebase, Debug ran 9/9.
+  - Full suite through the script: Debug 11/11 and Release 11/11 CTest entries. These include
+    both `desktop` tests and kernel purity, and the rebases' `soundfont_extract` and
+    `web_core_tests`. The render core's tests play the node and pass unchanged. Before the
+    rebases, Debug ran 9/9; between them, Debug and Release ran 10/10.
   - `python scripts/check_docs.py`: 0 problems.
   - `git diff --check`: clean.
   - Nothing under `kernel/` or `workspace/` changed.
