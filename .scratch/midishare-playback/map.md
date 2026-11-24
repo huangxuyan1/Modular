@@ -65,6 +65,19 @@ midishare repository also holds a plan for this change, written by an agent on 2
 against an older Modular commit and never approved by the user: one candidate route, not a
 decision.
 
+**Specs: how the Modular-side work cuts.** This graduated from "Not yet specified" (planning
+hub, 2026-11-24, under the user's delegation). The work splits into two specs:
+
+- **(A) The soundfont node**, [spec](../soundfont-node/spec.md) and
+  [tickets](../soundfont-node/issues/): the SF2 reader, the voice, the policy, the node, its
+  codec, tests and docs. Its tickets 01 to 03 complete the website's route.
+- **(B) The web build and its render surface**, after tickets 02, 03 and 08: the Emscripten
+  build, the glue (`loadModular`, `createInstrument`, `render`), where the module lives, the
+  `MidiFileNode` import from bytes, and the output sink.
+
+Neither spec covers the midishare page or making the single-preset extract, which is a tool's
+job (B or later).
+
 **Related roadmap tickets** (on `.scratch/roadmap/`):
 [How is the command/edit API cut?](../roadmap/issues/07-command-api-cut.md),
 [Probe: does the block loop survive a real driver callback and a mid-stream recompile?](../roadmap/issues/08-realtime-callback-probe.md),
@@ -136,8 +149,6 @@ In scope, not yet sharp enough to ticket. Graduates as the frontier advances.
   host's 25 MiB limit. On the node's side a choice is an authoring edit between renders: another
   file loaded into the one node, or another preset of the same file (the node-shape decision
   above).
-- **How the Modular-side work cuts into specs.** Probably two: the web build with its render
-  surface, and the soundfont node. Depends on the build, surface and node tickets.
 - **Where the render runs in the page** (main thread or a Web Worker), and what the site shows
   while it renders. midishare's call, informed by the probe's render times; it reaches this map
   only if it changes the contract.
@@ -150,7 +161,8 @@ In scope, not yet sharp enough to ticket. Graduates as the frontier advances.
 - **Sound parity.** Not a map ticket (planning hub, 2026-11-24, on
   [Which part of the SoundFont format does the node read?](issues/09-soundfont-format-subset.md)).
   The user judges by ear on the live site, after the node passes its FluidSynth comparison,
-  whether the abcjs fallback can go; the spec carries this as its last acceptance item. Expect a
+  whether the abcjs fallback can go; the [soundfont node spec](../soundfont-node/spec.md)
+  carries this as its last acceptance item. Expect a
   dry output and a wider velocity spread than abcjs's synth.
 
 ## Out of scope
