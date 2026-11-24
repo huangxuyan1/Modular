@@ -20,6 +20,14 @@ they cover:
 - under Node, the render core's tests (`web_core_tests`) and the module's smoke test
   (`web_smoke`, with `web_smoke_fixture`, which writes its soundfont first).
 
+The smoke test also loads the *test module*, `modular_web_test`, a variant built only for it
+into `build/web/web-test-module/`, never into `dist/`. It is the same exports and loader,
+linked with [`tests/web_test_module.cpp`](../tests/web_test_module.cpp), in which any
+allocation of 64 MiB or more traps and an export reports the heap in use, and with
+`tests/web_test_module.js`, which hands each instance to the test. Through it the test
+induces a trap and reads the module's memory, so the module a client takes carries
+neither.
+
 Every other target builds under the `web` preset, but its tests do not run there yet. The
 graph editor and the Windows audio node are Windows only, and the soundfont extract tool's
 test is native only. There is no web CI job yet; the build is checked locally, as below.
@@ -104,27 +112,65 @@ A file's duration runs to its end-of-track time. A file of zero duration renders
 frames, and an `AudioBuffer` cannot be empty, so a page handles that case before it builds
 one. A page that wants silence after the file pads the buffer itself.
 
-**Errors.** Every failure rejects with an `Error` whose message is Modular's, short and
-lowercase, for example:
+**The length limit.** A file longer than ten minutes is refused with
+`render: file is longer than 10 minutes`, read from the file's duration as soon as its bytes
+are parsed, before anything is allocated for the rendering. A file of exactly ten minutes
+renders. Ten minutes of stereo floats at 48 kHz take about 230 MB.
 
-- `midi file: missing MThd header`, from the MIDI parser;
-- `soundfont: compressed samples (sf3) are not supported`, from the soundfont reader;
-- `render: sample rate must be finite and positive`, from the render itself;
-- `out of memory`, when the module's memory cannot grow further.
+**Errors.** Every failure rejects with an `Error` whose message is Modular's, short and
+lowercase. These are the messages a page can see:
+
+- from the loader, which checks its arguments before the module sees them:
+  - `soundfont: bytes must be a Uint8Array`, from `createInstrument`;
+  - `midi file: bytes must be a Uint8Array` and `render: sample rate must be a number`, from
+    `render`;
+- from the soundfont reader, `soundfont: ...`: malformed bytes, such as
+  `soundfont: not a soundfont` or `soundfont: truncated chunk` (empty bytes give this one),
+  and `soundfont: compressed samples (sf3) are not supported` for a SoundFont 3 file;
+- from the MIDI parser, `midi file: ...`, such as `midi file: missing MThd header`;
+- from the render:
+  - `render: sample rate must be finite and positive`, for 0, a negative rate, NaN or
+    either infinity;
+  - `render: file is longer than 10 minutes`, the length limit above;
+  - `render: too many frames`, for a rate at which the rendering's frames could not be
+    counted or held, such as a gigahertz rate;
+  - any message one of the instrument's nodes reports while rendering. None reports one
+    today;
+- `out of memory`, when the module's memory cannot grow to hold a rendering. Its memory
+  stops at 2 GiB;
+- `module stopped: ...`, after a WebAssembly trap or abort, below.
 
 No C++ exception reaches JavaScript. A failed call leaves the module and its instruments
-usable, and the next call runs as usual. A WebAssembly trap or abort is not handled yet: it
-rejects its call with the WebAssembly error, and the page should load a new module rather
-than use that one again.
+usable, and the next call runs as usual.
+
+**A trap.** The exported functions catch everything C++ throws, so an exception out of one
+can only be a WebAssembly trap or an abort. Nothing in that instance of the module can be
+trusted after one, so:
+
+- the call that hit it rejects with an `Error` whose message is `module stopped: ` and the
+  trap's own message, which also stays on the error as its `cause`;
+- the loader discards the instance and never calls it again;
+- the next call that needs the module instantiates a fresh one, with the same `locateFile`.
+  The calls after it wait their turns as usual;
+- an instrument made before the trap makes itself again on the fresh instance, at its next
+  call, from its own copy of the soundfont's bytes, never from the page's array. It renders
+  as it did before.
+
+So a trap costs only the call that hit it. If the fresh instance cannot load, for example
+when the `.wasm` cannot be fetched, that call rejects with the error, and the next call
+tries again.
 
 **Call order.** Every call returns a promise, even though a render runs on the calling
 thread today, so moving the render into a Web Worker later changes no page code. One queue
 per loaded module runs its calls one at a time, in the order they were made, whichever
-instrument they name, and a call still runs after an earlier one failed.
+instrument they name. A call that fails, its argument checks included, rejects in its own
+turn and only its own promise, and the calls after it run as usual.
 
 **Memory.** The module holds at most one rendering, which it releases as soon as the loader
 has copied the channels out. WebAssembly memory grows as a render needs it and never
-shrinks, so a long render keeps its peak for the module's life.
+shrinks, so a long render keeps its peak for the module's life. Rendering a clip again does
+not grow it: in the smoke test, a minute's rendering grew the memory from 16.1 to 22.9 MiB,
+and twenty more renders of it left both the memory and the heap in use where they were.
 
 ## Browsers and hosting
 

@@ -36,7 +36,10 @@ public:
 
   // Renders the file and at most two seconds past its end, then trims that
   // release tail after its last frame where either channel reaches -80 dBFS.
-  // The file's own frames are always kept whole.
+  // The file's own frames are always kept whole. A file longer than ten minutes
+  // is refused before anything is sized for it, and a message a node reports
+  // while rendering fails the render. Running out of memory throws
+  // std::bad_alloc; the instrument renders on after any failure.
   Rendering render(std::span<const std::uint8_t> midiFile, double sampleRate);
 
 private:
