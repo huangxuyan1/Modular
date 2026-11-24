@@ -9,10 +9,11 @@ From the repository root in PowerShell:
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_windows.ps1
 ```
 
-This configures the `windows` preset, builds Debug, and runs all eight CTest
-entries: kernel, node, authoring and MIDI-file tests, a CLI smoke test, kernel
-purity, and the two `desktop`-labelled entries, the actual graph-editor app check
-(`graph_editor_app`) and a focused gesture regression (`graph_editor_gesture`).
+This configures the `windows` preset, builds Debug, and runs all nine CTest
+entries: kernel, node, authoring, MIDI-file and soundfont tests, a CLI smoke
+test, kernel purity, and the two `desktop`-labelled entries, the actual
+graph-editor app check (`graph_editor_app`) and a focused gesture regression
+(`graph_editor_gesture`).
 Any failed step stops the script. The execution-policy option applies only to
 this PowerShell process; it allows the local script without changing the
 machine's policy.
@@ -21,7 +22,7 @@ The `desktop` tests launch the real editor on a private Win32 desktop that the
 test creates. The editor's window, file choosers and dialogs open there, so
 nothing appears on the screen or takes focus, and the editor is killed with the
 test, even when a CTest timeout ends it. They add about 20 seconds per
-configuration. Append `-ExcludeDesktop` to run only the six headless entries.
+configuration. Append `-ExcludeDesktop` to run only the seven headless entries.
 
 For an optimized build, append `-Configuration Release`. Executables are under
 `build/windows/Debug/` or `build/windows/Release/`.
@@ -69,8 +70,8 @@ makes it fail rather than pass.
   errors and conflict markers in the changed lines. No Markdown style linter runs.
 - **Build path:** on the `windows-2022` image (Visual Studio 2022, the preset's
   generator), Debug and Release each configure the `windows` preset, build every
-  target and run CTest with `--label-exclude desktop`: the kernel, node, authoring
-  and MIDI-file tests, the CLI smoke test and kernel purity.
+  target and run CTest with `--label-exclude desktop`: the kernel, node, authoring,
+  MIDI-file and soundfont tests, the CLI smoke test and kernel purity.
 
 CI does not cover:
 

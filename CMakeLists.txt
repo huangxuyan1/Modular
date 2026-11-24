@@ -41,6 +41,11 @@ add_library(modular_midi nodes/src/MidiFile.cpp)
 target_link_libraries(modular_midi PUBLIC modular_nodes)
 target_link_libraries(modular_primitive_persistence PUBLIC modular_midi)
 
+# SoundFont 2 instruments: the reader and the soundfont node. Only the header-only
+# node library is linked, so a pipeline with no music in it links none of this.
+add_library(modular_soundfont nodes/src/SoundFont.cpp nodes/src/SoundFontNode.cpp)
+target_link_libraries(modular_soundfont PUBLIC modular_nodes)
+
 if(WIN32)
   add_library(modular_windows_audio nodes/src/AudioOutputNode.cpp)
   target_link_libraries(modular_windows_audio PUBLIC modular_nodes PRIVATE winmm)
@@ -111,6 +116,11 @@ target_link_libraries(midi_file_tests PRIVATE modular_midi)
 target_compile_definitions(midi_file_tests PRIVATE
   MODULAR_TEST_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
 add_test(NAME midi_file_tests COMMAND midi_file_tests)
+
+add_executable(soundfont_tests tests/test_soundfont.cpp)
+target_include_directories(soundfont_tests PRIVATE third_party/doctest)
+target_link_libraries(soundfont_tests PRIVATE modular_soundfont)
+add_test(NAME soundfont_tests COMMAND soundfont_tests)
 
 add_test(NAME midi_cli_smoke COMMAND "${CMAKE_COMMAND}"
   "-DCLI=$<TARGET_FILE:midi_cli>"
