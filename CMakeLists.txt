@@ -297,24 +297,48 @@ target_include_directories(web_core_tests PRIVATE third_party/doctest)
 target_link_libraries(web_core_tests PRIVATE modular_web_core)
 add_test(NAME web_core_tests COMMAND web_core_tests)
 
-# The web module's smoke test: the loader and module, driven from Node. Its soundfonts come
-# from the test-side builder, written into the build tree first by a writer that links
-# Node's raw file system; CTest runs the writer under Node, the toolchain's emulator. The
-# writer also writes the golden preview's MIDI bytes and golden values (WebGoldenClips.h).
+# The web module's smoke test, the loader and module driven from Node, and the web check
+# page, which a browser opens by hand (docs/web.md). The build writes their fixtures with
+# the test-side builders: the smoke test's soundfont, and the golden preview's soundfont,
+# MIDI bytes and golden values (WebGoldenClips.h) into the page's folder. The writer links
+# Node's raw file system and runs under Node, the toolchain's emulator. The page's folder,
+# web-check/, also takes a copy of the module's files from dist/, so it can be served alone.
 if(EMSCRIPTEN)
   add_executable(web_smoke_fixture tests/web_smoke_fixture.cpp)
   target_link_options(web_smoke_fixture PRIVATE -sNODERAWFS=1)
   set(MODULAR_WEB_SMOKE_SOUNDFONT "${CMAKE_CURRENT_BINARY_DIR}/web-smoke.sf2")
-  set(MODULAR_WEB_SMOKE_GOLDEN "${CMAKE_CURRENT_BINARY_DIR}/web-smoke-golden")
-  add_test(NAME web_smoke_fixture
-    COMMAND web_smoke_fixture "${MODULAR_WEB_SMOKE_SOUNDFONT}" "${MODULAR_WEB_SMOKE_GOLDEN}")
+  set(MODULAR_WEB_CHECK "${CMAKE_CURRENT_BINARY_DIR}/web-check")
+  set(web_check_fixtures preview.sf2 preview.mid preview.json)
+  list(TRANSFORM web_check_fixtures PREPEND "${MODULAR_WEB_CHECK}/")
+  add_custom_command(OUTPUT "${MODULAR_WEB_SMOKE_SOUNDFONT}" ${web_check_fixtures}
+    COMMAND web_smoke_fixture "${MODULAR_WEB_SMOKE_SOUNDFONT}" "${MODULAR_WEB_CHECK}"
+    DEPENDS web_smoke_fixture
+    COMMENT "Writing the web smoke test's and check page's fixtures"
+    VERBATIM)
+  foreach(page index.html check.mjs golden_hash.mjs)
+    configure_file("tests/web/${page}" "${MODULAR_WEB_CHECK}/${page}" COPYONLY)
+  endforeach()
+  set(web_check_module_files
+    modular.mjs modular.d.mts modular_web.mjs modular_web.wasm modular.manifest.json)
+  set(web_check_module_sources ${web_check_module_files})
+  list(TRANSFORM web_check_module_sources PREPEND "${MODULAR_WEB_DIST}/")
+  list(TRANSFORM web_check_module_files PREPEND "${MODULAR_WEB_CHECK}/modular/")
+  add_custom_command(OUTPUT ${web_check_module_files}
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${MODULAR_WEB_CHECK}/modular"
+    COMMAND "${CMAKE_COMMAND}" -E copy ${web_check_module_sources}
+      "${MODULAR_WEB_CHECK}/modular"
+    DEPENDS "${MODULAR_WEB_MANIFEST}"
+    COMMENT "Copying the web module beside the check page"
+    VERBATIM)
+  add_custom_target(modular_web_check ALL
+    DEPENDS "${MODULAR_WEB_SMOKE_SOUNDFONT}" ${web_check_fixtures} ${web_check_module_files})
+  add_dependencies(modular_web_check modular_web_manifest)
+
   add_test(NAME web_smoke COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR}
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_web_smoke.mjs"
     "${MODULAR_WEB_DIST}/modular.mjs" "${MODULAR_WEB_SMOKE_SOUNDFONT}"
     "${MODULAR_WEB_TEST_MODULE}/modular.mjs"
-    "${MODULAR_WEB_SMOKE_GOLDEN}")
-  set_tests_properties(web_smoke_fixture PROPERTIES FIXTURES_SETUP web_smoke_soundfont)
-  set_tests_properties(web_smoke PROPERTIES FIXTURES_REQUIRED web_smoke_soundfont)
+    "${MODULAR_WEB_CHECK}")
 endif()
 
 # Native only: the test's CMake script runs the CLI directly, with no cross-compiling

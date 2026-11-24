@@ -14,8 +14,10 @@
 // 64 MiB or more traps in it, and it hands each instance it makes to the test, through
 // globalThis.modularTestInstances, so the test can read its memory.
 //
-// The golden directory holds the render core's golden preview (tests/WebGoldenClips.h):
-// its soundfont, its MIDI bytes and its golden values at 48 kHz.
+// The golden directory is the browser check page's folder, which holds the render core's
+// golden preview (tests/WebGoldenClips.h): its soundfont, its MIDI bytes and its golden
+// values at each rate. The test checks 48 kHz, with the golden hash ported to JavaScript
+// in tests/web/golden_hash.mjs, which the check page shares.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -23,6 +25,7 @@ import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { runInNewContext } from 'node:vm';
+import { difference, measure } from './web/golden_hash.mjs';
 
 const [loaderPath, soundfontPath, testLoaderPath, goldenPath] = process.argv.slice(2);
 if (!loaderPath || !soundfontPath || !testLoaderPath || !goldenPath)
@@ -415,47 +418,12 @@ test('rendering a clip again and again does not grow the module memory, and each
 
 // --- golden renders --------------------------------------------------------------------
 
-// tests/GoldenRender.h's hash, ported: FNV-1a, 64-bit, over each sample's IEEE 754 bits,
-// their four bytes least significant first, frames in order and left before right, started
-// afresh for every block of 4,096 frames.
-const kBlockFrames = 4096;
-
-function blockHash(left, right, from, to) {
-  const channels = [left, right].map((samples) =>
-    new DataView(samples.buffer, samples.byteOffset, samples.byteLength));
-  let hash = 14695981039346656037n;
-  for (let frame = from; frame < to; ++frame)
-    for (const channel of channels) {
-      const bits = channel.getUint32(4 * frame, true);
-      for (let shift = 0; shift < 32; shift += 8) {
-        hash ^= BigInt((bits >>> shift) & 0xff);
-        hash = BigInt.asUintN(64, hash * 1099511628211n);
-      }
-    }
-  return hash;
-}
-
-// A rendering's frame count and block hashes, as hexadecimal strings like the fixture's.
-function measure([left, right]) {
-  const blocks = [];
-  for (let from = 0; from < left.length; from += kBlockFrames) {
-    const hash = blockHash(left, right, from, Math.min(from + kBlockFrames, left.length));
-    blocks.push(`0x${hash.toString(16).padStart(16, '0')}`);
-  }
-  return { frames: left.length, blocks };
-}
-
 test("the golden preview renders through the loader to the render core's golden frame count and block hashes", async () => {
   const read = (name) => new Uint8Array(readFileSync(join(goldenPath, name)));
-  const golden = JSON.parse(Buffer.from(read('preview.json')).toString('utf8'));
+  const { renders } = JSON.parse(Buffer.from(read('preview.json')).toString('utf8'));
+  const golden = renders.find((render) => render.rate === 48000);
   const instrument = await modular.createInstrument(read('preview.sf2'));
-  const rendering = await instrument.render(read('preview.mid'), golden.rate);
-  const actual = measure(rendering.channels);
-  let block = 0;
-  while (block < Math.min(actual.blocks.length, golden.blocks.length) &&
-         actual.blocks[block] === golden.blocks[block]) ++block;
-  assert.ok(actual.frames === golden.frames && block === actual.blocks.length,
-            `${golden.rate} Hz: ${actual.frames} frames (golden ${golden.frames}), first ` +
-            `differing block ${block} (frames ${block * kBlockFrames} on)\n` +
-            `the render's values: ${JSON.stringify(actual)}`);
+  const actual = measure(await instrument.render(read('preview.mid'), golden.rate));
+  const problem = difference(golden, actual);
+  assert.equal(problem, '', `${problem}\nthe render's values: ${JSON.stringify(actual)}`);
 });

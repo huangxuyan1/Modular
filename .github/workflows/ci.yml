@@ -97,7 +97,8 @@ jobs:
       - run: ctest --preset windows --build-config ${{ matrix.configuration }} --label-exclude desktop
 
   # The web build (docs/web.md): Emscripten builds every target, CTest runs the web scope
-  # under emsdk's Node, and the module's files and manifest are uploaded for a client.
+  # under emsdk's Node, and the module's files and manifest are uploaded for a client, and
+  # the check page apart from them.
   web:
     needs: classify
     if: needs.classify.outputs.docs_only != 'true'
@@ -150,6 +151,13 @@ jobs:
         with:
           name: modular-web-${{ github.sha }}
           path: build/web/dist/
+          if-no-files-found: error
+      # The web check page, its fixtures and a copy of the module, for a browser checked by
+      # hand (docs/web.md). A separate artifact, so the module's stays as a client takes it.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: modular-web-check-${{ github.sha }}
+          path: build/web/web-check/
           if-no-files-found: error
 
   gate:
