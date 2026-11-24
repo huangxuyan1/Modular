@@ -215,7 +215,8 @@ exact zeros, and its slot is free from the frame after its last sound. Tuning
 
 **Notes.** Every channel, channel 10 included, plays the one preset. Velocity is the
 note-on's byte, and velocity 0 is a note-off. Program changes, controllers, pitch
-bend and note-off velocity do nothing. A key is a channel and a key number. A key
+bend and note-off velocity do nothing, and neither does a message with a data byte of
+128 or more, which is not MIDI. A key is a channel and a key number. A key
 struck again starts a new note beside the old one, so two parts in unison, on one
 channel or two, both sound.
 
@@ -263,11 +264,11 @@ node one, such as the editor's, counts held notes per channel and key in
 
 `process()` allocates nothing: `prepare()` allocates the voices, their tails and the
 counts of held notes, 16 channels of 128 keys. Voices and tails render in slot order
-between events, so the output is bit-identical at every block size. Every transcendental function whose
-result reaches the output goes through one internal header,
-`nodes/src/SoundFontMaths.h`, which wraps the standard library for now. Map ticket
-08 decided that a browser render must match a native one bit for bit, so the soundfont
-spec's ticket 08 replaces it there with portable routines.
+between events, so the output is bit-identical at every block size. Every
+transcendental function whose result reaches the output goes through one internal
+header, `nodes/src/SoundFontMaths.h`, which wraps the standard library for now. Map
+ticket 08 decided that a browser render must match a native one bit for bit, so the
+soundfont spec's ticket 08 replaces it there with portable routines.
 
 ## AudioOutputNode
 
