@@ -1,7 +1,7 @@
 # What does the page hand Modular, and what does it get back?
 
 Type: grilling
-Status: open
+Status: claimed
 
 ## Question
 
