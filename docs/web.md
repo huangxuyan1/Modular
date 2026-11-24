@@ -17,8 +17,9 @@ configure preset names as CMake's emulator:
 
 - the kernel, node, authoring, MIDI-file and soundfont tests, graph persistence included;
 - kernel purity;
-- the render core's tests (`web_core_tests`) and the module's smoke test (`web_smoke`, with
-  `web_smoke_fixture`, which writes its soundfont first).
+- the render core's tests (`web_core_tests`), the [golden clips](#golden-clips) among them,
+  and the module's smoke test (`web_smoke`, with `web_smoke_fixture`, which writes its
+  soundfonts and the golden preview first).
 
 The render core, `modular_web_core`, is the C++ behind the module. It also builds and is
 tested natively on Windows ([windows.md](windows.md)). The module, `modular_web`, its loader
@@ -77,6 +78,32 @@ The tests link differently from the module:
 - those that read or write files link Node's raw file system (`-sNODERAWFS=1`), so they see
   the host's files as the native tests do: the node, authoring, MIDI-file and soundfont
   tests, and the smoke test's fixture writer.
+
+### Golden clips
+
+A browser's render equals the native one bit for bit, and golden values check it. Three
+clips, each rendered through the render core at 44.1, 48 and 22.05 kHz, are pinned by
+their frame count and a 64-bit hash of every 4,096 frames (`tests/GoldenRender.h`):
+
+- **the timing tie:** a note every 40 ticks at `Q:1/4=90` through tick 15,000, which falls
+  on exactly frame 1,000,000.5 at 48 kHz, then a tempo change;
+- **the pool:** a dense passage through a pool of four voices, so notes are taken with the
+  soundfont node's 6 ms fade;
+- **the preview:** one note held 0.25 s at velocity 105, then its release.
+
+The clips, their soundfont and the values live in `tests/WebGoldenClips.h`, written in
+memory with the test-side soundfont builder. `web_core_tests` checks every clip at every
+rate, natively in Debug and Release and under Node here, against the same values, so the
+module's render equals the native one by transitivity. The smoke test renders the preview
+at 48 kHz through the loader and checks the same values with the hash ported to
+JavaScript; `web_smoke_fixture` writes it the preview's soundfont, MIDI bytes and values.
+The soundfont node's own golden test, in `soundfont_tests`, runs here too.
+
+**A change that alters a rendered clip updates the values in the same commit,** whether it
+changes the render core or the soundfont node ([node-io.md](node-io.md)). On a mismatch
+the test names each rate's frame count and first differing block, then prints every
+rate's values to paste over the golden ones. The smoke test reads its values from the same
+header, so one update covers both.
 
 ## The surface
 

@@ -297,19 +297,22 @@ target_include_directories(web_core_tests PRIVATE third_party/doctest)
 target_link_libraries(web_core_tests PRIVATE modular_web_core)
 add_test(NAME web_core_tests COMMAND web_core_tests)
 
-# The web module's smoke test: the loader and module, driven from Node. Its soundfont comes
+# The web module's smoke test: the loader and module, driven from Node. Its soundfonts come
 # from the test-side builder, written into the build tree first by a writer that links
-# Node's raw file system; CTest runs the writer under Node, the toolchain's emulator.
+# Node's raw file system; CTest runs the writer under Node, the toolchain's emulator. The
+# writer also writes the golden preview's MIDI bytes and golden values (WebGoldenClips.h).
 if(EMSCRIPTEN)
   add_executable(web_smoke_fixture tests/web_smoke_fixture.cpp)
   target_link_options(web_smoke_fixture PRIVATE -sNODERAWFS=1)
   set(MODULAR_WEB_SMOKE_SOUNDFONT "${CMAKE_CURRENT_BINARY_DIR}/web-smoke.sf2")
+  set(MODULAR_WEB_SMOKE_GOLDEN "${CMAKE_CURRENT_BINARY_DIR}/web-smoke-golden")
   add_test(NAME web_smoke_fixture
-    COMMAND web_smoke_fixture "${MODULAR_WEB_SMOKE_SOUNDFONT}")
+    COMMAND web_smoke_fixture "${MODULAR_WEB_SMOKE_SOUNDFONT}" "${MODULAR_WEB_SMOKE_GOLDEN}")
   add_test(NAME web_smoke COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR}
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_web_smoke.mjs"
     "${MODULAR_WEB_DIST}/modular.mjs" "${MODULAR_WEB_SMOKE_SOUNDFONT}"
-    "${MODULAR_WEB_TEST_MODULE}/modular.mjs")
+    "${MODULAR_WEB_TEST_MODULE}/modular.mjs"
+    "${MODULAR_WEB_SMOKE_GOLDEN}")
   set_tests_properties(web_smoke_fixture PROPERTIES FIXTURES_SETUP web_smoke_soundfont)
   set_tests_properties(web_smoke PROPERTIES FIXTURES_REQUIRED web_smoke_soundfont)
 endif()

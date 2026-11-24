@@ -11,7 +11,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_windows.ps1
 
 This configures the `windows` preset, builds Debug, and runs all eleven CTest
 entries: kernel, node, authoring, MIDI-file and soundfont tests, the web render
-core's tests (`web_core_tests`), a CLI smoke test, the soundfont extract tool's test
+core's tests with its golden clips (`web_core_tests`), a CLI smoke test, the
+soundfont extract tool's test
 (`soundfont_extract`), kernel purity, and the two `desktop`-labelled entries, the
 actual graph-editor app check (`graph_editor_app`) and a focused gesture regression
 (`graph_editor_gesture`). The extract tool's test runs `scripts/soundfont_extract.py`
@@ -74,8 +75,10 @@ makes it fail rather than pass.
 - **Build path:** on the `windows-2022` image (Visual Studio 2022, the preset's
   generator), Debug and Release each configure the `windows` preset, build every
   target and run CTest with `--label-exclude desktop`: the kernel, node, authoring,
-  MIDI-file, soundfont and web render core tests, the CLI smoke test, the soundfont
-  extract tool's test and kernel purity.
+  MIDI-file, soundfont and web render core tests, the golden clips among them, the
+  CLI smoke test, the soundfont extract tool's test and kernel purity. The golden
+  clips pass with the same values here and in the `web` job
+  ([web.md](web.md#golden-clips)).
 - **Build path, web:** on `ubuntu-24.04`, a `web` job installs the pinned Emscripten,
   builds with the `web` presets, runs the web build's tests under Node and
   uploads the built module as an artifact. [web.md](web.md#continuous-integration)
