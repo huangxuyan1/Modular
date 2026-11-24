@@ -1433,22 +1433,36 @@ public:
   }
 };
 
-// One preset that takes every path at once: a stereo pair of sines at
-// 44.1 kHz under a full envelope, layered from key 60 with a short quiet
-// sample that runs out while held.
+// One preset that takes every path at once: a looping stereo pair of sines
+// at 44.1 kHz under both envelopes and the filter, layered from key 60 with a
+// short quiet sample.
 Bytes busyFont() {
   File file;
   file.samples = {{"left", sine(0.01, 30000), 44100, 57},
                   {"right", sine(0.013, 30000), 44100, 57},
                   {"short", sine(0.02, 700), 22050, 72}};
+  file.samples[0].loop = file.samples[1].loop = Loop{5003, 29011};
+  file.samples[2].loop = Loop{101, 607};
+  // Both envelopes in full, the modulation envelope moving the cutoff.
   const Zone envelope{{set(gen::kDelayVolEnv, -9000), set(gen::kAttackVolEnv, -7000),
                        set(gen::kHoldVolEnv, -8000), set(gen::kDecayVolEnv, -3000),
-                       set(gen::kSustainVolEnv, 150), set(gen::kReleaseVolEnv, -6000)}};
+                       set(gen::kSustainVolEnv, 150), set(gen::kReleaseVolEnv, -6000),
+                       set(gen::kInitialFilterFc, 9000), set(gen::kModEnvToFilterFc, -1500),
+                       set(gen::kDelayModEnv, -8000), set(gen::kAttackModEnv, -7500),
+                       set(gen::kHoldModEnv, -9000), set(gen::kDecayModEnv, -5000),
+                       set(gen::kSustainModEnv, 400), set(gen::kReleaseModEnv, -5500)}};
+  // The pair loops through its release. The layer loops while held up to key
+  // 66, and above it runs out while held.
   file.instruments = {
-      {"pair", {envelope, Zone{{set(gen::kPan, -500), set(gen::kSampleId, 0)}},
-                Zone{{set(gen::kPan, 500), set(gen::kSampleId, 1)}}}},
-      {"layer", {Zone{{range(gen::kKeyRange, 60, 127), set(gen::kInitialAttenuation, 90),
-                       set(gen::kSampleId, 2)}}}}};
+      {"pair", {envelope,
+                Zone{{set(gen::kPan, -500), set(gen::kSampleModes, 1),
+                      set(gen::kSampleId, 0)}},
+                Zone{{set(gen::kPan, 500), set(gen::kSampleModes, 1),
+                      set(gen::kSampleId, 1)}}}},
+      {"layer", {Zone{{set(gen::kInitialAttenuation, 90)}},
+                 Zone{{range(gen::kKeyRange, 60, 66), set(gen::kSampleModes, 3),
+                       set(gen::kSampleId, 2)}},
+                 Zone{{range(gen::kKeyRange, 67, 127), set(gen::kSampleId, 2)}}}}};
   file.presets = {{"preset", 0, 0, {Zone{{set(gen::kInstrument, 0)}},
                                     Zone{{set(gen::kInstrument, 1)}}}}};
   return build(file);
