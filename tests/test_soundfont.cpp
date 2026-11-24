@@ -2119,6 +2119,9 @@ constexpr std::uint16_t kLinear = 0x0000, kConcave = 0x0400, kConvex = 0x0800,
                         kSwitch = 0x0c00;
 constexpr std::uint16_t kAbsolute = 2; // the transform taking a modulator's size
 
+// A source enumerator from its parts, which C++ widens to int when joined.
+constexpr std::uint16_t sourceOf(int parts) { return static_cast<std::uint16_t>(parts); }
+
 // A modulator whose source is the constant 1, so its output is its amount.
 Modulator constant(std::uint16_t destination, int amount) {
   return {kNoController, destination, static_cast<std::int16_t>(amount), 0, 0};
@@ -2323,7 +2326,7 @@ TEST_CASE("a file modulator maps its source by its curve, polarity and direction
   for (const std::uint16_t curve : {kLinear, kConcave, kConvex, kSwitch})
     for (const std::uint16_t polarity : {std::uint16_t{0}, kBipolar})
       for (const std::uint16_t direction : {std::uint16_t{0}, kDown}) {
-        const auto source = static_cast<std::uint16_t>(kKeySource | curve | polarity | direction);
+        const auto source = sourceOf(kKeySource | curve | polarity | direction);
         for (const int key : {0, 1, 20, 63, 64, 65, 100, 126, 127}) {
           CAPTURE(source);
           CAPTURE(key);
@@ -2369,16 +2372,16 @@ TEST_CASE("a file modulator's source is the note's velocity or key, a constant, 
 TEST_CASE("a file modulator's amount source scales its output and its transform can take its size") {
   // 480 cB from the key, scaled by a velocity switch that is on below 64.
   const Modulator switched{kKeySource, gen::kInitialAttenuation, 480,
-                           static_cast<std::uint16_t>(kVelocitySource | kSwitch | kDown), 0};
+                           sourceOf(kVelocitySource | kSwitch | kDown), 0};
   CHECK(addedCentibels({switched}, 100, 40) == doctest::Approx(480 * 100 / 128.0));
   CHECK(addedCentibels({switched}, 100, 64) == doctest::Approx(0));
   // A constant 300 cB scaled by the key on its concave curve.
   const Modulator scaled{kNoController, gen::kInitialAttenuation, 300,
-                         static_cast<std::uint16_t>(kKeySource | kConcave), 0};
+                         sourceOf(kKeySource | kConcave), 0};
   CHECK(addedCentibels({scaled}, 90, 100) == doctest::Approx(300 * concaveCurve(90 / 127.0)));
   // A bipolar key at key 20 is -0.6875: 330 cB off, or with the absolute
   // value transform, 330 cB on.
-  const auto bipolarKey = static_cast<std::uint16_t>(kKeySource | kBipolar);
+  const auto bipolarKey = sourceOf(kKeySource | kBipolar);
   CHECK(addedCentibels({{bipolarKey, gen::kInitialAttenuation, 480, 0, 0}}, 20, 100) ==
         doctest::Approx(-330));
   CHECK(addedCentibels({{bipolarKey, gen::kInitialAttenuation, 480, 0, kAbsolute}}, 20,
@@ -2393,9 +2396,9 @@ namespace {
 // FluidR3's switch-off: note-on velocity to initialFilterFc, linear and down,
 // as the default modulator, with amount 0 and a velocity switch, down, as its
 // amount source (map ticket 09's census).
-const Modulator kSwitchOff{static_cast<std::uint16_t>(kVelocitySource | kDown),
+const Modulator kSwitchOff{sourceOf(kVelocitySource | kDown),
                            gen::kInitialFilterFc, 0,
-                           static_cast<std::uint16_t>(kVelocitySource | kSwitch | kDown), 0};
+                           sourceOf(kVelocitySource | kSwitch | kDown), 0};
 
 // A centred zone playing a 4 kHz tone at 48 kHz through a cutoff of `cutoff`
 // cents, with the given modulators at each level.
@@ -2891,6 +2894,27 @@ std::vector<std::int16_t> integerTone(std::size_t points, int period, std::uint3
 //                   modulation envelope move its pitch
 //   H  keys 64-127  the low tone at keynum 70 and velocity 75 whatever the
 //                   note, loops; both LFOs move its pitch
+//
+// Program 2, the third clip's (ticket 05): file modulators at both levels and
+// exclusive classes, under full envelopes, the modulation LFO and a filter,
+//
+//   L  keys 0-63    the low tone, loops; velocity on the concave curve to
+//                   attenuation, the key on the bipolar convex curve to pan,
+//                   a held controller to fine tune under a key switch, and
+//                   velocity, bipolar, concave and down, to the LFO's rate
+//   M  keys 0-63    the high tone, loops while held; FluidR3's switch-off, a
+//                   velocity-to-attenuation modulator at half the default's
+//                   amount in its place, the key to the decay, the bipolar
+//                   key's size to the LFO's pitch depth, and velocity to the
+//                   start offset
+//   N  keys 64-72   the short sample, in exclusive class 3
+//   O  keys 73-80   the tuned tone, loops, in class 3; softer notes release
+//                   longer
+//   P  keys 81-90   the low and high tones as a pair in class 4, one side's
+//                   class given by a modulator
+//
+// and the preset adds velocity-made resonance in its global zone, and in its
+// zone the key, concave and down, to attenuation.
 Bytes everyPathFont() {
   File file;
   file.samples = {{"low", integerTone(9000, 128, 1), 32000, 60},
@@ -2965,6 +2989,50 @@ Bytes everyPathFont() {
               set(gen::kInitialFilterQ, 60), set(gen::kInitialFilterFc, 10000),
               set(gen::kSampleId, 0)}}}});
   file.presets.push_back({"rest of the voice", 1, 0, {Zone{{set(gen::kInstrument, 1)}}}});
+
+  const Zone modulatedGlobal{
+      {set(gen::kDelayVolEnv, -9000), set(gen::kAttackVolEnv, -6800),
+       set(gen::kHoldVolEnv, -7000), set(gen::kDecayVolEnv, -1800),
+       set(gen::kSustainVolEnv, 350), set(gen::kReleaseVolEnv, -2200),
+       set(gen::kDelayModEnv, -9500), set(gen::kAttackModEnv, -6500),
+       set(gen::kDecayModEnv, -3500), set(gen::kSustainModEnv, 400),
+       set(gen::kReleaseModEnv, -3500), set(gen::kModEnvToFilterFc, 900),
+       set(gen::kDelayModLfo, -9000), set(gen::kFreqModLfo, 700),
+       set(gen::kModLfoToPitch, 20), set(gen::kInitialFilterFc, 8500)}};
+  file.instruments.push_back(
+      {"modulated",
+       {modulatedGlobal,
+        Zone{{range(gen::kKeyRange, 0, 63), set(gen::kOverridingRootKey, 55),
+              set(gen::kSampleModes, 1), set(gen::kPan, -200), set(gen::kSampleId, 0)},
+             {{sourceOf(kVelocitySource | kConcave), gen::kInitialAttenuation, 300, 0, 0},
+              {sourceOf(kKeySource | kBipolar | kConvex), gen::kPan, 250, 0, 0},
+              {0x0087, gen::kFineTune, 30, sourceOf(kKeySource | kSwitch | kDown), 0},
+              {sourceOf(kVelocitySource | kBipolar | kConcave | kDown), gen::kFreqModLfo, 600,
+               0, 0}}},
+        Zone{{range(gen::kKeyRange, 0, 63), set(gen::kSampleModes, 3), set(gen::kPan, 300),
+              set(gen::kSampleId, 1)},
+             {kSwitchOff,
+              {0x0502, gen::kInitialAttenuation, 480, 0, 0},
+              {kKeySource, gen::kDecayVolEnv, -1200, 0, 0},
+              {sourceOf(kKeySource | kBipolar), gen::kModLfoToPitch, 40, 0, kAbsolute},
+              {kVelocitySource, gen::kStartAddrsOffset, 200, 0, 0}}},
+        Zone{{range(gen::kKeyRange, 64, 72), set(gen::kExclusiveClass, 3),
+              set(gen::kPan, -350), set(gen::kSampleId, 2)}},
+        Zone{{range(gen::kKeyRange, 73, 80), set(gen::kExclusiveClass, 3),
+              set(gen::kSampleModes, 1), set(gen::kPan, 350),
+              set(gen::kReleaseVolEnv, -1500), set(gen::kSampleId, 3)},
+             {{sourceOf(kVelocitySource | kDown), gen::kReleaseVolEnv, 1200, 0, 0}}},
+        Zone{{range(gen::kKeyRange, 81, 90), set(gen::kExclusiveClass, 4),
+              set(gen::kSampleModes, 1), set(gen::kPan, -500), set(gen::kSampleId, 0)}},
+        Zone{{range(gen::kKeyRange, 81, 90), set(gen::kSampleModes, 1),
+              set(gen::kPan, 500), set(gen::kSampleId, 1)},
+             {constant(gen::kExclusiveClass, 4)}}}});
+  file.presets.push_back(
+      {"modulators and classes", 2, 0,
+       {Zone{{}, {{kVelocitySource, gen::kInitialFilterQ, 150, 0, 0}}},
+        Zone{{set(gen::kInstrument, 2)},
+             {{sourceOf(kKeySource | kConcave | kDown), gen::kInitialAttenuation, 120, 0,
+               0}}}}});
   return build(file);
 }
 
@@ -3026,6 +3094,30 @@ std::vector<Timed> restOfTheVoiceClip(double rate) {
       {90, noteOn(3, 100, 30)},  {150, noteOff(0, 40)},     {200, noteOff(2, 70)},
       {260, noteOn(4, 30, 110)}, {320, noteOff(1, 52)},     {380, noteOff(3, 100)},
       {450, noteOff(4, 30)}};
+  return atFrames(clip, rate);
+}
+
+// The third golden clip, on program 2, for the same pool of six voices. A
+// note below key 64 starts L and M, from 81 to 90 the pair, any other one.
+//
+// - Velocities from 30 to 127 and keys from 20 to 88 take every modulator
+//   along its curve.
+// - Classes end voices on other channels: at 60 ms O ends N, at 120 N ends O,
+//   and at 150 the pair ends the pair. At 260 O finds the N struck at 120
+//   already gone, its sample run out.
+// - The pool is full at 75 ms, so the pair takes the first note, and at 260 ms
+//   O takes the note released at 100. The note-offs at 200 and 240 belong to
+//   notes ended or taken, and find them gone.
+//
+// Each was confirmed with temporary counters in the node, since removed.
+std::vector<Timed> modulatorsClip(double rate) {
+  const std::vector<At> clip{
+      {0, noteOn(0, 40, 100)},   {15, noteOn(1, 52, 64)},   {30, noteOn(2, 66, 90)},
+      {60, noteOn(3, 76, 110)},  {75, noteOn(4, 85, 80)},   {100, noteOff(1, 52)},
+      {120, noteOn(5, 70, 127)}, {150, noteOn(6, 88, 60)},  {180, noteOn(7, 20, 30)},
+      {200, noteOff(3, 76)},     {240, noteOff(0, 40)},     {260, noteOn(8, 78, 45)},
+      {300, noteOff(6, 88)},     {320, noteOff(7, 20)},     {340, noteOff(8, 78)},
+      {360, noteOff(5, 70)}};
   return atFrames(clip, rate);
 }
 
@@ -3095,6 +3187,22 @@ const std::vector<golden::Render> kRestOfTheVoiceGolden{
         0x2ceca045166ef9d7ull}},
 };
 
+const std::vector<golden::Render> kModulatorsGolden{
+    {44100, 39836, {
+        0x69a1e68f098d6596ull, 0x9fa5f15ec3d771b4ull, 0x0707e885add3b36full,
+        0xd1f57f3150c9ac98ull, 0xa5f62915cba801c2ull, 0x5533fcc38025d6dfull,
+        0x29ba39b1b221a529ull, 0xde67fd4ebca29e9bull, 0x6770a6026abe8d6cull,
+        0x7f37931ac50a0259ull}},
+    {48000, 43359, {
+        0xa5658dc96b59ae7dull, 0xe373e4c4a0d86932ull, 0x00733f093f2b76eeull,
+        0x1db055fb9a3e023aull, 0x1f3967854987cab1ull, 0x027efd6e664d5651ull,
+        0xa2a9a16a2f803d7aull, 0x3ff9c1bca4fa37c9ull, 0xd056eaadff7e11d6ull,
+        0x4a8a5161ad3e6f79ull, 0x533cb4153410939full}},
+    {22050, 19921, {
+        0x0854642061a35fd2ull, 0x3a842b86ac69c03full, 0xdf37962c4793f000ull,
+        0xbf10015ec9189744ull, 0x1578eb08e812a089ull}},
+};
+
 } // namespace
 
 TEST_CASE("a clip through every maths path renders its golden bits at three rates") {
@@ -3103,6 +3211,10 @@ TEST_CASE("a clip through every maths path renders its golden bits at three rate
 
 TEST_CASE("a clip through the LFOs, resonance, tuning and key scaling renders its golden bits at three rates") {
   checkGolden(1, restOfTheVoiceClip, kRestOfTheVoiceGolden);
+}
+
+TEST_CASE("a clip through file modulators and exclusive classes renders its golden bits at three rates") {
+  checkGolden(2, modulatorsClip, kModulatorsGolden);
 }
 
 TEST_CASE("process allocates nothing") {
