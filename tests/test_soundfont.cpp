@@ -284,3 +284,129 @@ TEST_CASE("a held voice ends on the frame its decay has fallen 96 dB below its p
   CHECK(lastSounding(out.left) + 1 == decay + 11520);
   CHECK(db(level(out, decay + 11519)) > -96);
 }
+
+TEST_CASE("equal-power pan puts a centred zone 3 dB down on each side and +-500 on one side") {
+  for (const int pan : {-500, 0, 500}) {
+    CAPTURE(pan);
+    const auto out = play(build(oneZone(steady(16384, 2000), {set(gen::kPan, pan)})),
+                          {{0, noteOn(0, 60, 100)}}, {48000, 128, 1000});
+    const double left = out.left[500] / 0.5, right = out.right[500] / 0.5;
+    if (pan == 0) {
+      CHECK(db(left) == doctest::Approx(-3.0103).epsilon(1e-4));
+      CHECK(right == left);
+    } else {
+      CHECK((pan < 0 ? left : right) == 1);
+      CHECK((pan < 0 ? right : left) == 0);
+    }
+  }
+}
+
+TEST_CASE("initialAttenuation lowers a voice by its centibels") {
+  // 60 cB is 6 dB.
+  const auto out = play(envelopeFont({set(gen::kInitialAttenuation, 60)}),
+                        {{0, noteOn(0, 60, 100)}}, {48000, 128, 1000});
+  CHECK(db(level(out, 500)) == doctest::Approx(-6).epsilon(1e-5));
+}
+
+TEST_CASE("a stereo pair plays as two voices and keeps its image") {
+  File file;
+  file.samples = {{"left", steady(8000, 2000)}, {"right", steady(-4000, 2000)}};
+  file.instruments.push_back({"pair", {{{set(gen::kPan, -500), set(gen::kSampleId, 0)}},
+                                       {{set(gen::kPan, 500), set(gen::kSampleId, 1)}}}});
+  file.presets.push_back({"preset", 0, 0, {{{set(gen::kInstrument, 0)}}}});
+  const auto out = play(build(file), {{0, noteOn(0, 60, 100)}}, {48000, 128, 1000});
+  for (std::size_t i = 300; i < 1000; ++i) {
+    CHECK(out.left[i] == doctest::Approx(8000.0 / 32768));
+    CHECK(out.right[i] == doctest::Approx(-4000.0 / 32768));
+  }
+}
+
+namespace {
+
+// The left level once a note's envelope is flat, in sample-data units.
+double plays(const Bytes& font, int key, int velocity) {
+  const auto out = play(font, {{0, noteOn(0, key, velocity)}}, {48000, 128, 400});
+  return out.left[300] * 32768.0;
+}
+
+} // namespace
+
+TEST_CASE("a note plays every instrument zone whose ranges at both levels contain it") {
+  // Samples are told apart by level, all full left. Instrument 0's global zone
+  // pans its zones; its zones split by key and then by velocity. The preset's
+  // global zone gives its first zone keys 0-100; its second zone layers
+  // instrument 1 from key 70.
+  File file;
+  // Long enough to outlast frame 300 at key 110, 50 semitones up.
+  file.samples = {{"a", steady(1000, 8000)}, {"b", steady(2000, 8000)},
+                  {"c", steady(4000, 8000)}, {"d", steady(8000, 8000)}};
+  file.instruments.push_back(
+      {"split", {{{set(gen::kPan, -500)}},
+                 {{range(gen::kKeyRange, 0, 59), set(gen::kSampleId, 0)}},
+                 {{range(gen::kKeyRange, 60, 127), range(gen::kVelRange, 0, 63),
+                   set(gen::kSampleId, 1)}},
+                 {{range(gen::kVelRange, 64, 127), range(gen::kKeyRange, 60, 127),
+                   set(gen::kSampleId, 2)}}}});
+  file.instruments.push_back({"layer", {{{set(gen::kPan, -500), set(gen::kSampleId, 3)}}}});
+  file.presets.push_back({"preset", 0, 0,
+                          {{{range(gen::kKeyRange, 0, 100)}},
+                           {{set(gen::kInstrument, 0)}},
+                           {{range(gen::kKeyRange, 70, 127), set(gen::kInstrument, 1)}}}});
+  const auto font = build(file);
+  CHECK(plays(font, 40, 100) == doctest::Approx(1000));
+  CHECK(plays(font, 65, 30) == doctest::Approx(2000));
+  CHECK(plays(font, 65, 100) == doctest::Approx(4000));
+  CHECK(plays(font, 80, 100) == doctest::Approx(4000 + 8000));
+  CHECK(plays(font, 110, 100) == doctest::Approx(8000));
+}
+
+TEST_CASE("preset-level values add to instrument-level ones and instrument-only ones are ignored") {
+  // 100 cB in the instrument and 140 cB from the preset's global zone make
+  // 240 cB, 24 dB. The preset's overridingRootKey is instrument-only, so the
+  // 600-point sample still plays point for point.
+  File file = oneZone(steady(16384, 600), {set(gen::kPan, -500),
+                                           set(gen::kInitialAttenuation, 100)});
+  file.presets[0].zones.insert(file.presets[0].zones.begin(),
+                               {{set(gen::kInitialAttenuation, 140),
+                                 set(gen::kOverridingRootKey, 72)}});
+  const auto out = play(build(file), {{0, noteOn(0, 60, 100)}}, {48000, 128, 2000});
+  CHECK(db(level(out, 400)) == doctest::Approx(-24).epsilon(1e-5));
+  CHECK(lastSounding(out.left) - firstSounding(out.left) == 599);
+}
+
+TEST_CASE("a preset-level release per velocity zone adds to the instrument's release") {
+  // The instrument's release is -1200 timecents, 100 dB in 0.5 s. The soft
+  // zone adds -1200 more: 100 dB in 0.25 s. From full level the voice ends
+  // 96 dB down: 0.24 s or 0.48 s after the note-off.
+  File file = oneZone(steady(16384, 60000), {set(gen::kPan, -500),
+                                             set(gen::kReleaseVolEnv, -1200)});
+  file.presets[0].zones = {
+      {{range(gen::kVelRange, 0, 63), set(gen::kReleaseVolEnv, -1200),
+        set(gen::kInstrument, 0)}},
+      {{range(gen::kVelRange, 64, 127), set(gen::kInstrument, 0)}}};
+  const auto font = build(file);
+  for (const auto& [velocity, seconds] : {std::pair{40, 0.24}, std::pair{100, 0.48}}) {
+    CAPTURE(velocity);
+    const auto out = play(font, {{0, noteOn(0, 60, velocity)}, {1009, noteOff(0, 60)}},
+                          {48000, 128, 30000});
+    CHECK(std::abs(static_cast<double>(lastSounding(out.left) + 1) -
+                   (1009 + seconds * 48000)) <= 1);
+  }
+}
+
+TEST_CASE("generator values outside the specification's ranges are clamped once added") {
+  // Pan 400 plus a preset's 300 is clamped to 500: fully right.
+  File file = oneZone(steady(16384, 2000), {set(gen::kPan, 400)});
+  file.presets[0].zones[0].generators.insert(file.presets[0].zones[0].generators.begin(),
+                                             set(gen::kPan, 300));
+  auto out = play(build(file), {{0, noteOn(0, 60, 100)}}, {48000, 128, 1000});
+  CHECK(out.left[500] == 0);
+  CHECK(out.right[500] == 0.5f);
+  // FluidR3's attack of -32768 timecents is clamped to -12000: 46.875 frames.
+  out = play(envelopeFont({set(gen::kAttackVolEnv, -32768)}), {{0, noteOn(0, 60, 100)}},
+             {48000, 128, 1000});
+  const auto onset = firstSounding(out.left);
+  std::size_t peak = onset;
+  while (level(out, peak) < 1) ++peak;
+  CHECK(std::abs(static_cast<double>(peak - onset + 1) - 46.875) <= 1);
+}

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <initializer_list>
 #include <iterator>
 #include <optional>
 #include <stdexcept>
@@ -87,6 +88,43 @@ constexpr auto kGeneratorDefaults = [] {
   defaults[46] = defaults[47] = defaults[SoundFont::kOverridingRootKey] = -1; // unset
   defaults[56] = 100; // scaleTuning
   return defaults;
+}();
+
+// The specification's ranges (section 8.1.3), for the generators that have one.
+struct Bounds {
+  bool bounded = false;
+  std::int32_t low = 0, high = 0;
+};
+constexpr auto kGeneratorBounds = [] {
+  std::array<Bounds, SoundFont::kGeneratorCount> bounds{};
+  const auto bound = [&](std::initializer_list<int> generators, int low, int high) {
+    for (const int g : generators) bounds[g] = {true, low, high};
+  };
+  bound({5, 6, 7, 10, 11}, -12000, 12000);       // pitch and cutoff depths
+  bound({8}, 1500, 13500);                       // initialFilterFc
+  bound({9}, 0, 960);                            // initialFilterQ
+  bound({13}, -960, 960);                        // modLfoToVolume
+  bound({15, 16}, 0, 1000);                      // effects sends
+  bound({17}, -500, 500);                        // pan
+  bound({21, 23, 25, 27, 33, 35}, -12000, 5000); // delays and holds
+  bound({22, 24}, -16000, 4500);                 // LFO frequencies
+  bound({26, 28, 30, 34, 36, 38}, -12000, 8000); // attacks, decays and releases
+  bound({29}, 0, 1000);                          // sustainModEnv
+  bound({31, 32, 39, 40}, -1200, 1200);          // key scaling
+  bound({37, 48}, 0, 1440);                      // sustainVolEnv, initialAttenuation
+  bound({46, 47, 58}, -1, 127);                  // keynum, velocity, root; -1 is unset
+  bound({51}, -120, 120);                        // coarseTune
+  bound({52}, -99, 99);                          // fineTune
+  bound({56}, 0, 1200);                          // scaleTuning
+  bound({57}, 0, 127);                           // exclusiveClass
+  return bounds;
+}();
+
+// Generators valid only in an instrument; a preset's are ignored.
+constexpr auto kInstrumentOnly = [] {
+  std::array<bool, SoundFont::kGeneratorCount> only{};
+  for (const int g : {0, 1, 2, 3, 4, 12, 45, 46, 47, 50, 53, 54, 57, 58}) only[g] = true;
+  return only;
 }();
 
 } // namespace
@@ -263,26 +301,41 @@ std::vector<SoundFont::Zone> SoundFont::zones(PresetNumber number) const {
     invalid("no preset at bank " + std::to_string(number.bank) + " program " +
             std::to_string(number.program));
 
+  // A local zone's value, else its global zone's, else none.
+  const auto given = [](const ParsedZone& local, bool hasGlobal, const ParsedZone& global,
+                        std::size_t g) -> std::optional<std::int16_t> {
+    if (local.given[g]) return local.amounts[g];
+    if (hasGlobal && global.given[g]) return global.amounts[g];
+    return std::nullopt;
+  };
+  // A range's low and high bytes, intersected with another range.
+  const auto intersect = [](std::int16_t range, std::uint8_t& low, std::uint8_t& high) {
+    low = std::max(low, static_cast<std::uint8_t>(range & 0xff));
+    high = std::min(high, static_cast<std::uint8_t>((range >> 8) & 0xff));
+  };
+
   std::vector<Zone> result;
   for (const auto& presetZone : preset->zones) {
     const auto& instrument = instruments_[presetZone.target];
     for (const auto& instrumentZone : instrument.zones) {
-      std::int32_t values[kGeneratorCount];
-      for (std::size_t g = 0; g < kGeneratorCount; ++g) {
-        auto value = kGeneratorDefaults[g];
-        if (instrument.hasGlobal && instrument.global.given[g])
-          value = instrument.global.amounts[g];
-        if (instrumentZone.given[g]) value = instrumentZone.amounts[g];
-        values[g] = value;
-      }
       Zone zone;
-      for (std::size_t g = 0; g < kGeneratorCount; ++g) zone.generators[g] = values[g];
-      const auto range = [](std::int32_t value, std::uint8_t& low, std::uint8_t& high) {
-        low = static_cast<std::uint8_t>(value & 0xff);
-        high = static_cast<std::uint8_t>((value >> 8) & 0xff);
-      };
-      range(values[kKeyRange], zone.keyLow, zone.keyHigh);
-      range(values[kVelRange], zone.velocityLow, zone.velocityHigh);
+      for (std::size_t g = 0; g < kGeneratorCount; ++g) {
+        const auto value = given(instrumentZone, instrument.hasGlobal, instrument.global, g);
+        const auto offset = given(presetZone, preset->hasGlobal, preset->global, g);
+        if (g == kKeyRange || g == kVelRange) {
+          auto& low = g == kKeyRange ? zone.keyLow : zone.velocityLow;
+          auto& high = g == kKeyRange ? zone.keyHigh : zone.velocityHigh;
+          if (value) intersect(*value, low, high);
+          if (offset) intersect(*offset, low, high);
+          continue;
+        }
+        std::int32_t total = value ? *value : kGeneratorDefaults[g];
+        if (offset && !kInstrumentOnly[g]) total += *offset;
+        const auto& bounds = kGeneratorBounds[g];
+        if (bounds.bounded) total = std::clamp(total, bounds.low, bounds.high);
+        zone.generators[g] = total;
+      }
+      if (zone.keyLow > zone.keyHigh || zone.velocityLow > zone.velocityHigh) continue;
       const auto& sample = samples_[instrumentZone.target];
       zone.sampleStart = sample.start;
       zone.sampleEnd = sample.end;

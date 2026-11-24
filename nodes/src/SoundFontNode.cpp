@@ -5,14 +5,18 @@
 #include <limits>
 #include <stdexcept>
 
+#include "SoundFontMaths.h"
+
 namespace modular::nodes {
 namespace {
+
+namespace maths = soundfont_maths;
 
 constexpr double kPi = 3.14159265358979323846;
 // A voice has ended once its envelope has fallen this far below its peak.
 constexpr double kFloorDb = 96;
 
-double seconds(std::int32_t timecents) { return std::exp2(timecents / 1200.0); }
+double seconds(std::int32_t timecents) { return maths::exp2(timecents / 1200.0); }
 
 bool matches(const SoundFont::Zone& zone, std::uint8_t key, std::uint8_t velocity) {
   return key >= zone.keyLow && key <= zone.keyHigh && velocity >= zone.velocityLow &&
@@ -60,23 +64,23 @@ void SoundFontNode::prepare(const PrepareInfo& info) {
               : zone.originalPitch <= 127 ? zone.originalPitch : 60;
     plan.rateRatio = zone.sampleRate / rate;
     // Equal-power pan: sin on both sides keeps +-500 exactly one-sided.
-    const double gain = std::pow(10.0, -g[SoundFont::kInitialAttenuation] / 200.0);
+    const double gain = maths::exp10(-g[SoundFont::kInitialAttenuation] / 200.0);
     const double pan = g[SoundFont::kPan];
-    plan.gainLeft = gain * std::sin((500 - pan) / 1000 * kPi / 2);
-    plan.gainRight = gain * std::sin((500 + pan) / 1000 * kPi / 2);
+    plan.gainLeft = gain * maths::sin((500 - pan) / 1000 * kPi / 2);
+    plan.gainRight = gain * maths::sin((500 + pan) / 1000 * kPi / 2);
     plan.delayFrames = frames(g[SoundFont::kDelayVolEnv]);
     plan.attackFrames = frames(g[SoundFont::kAttackVolEnv]);
     plan.holdFrames = frames(g[SoundFont::kHoldVolEnv]);
     // Decay and release fall at a constant rate in dB: 100 dB over the time.
     const double decayFramesPerDb = seconds(g[SoundFont::kDecayVolEnv]) * rate / 100;
-    plan.decayFactor = std::pow(10.0, -1 / (20 * decayFramesPerDb));
+    plan.decayFactor = maths::exp10(-1 / (20 * decayFramesPerDb));
     const double sustainDb = g[SoundFont::kSustainVolEnv] / 10.0;
-    plan.sustainLevel = std::pow(10.0, -sustainDb / 20);
+    plan.sustainLevel = maths::exp10(-sustainDb / 20);
     plan.decayEnds = sustainDb >= kFloorDb;
     plan.decayFrames = static_cast<std::uint64_t>(
         std::ceil(std::min(sustainDb, kFloorDb) * decayFramesPerDb));
     plan.releaseFramesPerDb = seconds(g[SoundFont::kReleaseVolEnv]) * rate / 100;
-    plan.releaseFactor = std::pow(10.0, -1 / (20 * plan.releaseFramesPerDb));
+    plan.releaseFactor = maths::exp10(-1 / (20 * plan.releaseFramesPerDb));
     plans_.push_back(plan);
   }
   voices_.assign(voice_limit_, Voice{});
@@ -124,7 +128,7 @@ void SoundFontNode::noteOn(std::uint8_t channel, std::uint8_t key, std::uint8_t 
     voice.note = notes_;
     voice.channel = channel;
     voice.key = key;
-    voice.increment = std::exp2((key - plans_[p].root) / 12.0) * plans_[p].rateRatio;
+    voice.increment = maths::exp2((key - plans_[p].root) / 12.0) * plans_[p].rateRatio;
   }
 }
 
@@ -148,7 +152,7 @@ void SoundFontNode::startRelease(Voice& voice) {
     return;
   }
   const double start = level(voice, plan);
-  const double startDb = start > 0 ? -20 * std::log10(start) : kFloorDb;
+  const double startDb = start > 0 ? -20 * maths::log10(start) : kFloorDb;
   voice.stage = Stage::kRelease;
   voice.frame = 0;
   voice.level = start;
