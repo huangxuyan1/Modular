@@ -70,7 +70,8 @@ the check page (below, and [web.md](../../../docs/web.md#checking-a-browser-by-h
 **2026-11-24 — the agent's part.** Branch `claude/web-build-08-acceptance`, cut from a freshly
 fetched `origin/main` at `4241375` (web build 07) and rebased, before its first push, onto
 `bc33cf8` (soundfont node 04, merged meanwhile). The rebase met no conflict. Every
-measurement below was made again on the rebased tree, and those are the numbers given.
+measurement below was made again on the rebased tree, and those are the numbers given,
+except where one says otherwise.
 Nothing under `kernel/`, `workspace/`, `nodes/` or `apps/` changes.
 
 - *What was built.*
@@ -125,7 +126,8 @@ Nothing under `kernel/`, `workspace/`, `nodes/` or `apps/` changes.
       measured.
     - Before the rebase, on `4241375`, every value was the same, so soundfont node 04 leaves
       this preset's render unchanged. Each render took about 15 % less time there.
-  - **Red:** with one 48 kHz block hash of the native values corrupted, the Node half reported
+  - **Red**, before the rebase: with one 48 kHz block hash of the native values corrupted,
+    the Node half reported
     `48000 Hz: 1642986 frames (golden 1642986), first differing block 200 (frames 819200 on)`
     and exited 1.
 - *The preview's timing in a browser* (map ticket 04, decision 8).
@@ -179,18 +181,21 @@ Nothing under `kernel/`, `workspace/`, `nodes/` or `apps/` changes.
       slower.
 - *The check page, headless first.* Through `check_driver.html`, which opens the page in a
   same-origin frame and posts its outcome, so the page itself posts nothing. Served from
-  `build/web/web-check/` as built at `c0fb317`, not dirty:
+  `build/web/web-check/` as built at `c0fb317`, and again after the review's fixes at
+  `c3df9b5`, not dirty either time:
   - Chrome 157 and Edge 158, headless: **every hash matched**, at 44.1 kHz (15,058 frames,
     4 blocks), 48 kHz (16,390 frames, 5 blocks) and 22.05 kHz (7,530 frames, 2 blocks).
   - The user's own command, `python -m http.server 8765 --bind 127.0.0.1 --directory
     build/web/web-check` (Python 3.13.1), opened in the desktop app's built-in Chromium 156
     browser, before the rebase (`e7ba836`): every hash matched, with the page as the user
     will see it.
-  - Opened from the file system, in headless Chrome, the page said "The check could not
-    load. Serve this folder over HTTP, with .mjs files sent as JavaScript (text/javascript)."
-  - **Red:** with block 2 of the 48 kHz values corrupted in the folder's `preview.json`, the
-    smoke test failed with `48000 Hz: 16390 frames (golden 16390), first differing block 2
-    (frames 8192 on)` and printed the render's values. The build then wrote the file again.
+  - Opened from the file system, in headless Chrome before the rebase, the page said "The
+    check could not load. Serve this folder over HTTP, with .mjs files sent as JavaScript
+    (text/javascript)."
+  - **Red**, before the rebase: with block 2 of the 48 kHz values corrupted in the folder's
+    `preview.json`, the smoke test failed with `48000 Hz: 16390 frames (golden 16390), first
+    differing block 2 (frames 8192 on)` and printed the render's values. The build then
+    wrote the file again.
 - *Processes and servers.*
   - Every browser started under a profile folder named for the run (`wb08-<random>-…`), and
     was stopped by its process tree and then by every process whose command line named its
@@ -201,7 +206,7 @@ Nothing under `kernel/`, `workspace/`, `nodes/` or `apps/` changes.
     their ports.
   - The browsers' other processes were not touched.
 - *Findings.* No mismatch and no failure, so no follow-up ticket is proposed.
-- *Checks, on the rebased tree.*
+- *Checks, on the rebased tree, and again after the review's fixes (`c3df9b5`).*
   - Native, through the script: Debug 12/12 and Release 12/12 CTest entries, both `desktop`
     tests and soundfont node 04's `soundfont_portable_maths` included.
   - `ctest --preset web`, Emscripten 6.0.13 and its Node on Windows: 9/9 entries, the smoke
