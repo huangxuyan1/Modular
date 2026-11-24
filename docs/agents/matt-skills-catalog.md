@@ -123,7 +123,9 @@ the decision frontier breadth-first. If no fog remains and the journey fits one
 session, stop and discuss the next route without forcing a map. Otherwise create
 the map, create the questions that are already precise, and wire dependencies in a
 second pass after identities exist. Launch the research subagents to retain cited
-findings on research branches with ticket pointers. Then stop: charting does not
+findings on research branches with ticket pointers; in Modular a research branch
+is a planning branch under [planning delivery](planning-delivery.md), with its
+own draft PR. Then stop: charting does not
 hand-resolve tickets. Research is the parallel-resolution exception; honor blockers
 and the actual branch/commit permissions rather than running dependent work early.
 

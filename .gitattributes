@@ -1,2 +1,4 @@
 # Preserve Unix entry points when checking out on Windows.
 *.sh text eol=lf
+# Saved-graph fixtures are real Save output, so they stay byte-exact: no conversion.
+tests/fixtures/*.modular -text

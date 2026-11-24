@@ -5,7 +5,8 @@ This is a decision record for a later workflow/spec phase, **not an active Git p
 It describes the rules as they stood on 2026-09-24. No reset, branch deletion,
 commit, remote creation, push or CI change was authorized by this interview. The
 active workflow is the root **Commits and delivery** rule and
-[ticket delivery](ticket-delivery.md), recorded by version-control ticket 04.
+[ticket delivery](ticket-delivery.md), recorded by version-control ticket 04,
+and [planning delivery](planning-delivery.md), recorded by ticket 05.
 
 ## Destination
 
