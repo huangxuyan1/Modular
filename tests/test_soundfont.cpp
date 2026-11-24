@@ -578,6 +578,117 @@ TEST_CASE("the modulation envelope's stages begin and end within one frame of th
   CHECK(withinAFrame(firstDifferentFrame(with(quick), with(slow), released), 3011));
 }
 
+namespace {
+
+// A miniature of the default piano's layout, from ticket 10's measurements:
+// two key ranges of two mono zones each, panned -500 and +500, playing 32 kHz
+// samples whose headers say 60 but which overridingRootKey roots at the top
+// of their range, all looping in mode 1. The preset adds 140 cB of
+// attenuation, an ignored reverb send, and a release per velocity zone; the
+// instrument cuts off at 12623 cents with -1000 from a modulation envelope
+// whose only slow stage is a 100 s release.
+//
+// Each side is a sine with whole cycles in its 32000-point loop: the left a
+// low tone for pitch and level, the right one that lands on the note's cutoff.
+// `open` lifts the cutoff to 13500 cents with no modulation envelope.
+File miniaturePiano(bool open = false) {
+  const auto side = [](std::string name, double hertz) {
+    Sample sample{std::move(name), sine(hertz / 32000, 36000), 32000};
+    sample.loop = Loop{4000, 36000};
+    return sample;
+  };
+  File file;
+  file.samples = {side("A left", 250), side("A right", 7477), side("B left", 300),
+                  side("B right", 4744)};
+  const auto zone = [](int low, int high, int root, int pan, int sample) {
+    return Zone{{range(gen::kKeyRange, low, high), set(gen::kOverridingRootKey, root),
+                 set(gen::kSampleModes, 1), set(gen::kPan, pan),
+                 set(gen::kHoldVolEnv, 1783), set(gen::kDecayVolEnv, 6590),
+                 set(gen::kSampleId, sample)}};
+  };
+  file.instruments.push_back(
+      {"piano",
+       {Zone{{set(gen::kInitialFilterFc, open ? 13500 : 12623),
+              set(gen::kModEnvToFilterFc, open ? 0 : -1000),
+              set(gen::kReleaseModEnv, 7973), set(gen::kAttackVolEnv, -8359),
+              set(gen::kSustainVolEnv, 1000), set(gen::kReleaseVolEnv, 0)}},
+        zone(0, 62, 62, -500, 0), zone(0, 62, 62, 500, 1), zone(63, 127, 66, -500, 2),
+        zone(63, 127, 66, 500, 3)}});
+  file.presets.push_back(
+      {"piano", 0, 0,
+       {Zone{{set(gen::kInitialAttenuation, 140), set(gen::kReverbEffectsSend, 100)}},
+        Zone{{range(gen::kVelRange, 0, 100), set(gen::kReleaseVolEnv, -617),
+              set(gen::kInstrument, 0)}},
+        Zone{{range(gen::kVelRange, 101, 127), set(gen::kReleaseVolEnv, 316),
+              set(gen::kInstrument, 0)}}}});
+  return file;
+}
+
+// A steady tone's amplitude over frames [from, to), from its RMS.
+double amplitude(const std::vector<float>& s, std::size_t from, std::size_t to) {
+  double sum = 0;
+  for (std::size_t i = from; i < to; ++i) sum += double(s.at(i)) * s.at(i);
+  return std::sqrt(2 * sum / static_cast<double>(to - from));
+}
+
+} // namespace
+
+TEST_CASE("a miniature of the default piano plays each note as derived at two graph rates") {
+  // Both notes are two semitones below their root. Key 60, velocity 127,
+  // plays range A: 250 Hz on the left becomes 222.72 Hz; its cutoff is 12623
+  // - 1000 - 18.75 cents, 6661 Hz, where the right side's 7477 Hz lands. Key
+  // 64, velocity 85, plays range B: 300 Hz becomes 267.27 Hz; its cutoff, at
+  // -806.25 cents for velocity, is 4227 Hz, where 4744 Hz lands. The level is
+  // 16000 / 32768, less 14 dB and the default modulators' 40 log10(v / 127)
+  // dB and 4.15 dB. The release, 2^(316 / 1200) s or 2^(-617 / 1200) s for
+  // 100 dB, ends a note held through its hold 96 dB later.
+  //
+  // The cutoff is read against the same piano with its filter opened, which
+  // leaves 13500 cents less the velocity's: 19.7 kHz or 12.4 kHz. That also
+  // cancels what reading a 32 kHz sample between its points costs a high tone.
+  const auto font = build(miniaturePiano());
+  const auto opened = build(miniaturePiano(true));
+  struct Note {
+    int key, velocity;
+    double left, right; // each side's frequency, two semitones down
+    double cutoff, openCutoff, levelDb, releaseSeconds;
+  };
+  const double down = 0.8908987; // 2^(-2/12)
+  for (const double rate : {44100.0, 48000.0}) {
+    for (const auto& note :
+         {Note{60, 127, 250 * down, 7477 * down, 6661.21, 19697.6, -24.3787, 1.152239},
+          Note{64, 85, 300 * down, 4744 * down, 4226.71, 12498.7, -31.3541, 0.672189}}) {
+      CAPTURE(rate);
+      CAPTURE(note.key);
+      const auto release = static_cast<std::uint64_t>(13 + rate * 1.5);
+      const std::vector<Timed> midi{{13, noteOn(0, note.key, note.velocity)},
+                                    {release, noteOff(0, note.key)}};
+      const Run run{rate, 128, static_cast<std::uint64_t>(rate * 3)};
+      const auto out = play(font, midi, run);
+      const auto open = play(opened, midi, run);
+      const auto from = static_cast<std::size_t>(rate / 20);
+      const auto to = static_cast<std::size_t>(rate * 1.45);
+      // Pitch and image, across the loops' seams: each channel carries only
+      // its own side.
+      CHECK(std::abs(cents(frequency(out.left, from, to, rate), note.left)) < 1);
+      CHECK(std::abs(cents(frequency(out.right, from, to, rate), note.right)) < 1);
+      // Level, on the left side, which the filter passes.
+      CHECK(std::abs(db(amplitude(out.left, from, to)) - note.levelDb) <= 0.1);
+      // Cutoff: the right side against the left, and against the open filter.
+      const auto sides = [&](const Stereo& s) {
+        return db(amplitude(s.right, from, to) / amplitude(s.left, from, to));
+      };
+      CHECK(std::abs(sides(out) - sides(open) -
+                     (butterworthDb(note.right, note.cutoff) -
+                      butterworthDb(note.right, note.openCutoff))) <= 1);
+      // Release: both sides end together, by their envelope.
+      const double end = static_cast<double>(release) + note.releaseSeconds * rate;
+      CHECK(std::abs(static_cast<double>(lastSounding(out.left) + 1) - end) <= 1);
+      CHECK(lastSounding(out.right) == lastSounding(out.left));
+    }
+  }
+}
+
 TEST_CASE("a stereo pair plays as two voices and keeps its image") {
   File file;
   file.samples = {{"left", steady(8000, 2000)}, {"right", steady(-4000, 2000)}};
