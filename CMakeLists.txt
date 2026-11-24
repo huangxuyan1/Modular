@@ -30,6 +30,11 @@ if(EMSCRIPTEN)
   add_compile_options(-fwasm-exceptions)
   add_link_options(-fwasm-exceptions)
   string(REPLACE "-O3" "-O2" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
+  # Node runs every test. The web preset names emsdk's own, from EMSDK_NODE.
+  if(NOT CMAKE_CROSSCOMPILING_EMULATOR)
+    message(FATAL_ERROR "No Node to run the tests: set up emsdk's environment, which sets "
+      "EMSDK_NODE, then configure again")
+  endif()
 endif()
 
 # --- kernel: pure graph runtime, no framework dependencies ---

@@ -22,7 +22,8 @@ const soundfont = new Uint8Array(readFileSync(soundfontPath));
 // At 480 ticks per quarter and the default 500,000 us per quarter, 960 ticks make a second.
 const kTicksPerSecond = 960;
 
-function variable(out, value) {
+// A MIDI variable-length quantity: seven bits a byte, most significant first.
+function variableLength(out, value) {
   const groups = [value & 0x7f];
   while ((value >>>= 7) !== 0) groups.unshift((value & 0x7f) | 0x80);
   out.push(...groups);
@@ -33,11 +34,11 @@ function midiFile(events, endTick) {
   const track = [];
   let at = 0;
   for (const [tick, ...message] of events) {
-    variable(track, tick - at);
+    variableLength(track, tick - at);
     at = tick;
     track.push(...message);
   }
-  variable(track, endTick - at);
+  variableLength(track, endTick - at);
   track.push(0xff, 0x2f, 0);
   const length = [24, 16, 8, 0].map((shift) => (track.length >>> shift) & 0xff);
   return Uint8Array.from([0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 0, 0, 1, 0x01, 0xe0,
@@ -61,9 +62,9 @@ function soundsOn(samples, frames) {
 const modular = await loadModular();
 
 test('a page loads Modular, makes an instrument and renders two channels of equal length at the rate it asked for', async () => {
-  const piano = await modular.createInstrument(soundfont);
+  const instrument = await modular.createInstrument(soundfont);
   for (const rate of [44100, 48000]) {
-    const rendering = await piano.render(oneNote(), rate);
+    const rendering = await instrument.render(oneNote(), rate);
     assert.equal(rendering.sampleRate, rate);
     assert.equal(rendering.channels.length, 2);
     const [left, right] = rendering.channels;
@@ -82,35 +83,35 @@ test('a page loads Modular, makes an instrument and renders two channels of equa
 });
 
 test('the same bytes render to equal arrays, and a rendering keeps its samples after a longer render grows the module memory', async () => {
-  const piano = await modular.createInstrument(soundfont);
-  const first = await piano.render(oneNote(), 48000);
+  const instrument = await modular.createInstrument(soundfont);
+  const first = await instrument.render(oneNote(), 48000);
   const kept = first.channels.map((samples) => samples.slice());
   // A minute of stereo floats, 23 MB, is more than the module's initial 16 MiB of memory.
-  const long = await piano.render(heldNote(60), 48000);
+  const long = await instrument.render(heldNote(60), 48000);
   assert.ok(long.channels[0].length >= 60 * 48000);
   assert.ok(soundsOn(long.channels[0], 60 * 48000));
-  const again = await piano.render(oneNote(), 48000);
+  const again = await instrument.render(oneNote(), 48000);
   assert.deepEqual(again.channels, kept);
   assert.deepEqual(first.channels, kept);
 });
 
 test('bad MIDI bytes reject with an Error carrying the parser message, and the next render succeeds', async () => {
-  const piano = await modular.createInstrument(soundfont);
-  const before = await piano.render(oneNote(), 48000);
+  const instrument = await modular.createInstrument(soundfont);
+  const before = await instrument.render(oneNote(), 48000);
   const bad = new TextEncoder().encode('not a MIDI file');
-  await assert.rejects(piano.render(bad, 48000),
+  await assert.rejects(instrument.render(bad, 48000),
                        (error) => error instanceof Error && error.message.startsWith('midi file:'));
-  const after = await piano.render(oneNote(), 48000);
+  const after = await instrument.render(oneNote(), 48000);
   assert.deepEqual(after.channels, before.channels);
 });
 
 test('calls made without awaiting settle in call order, across instruments', async () => {
-  const piano = await modular.createInstrument(soundfont);
+  const instrument = await modular.createInstrument(soundfont);
   const settled = [];
   const calls = [
-    piano.render(heldNote(3), 48000),
+    instrument.render(heldNote(3), 48000),
     modular.createInstrument(soundfont),
-    piano.render(oneNote(), 48000),
+    instrument.render(oneNote(), 48000),
   ].map((call, index) => call.then((result) => {
     settled.push(index);
     return result;
@@ -126,16 +127,16 @@ test("changing the page's arrays after a call changes nothing", async () => {
   const font = soundfont.slice();
   const making = modular.createInstrument(font);
   font.fill(0);
-  const piano = await making;
+  const instrument = await making;
   const midi = oneNote();
-  const rendering = piano.render(midi, 48000);
+  const rendering = instrument.render(midi, 48000);
   midi.fill(0);
   const result = await rendering;
 
   const fresh = await modular.createInstrument(soundfont);
   const reference = await fresh.render(oneNote(), 48000);
   assert.deepEqual(result.channels, reference.channels);
-  assert.deepEqual((await piano.render(oneNote(), 48000)).channels, reference.channels);
+  assert.deepEqual((await instrument.render(oneNote(), 48000)).channels, reference.channels);
 });
 
 test('loadModular passes locateFile through to the module', async () => {
@@ -147,6 +148,6 @@ test('loadModular passes locateFile through to the module', async () => {
     },
   });
   assert.deepEqual(asked, ['modular_web.wasm']);
-  const piano = await located.createInstrument(soundfont);
-  assert.ok(soundsOn((await piano.render(oneNote(), 48000)).channels[0], 24000));
+  const instrument = await located.createInstrument(soundfont);
+  assert.ok(soundsOn((await instrument.render(oneNote(), 48000)).channels[0], 24000));
 });

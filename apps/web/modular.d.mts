@@ -1,4 +1,5 @@
 // Declarations for Modular's web loader, modular.mjs. docs/web.md describes the surface.
+// The generic Float32Array<ArrayBuffer> needs TypeScript 5.7 or later.
 
 /**
  * Loads and instantiates one Modular module. Each loaded module runs its calls one at a
@@ -36,7 +37,8 @@ export interface Rendering {
   sampleRate: number;
   /**
    * Left, then right: two arrays of equal length that JavaScript owns. The length may be
-   * 0, for a file of zero duration.
+   * 0, for a file of zero duration. Each has its own `ArrayBuffer`, never shared memory,
+   * so it can go straight to `AudioBuffer.copyToChannel`.
    */
-  channels: [Float32Array, Float32Array];
+  channels: [Float32Array<ArrayBuffer>, Float32Array<ArrayBuffer>];
 }

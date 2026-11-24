@@ -57,9 +57,14 @@ export interface Instrument {
 
 export interface Rendering {
   sampleRate: number;                        // the rate requested, unchanged
-  channels: [Float32Array, Float32Array];    // left, right; equal length, may be 0
+  channels: [Float32Array<ArrayBuffer>, Float32Array<ArrayBuffer>]; // left, right
 }
 ```
+
+The channels are of equal length, which may be 0. They are typed `Float32Array<ArrayBuffer>`,
+since each owns a plain `ArrayBuffer`, so a strict type check accepts them where Web Audio's
+declarations want that type, as `AudioBuffer.copyToChannel` does. The generic form needs
+TypeScript 5.7 or later.
 
 A page uses it like this:
 
@@ -99,12 +104,12 @@ frames, and an `AudioBuffer` cannot be empty, so a page handles that case before
 one. A page that wants silence after the file pads the buffer itself.
 
 **Errors.** Every failure rejects with an `Error` whose message is Modular's, short and
-lowercase, with its context first, for example:
+lowercase, for example:
 
 - `midi file: missing MThd header`, from the MIDI parser;
 - `soundfont: compressed samples (sf3) are not supported`, from the soundfont reader;
 - `render: sample rate must be finite and positive`, from the render itself;
-- `out of memory`.
+- `out of memory`, when the module's memory cannot grow further.
 
 No C++ exception reaches JavaScript. A failed call leaves the module and its instruments
 usable, and the next call runs as usual. A WebAssembly trap or abort is not handled yet: it

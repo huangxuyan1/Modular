@@ -42,15 +42,15 @@ export async function loadModular(options = {}) {
     return module.HEAPF32.slice(start, start + frames);
   };
 
-  // `made` is the instrument's handle in the module and the copy of the soundfont's bytes
+  // An instrument's state: its handle in the module, and the copy of the soundfont's bytes
   // it was made from, which it keeps for its life.
-  const instrument = (made) => ({
+  const instrument = (state) => ({
     async render(midi, sampleRate) {
       // Copied now, so the page may change its array before the call runs.
       const bytes = new Uint8Array(midi);
       return enqueue(() => {
         const rendered = withBytes(bytes, (pointer, size) =>
-          module._modular_render(made.handle, pointer, size, sampleRate));
+          module._modular_render(state.handle, pointer, size, sampleRate));
         if (!rendered) throw failure();
         // The module holds this one rendering until its channels are copied out.
         try {

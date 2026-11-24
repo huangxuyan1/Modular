@@ -14,6 +14,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <emscripten/emscripten.h>
@@ -67,13 +68,13 @@ extern "C" {
 
 // Parses a soundfont's bytes into a new instrument. Returns its handle, never
 // 0, or 0 when it fails.
-EMSCRIPTEN_KEEPALIVE int modular_create_instrument(const std::uint8_t* bytes,
-                                                   std::size_t size) {
-  int handle = 0;
+EMSCRIPTEN_KEEPALIVE std::int32_t modular_create_instrument(const std::uint8_t* bytes,
+                                                            std::size_t size) {
+  std::int32_t handle = 0;
   guarded([&] {
     auto instrument = std::make_unique<Instrument>(std::span{bytes, size});
     instruments.push_back(std::move(instrument));
-    handle = static_cast<int>(instruments.size());
+    handle = static_cast<std::int32_t>(instruments.size());
   });
   return handle;
 }
@@ -81,22 +82,26 @@ EMSCRIPTEN_KEEPALIVE int modular_create_instrument(const std::uint8_t* bytes,
 // Renders MIDI file bytes at a sample rate into the module's one rendering,
 // releasing the last one first. Returns 1, or 0 when it fails, which leaves no
 // rendering.
-EMSCRIPTEN_KEEPALIVE int modular_render(int instrument, const std::uint8_t* bytes,
-                                        std::size_t size, double sampleRate) {
+EMSCRIPTEN_KEEPALIVE std::int32_t modular_render(std::int32_t handle,
+                                                 const std::uint8_t* bytes, std::size_t size,
+                                                 double sampleRate) {
   rendering = {};
   return guarded([&] {
-    if (instrument < 1 || static_cast<std::size_t>(instrument) > instruments.size())
+    if (handle < 1 || static_cast<std::size_t>(handle) > instruments.size())
       throw std::invalid_argument("render: unknown instrument");
-    rendering = instruments[static_cast<std::size_t>(instrument) - 1]->render(
+    rendering = instruments[static_cast<std::size_t>(handle) - 1]->render(
         std::span{bytes, size}, sampleRate);
   });
 }
 
 // The rendering's frames per channel, and where each channel's floats begin.
-EMSCRIPTEN_KEEPALIVE std::size_t modular_rendering_frames() {
-  return rendering.left.size();
+// A frame count fits 32 bits: wasm32's size_t is 32 bits wide.
+EMSCRIPTEN_KEEPALIVE std::uint32_t modular_rendering_frames() {
+  return static_cast<std::uint32_t>(rendering.left.size());
 }
-EMSCRIPTEN_KEEPALIVE const float* modular_rendering_left() { return rendering.left.data(); }
+EMSCRIPTEN_KEEPALIVE const float* modular_rendering_left() {
+  return rendering.left.data();
+}
 EMSCRIPTEN_KEEPALIVE const float* modular_rendering_right() {
   return rendering.right.data();
 }
