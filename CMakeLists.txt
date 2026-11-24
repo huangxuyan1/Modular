@@ -9,6 +9,13 @@ if(MSVC)
   add_compile_options(/utf-8)
 endif()
 
+# Floating-point results are the same bits in every build. GCC and Clang, Emscripten's
+# included, never fuse operations; MSVC keeps its default /fp:precise, which never
+# contracts. No build uses fast maths, relaxed SIMD or flush-to-zero.
+if(NOT MSVC AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  add_compile_options(-ffp-contract=off)
+endif()
+
 # --- kernel: pure graph runtime, no framework dependencies ---
 add_library(modular_kernel
   kernel/src/Node.cpp

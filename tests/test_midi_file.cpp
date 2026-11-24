@@ -1,6 +1,7 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <tuple>
@@ -58,6 +59,18 @@ Bytes tempoChange() {
       {0, 0x91, 64, 80,
        0x83, 0x60, 0x81, 64, 0, // tick 480: 0.5 seconds
        0x83, 0x60, 0xff, 0x2f, 0}});
+}
+
+// Q:1/4=90 in whole microseconds (666,667 per quarter) at 480 ticks per quarter,
+// with a note every 40 ticks through tick 15,000: the grid midishare-playback map
+// ticket 08's probe replayed. At 48 kHz tick 15,000 is exactly frame 1,000,000.5,
+// so where it lands depends on the precision the times are summed and rounded in.
+Bytes halfFrameTie() {
+  Bytes track{0, 0xff, 0x51, 3, 0x0a, 0x2c, 0x2b};
+  for (std::uint32_t tick = 40; tick <= 15000; tick += 40)
+    track.insert(track.end(), {40, 0x90, std::uint8_t(tick == 15000 ? 67 : 60), 100});
+  track.insert(track.end(), {0, 0xff, 0x2f, 0});
+  return smf(0, 480, {track});
 }
 
 class EventLog : public Node {
@@ -233,6 +246,28 @@ TEST_CASE("file playback is triggered at exact frames at different sample rates 
       CHECK(log.records == expected);
     }
   }
+}
+
+TEST_CASE("file times are summed and rounded in double so a half-frame tie lands alike in every build") {
+  // The probe found frame 1,000,001 for double, which MSVC computes. A wasm32
+  // 128-bit long double put the same event on frame 1,000,000.
+  Graph graph;
+  const auto startId = graph.addNode<TriggerAtNode>(101);
+  const auto fileId = graph.addNode<MidiFileNode>(MidiFile::parse(halfFrameTie()));
+  const auto logId = graph.addNode<EventLog>();
+  auto& file = static_cast<MidiFileNode&>(graph.node(fileId));
+  auto& log = static_cast<EventLog&>(graph.node(logId));
+  graph.connect(startId, static_cast<TriggerAtNode&>(graph.node(startId)).trigger(),
+                fileId, file.trigger());
+  graph.connect(fileId, file.midi(), logId, log.in);
+  Engine engine(graph, 48000, 1009);
+  while (engine.streamTime() <= 101 + 1'000'001) engine.process(1009);
+  const auto tie = std::find_if(log.records.begin(), log.records.end(),
+      [](const EventLog::Record& record) {
+        return std::get<1>(record) == 0x90 && std::get<2>(record) == 67;
+      });
+  REQUIRE(tie != log.records.end());
+  CHECK(std::get<0>(*tie) == 101 + 1'000'001);
 }
 
 TEST_CASE("loading a MIDI file does not start it without a connected trigger") {
