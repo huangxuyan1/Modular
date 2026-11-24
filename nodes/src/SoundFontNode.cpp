@@ -165,7 +165,11 @@ void SoundFontNode::prepare(const PrepareInfo& info) {
       plan.loopEnd = zone.loopEnd - zone.sampleStart;
     }
 
-    // Decay and release fall at a constant rate in dB: 100 dB over the time.
+    // Both envelopes but for their holds and decays, which a note-on derives
+    // at its key (scaleToKey). The volume's release falls at a constant rate in
+    // dB, 100 dB over its time; the modulation's moves linearly, a full change
+    // between 1 and 0 over its time. The modulation's sustain is a decrease in
+    // 0.1 % steps.
     plan.volume.delay = frames(g[SoundFont::kDelayVolEnv], rate);
     plan.volume.attack = frames(g[SoundFont::kAttackVolEnv], rate);
     const double sustainDb = g[SoundFont::kSustainVolEnv] / 10.0;
@@ -173,19 +177,15 @@ void SoundFontNode::prepare(const PrepareInfo& info) {
     plan.volume.decayEnds = sustainDb >= kFloorDb;
     plan.releaseFramesPerDb = seconds(g[SoundFont::kReleaseVolEnv]) * rate / 100;
     plan.releaseFactor = maths::exp10(-1 / (20 * plan.releaseFramesPerDb));
-
-    // The modulation envelope's decay and release move linearly, a stage's
-    // time being a full change between 1 and 0. Its sustain is a decrease in
-    // 0.1 % steps.
     plan.modulation.delay = frames(g[SoundFont::kDelayModEnv], rate);
     plan.modulation.attack = frames(g[SoundFont::kAttackModEnv], rate);
     plan.modulation.sustain = 1 - g[SoundFont::kSustainModEnv] / 1000.0;
     plan.modReleaseFrames = seconds(g[SoundFont::kReleaseModEnv]) * rate;
 
     plan.modLfo.delay = frames(g[SoundFont::kDelayModLfo], rate);
-    plan.modLfoStep = hertz(g[SoundFont::kFreqModLfo]) / rate;
+    plan.modLfo.step = hertz(g[SoundFont::kFreqModLfo]) / rate;
     plan.vibLfo.delay = frames(g[SoundFont::kDelayVibLfo], rate);
-    plan.vibLfoStep = hertz(g[SoundFont::kFreqVibLfo]) / rate;
+    plan.vibLfo.step = hertz(g[SoundFont::kFreqVibLfo]) / rate;
     plan.pitchMoves = g[SoundFont::kModEnvToPitch] != 0 ||
                       g[SoundFont::kModLfoToPitch] != 0 ||
                       g[SoundFont::kVibLfoToPitch] != 0;
@@ -464,7 +464,7 @@ double SoundFontNode::Lfo::value() const {
   return 4 * phase - 4;
 }
 
-void SoundFontNode::Lfo::advance(double step) {
+void SoundFontNode::Lfo::advance() {
   if (delay > 0) {
     --delay;
     return;
@@ -563,8 +563,8 @@ void SoundFontNode::render(Voice& voice, float* left, float* right, std::uint32_
     ++envelope.frame;
     ++voice.modulation.frame;
     voice.modulation.settle();
-    voice.modLfo.advance(plan.modLfoStep);
-    voice.vibLfo.advance(plan.vibLfoStep);
+    voice.modLfo.advance();
+    voice.vibLfo.advance();
     // A taken voice ends with its fade, unless it ends by itself first.
     if ((voice.fadeLeft > 0 && --voice.fadeLeft == 0) || !sounds(voice, plan)) {
       voice.active = false;

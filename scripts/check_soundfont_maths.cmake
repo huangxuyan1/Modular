@@ -5,10 +5,11 @@ cmake_minimum_required(VERSION 3.20)
 # maths"). Every transcendental function it needs is in one header,
 # nodes/src/SoundFontMaths.h, called as maths::exp2 and the like. This check fails if
 # any other soundfont node source calls a maths-library transcendental, in std:: or
-# C form: exp, exp2, pow, log, log10, sin, cos or tan, their float and long double
-# forms, and the rest of <cmath>'s inexact family. floor, ceil, fmod, llround,
-# isfinite, ldexp, frexp and sqrt are exact or correctly rounded, so they are allowed.
-# Comments and string literals are exempt, as in the kernel purity check.
+# C form: exp, exp2, exp10, pow, log, log10, sin, cos or tan, their float and long
+# double forms, and every other inexact function named below, C++17's special
+# functions included. floor, ceil, fmod, llround, isfinite, ldexp, frexp and sqrt
+# are exact or correctly rounded, so they are allowed. String literals are blanked
+# first; then comments are exempt, as in the kernel purity check.
 if(NOT DEFINED NODES_DIR)
   set(NODES_DIR "${CMAKE_CURRENT_LIST_DIR}/../nodes")
 endif()
@@ -22,8 +23,12 @@ list(REMOVE_ITEM sources "${seam}")
 if(NOT sources)
   message(FATAL_ERROR "soundfont maths: no soundfont node sources found in ${NODES_DIR}")
 endif()
-set(names "exp|exp2|expm1|pow|log|log2|log10|log1p|sin|cos|tan|asin|acos|atan|atan2")
-set(names "${names}|sinh|cosh|tanh|asinh|acosh|atanh|hypot|cbrt|erf|erfc|tgamma|lgamma")
+set(names "exp|exp2|exp10|expm1|pow|pow10|log|log2|log10|log1p|sin|cos|tan|asin|acos")
+set(names "${names}|atan|atan2|sinh|cosh|tanh|asinh|acosh|atanh|hypot|cbrt|erf|erfc")
+set(names "${names}|tgamma|lgamma|assoc_laguerre|assoc_legendre|beta|comp_ellint_1")
+set(names "${names}|comp_ellint_2|comp_ellint_3|cyl_bessel_i|cyl_bessel_j|cyl_bessel_k")
+set(names "${names}|cyl_neumann|ellint_1|ellint_2|ellint_3|expint|hermite|laguerre")
+set(names "${names}|legendre|riemann_zeta|sph_bessel|sph_legendre|sph_neumann")
 set(banned "(^|[^A-Za-z0-9_.>])(std::|::)?(${names})[fl]?[ \t]*\\(")
 set(hits "")
 foreach(source IN LISTS sources)
@@ -41,6 +46,8 @@ foreach(source IN LISTS sources)
       math(EXPR next "${newline} + 1")
       string(SUBSTRING "${remaining}" ${next} -1 remaining)
     endif()
+    # String literals first, so a // or /* inside one starts no comment.
+    string(REGEX REPLACE "\"([^\"\\\\]|\\\\.)*\"" "\"\"" line "${line}")
     set(code "")
     while(NOT line STREQUAL "")
       if(in_block)
@@ -70,8 +77,7 @@ foreach(source IN LISTS sources)
         endif()
       endif()
     endwhile()
-    # String literals, then the maths header's own functions, which are the rule.
-    string(REGEX REPLACE "\"([^\"\\\\]|\\\\.)*\"" "\"\"" code "${code}")
+    # The maths header's own functions are the rule, not a breach of it.
     string(REGEX REPLACE "(soundfont_)?maths::[A-Za-z0-9_]+" "" code "${code}")
     if(code MATCHES "${banned}")
       file(RELATIVE_PATH relative "${NODES_DIR}/.." "${source}")

@@ -258,7 +258,8 @@ namespace {
 
 // A 1 kHz sine recorded at 48 kHz and rooted at key 60, which `generators`
 // tune: the frequency a note of `key` plays, from 20 ms to 250 ms.
-double tunedHertz(std::vector<Generator> generators, int key, std::int8_t correction = 0) {
+double tunedHertz(std::vector<Generator> generators, int key,
+                  std::int8_t correction = 0) {
   auto file = oneZone(sine(1000.0 / 48000, 24000), std::move(generators));
   file.samples[0].correction = correction;
   const auto out = play(build(file), {{3, noteOn(0, key, 100)}}, {48000, 128, 12000});
@@ -298,7 +299,6 @@ TEST_CASE("the keynum generator replaces the key a zone plays at") {
     CHECK(std::abs(cents(tunedHertz({set(gen::kKeynum, 67)}, key), above1k(700))) < 1);
   }
 }
-
 
 TEST_CASE("a sample played between its points is interpolated") {
   // A ramp an octave down plays every point and every midpoint between them.
@@ -389,7 +389,7 @@ TEST_CASE("key scaling shortens a volume envelope's hold and decay for higher ke
     int key;
     double holdSeconds, decaySeconds;
   };
-  const double halfOctave = std::sqrt(2.0);
+  const double halfOctave = std::sqrt(2.0); // 600 timecents, 2^(600 / 1200)
   for (const auto& expected :
        {Expected{48, 0.5, 0.05 * halfOctave}, Expected{60, 0.25, 0.05},
         Expected{72, 0.125, 0.05 / halfOctave}}) {
@@ -634,8 +634,9 @@ TEST_CASE("the velocity generator replaces a note's velocity within its zone but
   // A zone forcing velocity 40 plays a note of any velocity as a note of 40
   // plays without it: as loud and as dark.
   const auto font = toneFont({set(gen::kInitialFilterFc, 9000)}, 4000, 48000, 12000);
-  const auto forced = toneFont({set(gen::kInitialFilterFc, 9000), set(gen::kVelocity, 40)},
-                               4000, 48000, 12000);
+  const auto forced =
+      toneFont({set(gen::kInitialFilterFc, 9000), set(gen::kVelocity, 40)}, 4000, 48000,
+               12000);
   const Run run{48000, 128, 6000};
   const auto reference = play(font, {{13, noteOn(0, 60, 40)}}, run);
   for (const int velocity : {1, 40, 100, 127}) {
@@ -762,40 +763,71 @@ TEST_CASE("the modulation envelope's stages begin and end within one frame of th
   CHECK(withinAFrame(firstDifferentToneFrame(with(quick), with(slow), released), 3011));
 }
 
-TEST_CASE("key scaling gives a modulation envelope's hold and decay their timecents at each key") {
-  // At key k, keynumToModEnvHold s plays as a hold s (60 - k) timecents
-  // longer, and likewise for the decay, each kept within its range: the same
-  // bits as a zone written with those times. keynum, when set, is the key.
-  struct Case {
-    int key, hold, keyToHold, decay, keyToDecay, scaledHold, scaledDecay;
+TEST_CASE("key scaling moves a modulation envelope's hold and decay per key within one frame") {
+  // At 32 kHz, -8400 timecents is 250 frames, the delay and the attack each.
+  // Per key above 60, keynumToModEnvHold and keynumToModEnvDecay take their
+  // timecents off the hold and the decay, and add them per key below; the
+  // result stays within the stage's range. keynum, when set, is the key. Two
+  // renders agree until the stage that tells them apart takes effect.
+  const double rate = 32000;
+  const auto frames = [&](int timecents) { return std::exp2(timecents / 1200.0) * rate; };
+  const auto differ = [&](int key, std::vector<Generator> a, std::vector<Generator> b) {
+    const auto tone = [&](std::vector<Generator> stages) {
+      stages.insert(stages.end(),
+                    {set(gen::kDelayModEnv, -8400), set(gen::kAttackModEnv, -8400),
+                     set(gen::kModEnvToFilterFc, -2400), set(gen::kSampleModes, 1)});
+      // A 2 kHz tone looping over 2000 whole cycles, so far keys still sound.
+      return build(oneZone(sine(2000 / rate, 32000), modulatedTone(stages), 32000));
+    };
+    const std::vector<Timed> note{{13, noteOn(0, key, 127)}};
+    const Run run{rate, 128, 4000};
+    return firstDifference(play(tone(a), note, run).left, play(tone(b), note, run).left,
+                           run.frames);
+  };
+  const std::vector<Generator> keynum72{set(gen::kKeynum, 72)};
+  const auto with = [](std::vector<Generator> more, std::vector<Generator> stages) {
+    more.insert(more.end(), stages.begin(), stages.end());
+    return more;
+  };
+
+  struct Hold {
+    int key, hold, perKey;
+    int scaled; // timecents
     std::vector<Generator> more;
   };
-  for (const auto& c : {Case{36, -3600, 100, -3600, -40, -1200, -4560, {}},
-                        Case{72, -3600, 100, -3600, -40, -4800, -3120, {}},
-                        Case{127, -11000, 100, -3600, 0, -12000, -3600, {}},
-                        Case{0, -3600, 0, 7000, 100, -3600, 8000, {}},
-                        Case{30, -3600, 100, -3600, -40, -4800, -3120,
-                             {set(gen::kKeynum, 72)}}}) {
+  // The hold ends when the decay starts: here falling to 0 over 250 frames,
+  // or over 500.
+  for (const auto& c : {Hold{72, -8400, 100, -9600, {}}, Hold{48, -8400, 100, -7200, {}},
+                        Hold{127, -11000, 100, -12000, {}},
+                        Hold{30, -8400, 100, -9600, keynum72}}) {
     CAPTURE(c.key);
-    const auto zone = [&](int hold, int keyToHold, int decay, int keyToDecay) {
-      auto generators = c.more;
-      generators.insert(generators.end(),
-                        {set(gen::kDelayModEnv, -8400), set(gen::kAttackModEnv, -8400),
-                         set(gen::kHoldModEnv, hold), set(gen::kDecayModEnv, decay),
-                         set(gen::kSustainModEnv, 500), set(gen::kModEnvToFilterFc, -2400),
-                         set(gen::kKeynumToModEnvHold, keyToHold),
-                         set(gen::kKeynumToModEnvDecay, keyToDecay),
-                         set(gen::kSampleModes, 1)});
-      // A 2 kHz tone looping over 2000 whole cycles, so far keys still sound.
-      return build(oneZone(sine(2000.0 / 48000, 48000), modulatedTone(generators)));
+    const auto stages = [&](int decay) {
+      return with(c.more, {set(gen::kHoldModEnv, c.hold),
+                           set(gen::kKeynumToModEnvHold, c.perKey),
+                           set(gen::kDecayModEnv, decay),
+                           set(gen::kSustainModEnv, 1000)});
     };
-    const std::vector<Timed> note{{13, noteOn(0, c.key, 127)}};
-    const Run run{48000, 128, 12000};
-    const auto scaled = play(zone(c.hold, c.keyToHold, c.decay, c.keyToDecay), note, run);
-    const auto written = play(zone(c.scaledHold, 0, c.scaledDecay, 0), note, run);
-    CHECK(scaled.left == written.left);
-    // And the scaling changed something.
-    CHECK(scaled.left != play(zone(c.hold, 0, c.decay, 0), note, run).left);
+    CHECK(withinAFrame(differ(c.key, stages(-8400), stages(-7200)),
+                       13 + 2 * 250 + frames(c.scaled)));
+  }
+
+  struct Decay {
+    int key, perKey;
+    int scaled; // timecents
+    std::vector<Generator> more;
+  };
+  // A decay of -8400 timecents with its key scaling ends 50 % down, while one
+  // to 75 % down falls on. The hold is 250 frames.
+  for (const auto& c : {Decay{72, -50, -7800, {}}, Decay{48, -50, -9000, {}},
+                        Decay{30, -50, -7800, keynum72}}) {
+    CAPTURE(c.key);
+    const auto stages = [&](int sustain) {
+      return with(c.more, {set(gen::kHoldModEnv, -8400), set(gen::kDecayModEnv, -8400),
+                           set(gen::kKeynumToModEnvDecay, c.perKey),
+                           set(gen::kSustainModEnv, sustain)});
+    };
+    CHECK(withinAFrame(differ(c.key, stages(500), stages(750)),
+                       13 + 3 * 250 + frames(c.scaled) / 2));
   }
 }
 
@@ -830,7 +862,7 @@ TEST_CASE("modEnvToPitch moves the pitch by its cents times the modulation envel
          set(gen::kDecayModEnv, -2400), set(gen::kSustainModEnv, 500),
          set(gen::kReleaseModEnv, -2400)},
         rate);
-    const auto off = static_cast<std::uint64_t>(rate);
+    const auto off = static_cast<std::uint64_t>(rate) + 7; // odd at either rate
     const auto out = play(font, {{3, noteOn(0, 60, 100)}, {off, noteOff(0, 60)}},
                           {rate, 128, static_cast<std::uint64_t>(1.4 * rate)});
     CHECK(std::abs(cents(hertzAround(out, 0.25, rate, 0.4), 2000)) < 1);
@@ -872,11 +904,12 @@ TEST_CASE("each LFO is a triangle rising from 0 after its delay that moves the p
     generators.push_back(set(lfo.toPitch, 100));
     const auto out = play(loopingKilohertz(generators, rate), {{3, noteOn(0, 60, 100)}},
                           {rate, 128, static_cast<std::uint64_t>(2.6 * rate)});
-    struct At {
+    struct Phase {
       double phase, cents;
     };
     CHECK(std::abs(cents(hertzAround(out, 0.25, rate), 1000)) < 1); // in the delay
-    for (const auto& at : {At{0.25, peak}, At{0.5, 0}, At{0.75, -peak}, At{1, 0}}) {
+    for (const auto& at :
+         {Phase{0.25, peak}, Phase{0.5, 0}, Phase{0.75, -peak}, Phase{1, 0}}) {
       CAPTURE(at.phase);
       CHECK(std::abs(cents(hertzAround(out, kLfoDelay + at.phase * kLfoPeriod, rate),
                            above1k(at.cents))) < 1);
@@ -895,12 +928,13 @@ TEST_CASE("the modulation LFO moves the cutoff by modLfoToFilterFc") {
   const auto out = play(font, {{13, noteOn(0, 60, 127)}},
                         {rate, 128, static_cast<std::uint64_t>(2.5 * rate)});
   const double octave = 1 - 0.04 / kLfoPeriod;
-  struct At {
+  struct Window {
     double second, cutoff;
   };
-  for (const auto& at : {At{0.25, 2000},
-                         At{kLfoDelay + kLfoPeriod / 4, 2000 * std::exp2(octave)},
-                         At{kLfoDelay + kLfoPeriod * 3 / 4, 2000 * std::exp2(-octave)}}) {
+  for (const auto& at : {Window{0.25, 2000},
+                         Window{kLfoDelay + kLfoPeriod / 4, 2000 * std::exp2(octave)},
+                         Window{kLfoDelay + kLfoPeriod * 3 / 4,
+                                2000 * std::exp2(-octave)}}) {
     CAPTURE(at.second);
     const auto from = static_cast<std::size_t>((at.second - 0.02) * rate);
     CHECK(std::abs(toneGainDb(out, from, from + static_cast<std::size_t>(0.04 * rate)) -
@@ -2005,11 +2039,11 @@ TEST_CASE("effects sends at either level change nothing and are listed once") {
   CHECK(playsPlainly(file).left == plain.left);
 }
 
-TEST_CASE("a send of zero is not listed") {
+TEST_CASE("a send of zero or below, which clamps to no send, is not listed") {
   auto file = plainZone();
   auto& instrument = file.instruments[0].zones[0].generators;
   instrument.insert(instrument.begin(), {set(gen::kReverbEffectsSend, 0),
-                                         set(gen::kChorusEffectsSend, 0)});
+                                         set(gen::kChorusEffectsSend, -50)});
   CHECK(listedBy(build(file)).empty());
 }
 
@@ -2292,7 +2326,8 @@ Bytes everyPathFont() {
               set(gen::kModLfoToVolume, -45), set(gen::kInitialFilterFc, 7000),
               set(gen::kSampleId, 3)}},
         Zone{{range(gen::kKeyRange, 0, 63), set(gen::kSampleModes, 3),
-              set(gen::kPan, 400), set(gen::kDelayVibLfo, -9000), set(gen::kFreqVibLfo, 500),
+              set(gen::kPan, 400), set(gen::kDelayVibLfo, -9000),
+              set(gen::kFreqVibLfo, 500),
               set(gen::kVibLfoToPitch, 35), set(gen::kModEnvToPitch, -200),
               set(gen::kInitialFilterQ, 300), set(gen::kSampleId, 1)}},
         Zone{{range(gen::kKeyRange, 64, 127), set(gen::kSampleModes, 1),

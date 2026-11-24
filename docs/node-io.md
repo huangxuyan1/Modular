@@ -241,9 +241,12 @@ and velocity still choose the zones.
   in its synthesis model. At `initialFilterQ` 0 cB it is a Butterworth response,
   3 dB down at the cutoff, as FluidSynth reads the specification's "not resonant".
   Each centibel of `initialFilterQ` raises the gain at the cutoff a tenth of a
-  decibel above that: its Q is `10^(dB / 20) / sqrt(2)`. The gain at DC falls by
-  half as many decibels, as the specification says, so 100 cB puts the cutoff's gain
-  10 dB above the Butterworth response's and DC 5 dB down. Its cutoff in cents is
+  decibel above that: its Q is `10^(dB / 20) / sqrt(2)`, FluidSynth's, so the
+  response has FluidSynth's shape at every Q. 100 cB puts the gain at the cutoff
+  10 dB above the Butterworth response's, 7 dB above DC where the specification's
+  text says 10. The gain at DC falls by half the decibels, as the specification
+  says, so it is unity at 0 cB; FluidSynth's is 1.5 dB higher at every Q. Its
+  cutoff in cents is
   `initialFilterFc`, plus the velocity-to-cutoff default modulator, plus
   `modEnvToFilterFc` times the modulation envelope, plus `modLfoToFilterFc` times
   the modulation LFO. The filter follows it frame by frame in whole cents, and keeps

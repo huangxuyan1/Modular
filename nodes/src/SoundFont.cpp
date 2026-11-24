@@ -136,12 +136,13 @@ constexpr auto kInstrumentOnly = [] {
   return only;
 }();
 
-// What a load lists as ignored or skipped, each kind once, in this order.
+// What a load lists as ignored or skipped, each kind once, in this order, and
+// the entry it lists for each.
 enum Listing : std::size_t {
   kSends, kLinks, kRomZones, kEmptyZones, kRatelessZones, kLoopsOutside, kEmptyLoops,
-  kListings
+  kListingCount
 };
-constexpr std::string_view kListed[kListings] = {
+constexpr std::string_view kListingEntries[kListingCount] = {
     "soundfont: reverb and chorus sends are ignored",
     "soundfont: link modulators are ignored",
     "soundfont: zones playing a sample in rom are skipped",
@@ -157,6 +158,14 @@ constexpr std::string_view kListed[kListings] = {
 // illegal, and like every illegal modulator it is ignored unlisted.
 bool isLink(std::uint16_t source, std::uint16_t destination) {
   return (source & 0xff) == 0x7f || (destination & 0x8000) != 0;
+}
+
+// A zone's own value for a generator, else its global zone's, else none. The
+// zones are SoundFont's private ParsedZone.
+std::optional<std::int16_t> given(const auto& local, const auto& global, std::size_t g) {
+  if (local.given[g]) return local.amounts[g];
+  if (global && global->given[g]) return global->amounts[g];
+  return std::nullopt;
 }
 
 } // namespace
@@ -259,7 +268,8 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
         invalid("a sample lies outside the sample data");
   }
 
-  std::array<bool, kListings> found{};
+  // Which kinds of thing the file uses that the load lists.
+  std::array<bool, kListingCount> listed{};
 
   // A bag holds where its zone's generators and modulators start; zone z runs
   // from bag z to bag z + 1. Modulators' runs are checked like the
@@ -317,11 +327,11 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
   // Zones [first, last) of one preset or instrument. A first zone without a
   // terminal generator is the global zone; a later one is ignored. Generators
   // after the terminal one are ignored; a repeated one keeps its last value.
-  // A zone read lists its effects sends and link modulators.
-  const auto readZones = [&found](const Bags& bags, const Generators& generators,
-                                  const std::vector<bool>& links, std::size_t first,
-                                  std::size_t last, std::uint16_t terminal,
-                                  std::size_t targets, std::string_view target) {
+  // A zone read lists its effects sends above 0 and its link modulators.
+  const auto readZones = [&listed](const Bags& bags, const Generators& generators,
+                                   const std::vector<bool>& links, std::size_t first,
+                                   std::size_t last, std::uint16_t terminal,
+                                   std::size_t targets, std::string_view target) {
     Zones zones;
     for (std::size_t bag = first; bag < last; ++bag) {
       ParsedZone zone;
@@ -340,9 +350,9 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
       }
       if (!terminated && bag != first) continue;
       for (const auto send : {kChorusEffectsSend, kReverbEffectsSend})
-        if (zone.given[send] && zone.amounts[send] != 0) found[kSends] = true;
+        if (zone.given[send] && zone.amounts[send] > 0) listed[kSends] = true;
       for (std::size_t m = bags.modulators[bag]; m < bags.modulators[bag + 1]; ++m)
-        if (links[m]) found[kLinks] = true;
+        if (links[m]) listed[kLinks] = true;
       if (terminated) zones.local.push_back(zone);
       else zones.global = zone;
     }
@@ -363,17 +373,19 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
       std::vector<ParsedZone> playable;
       for (auto& zone : instrument.local) {
         const auto& sample = result.samples_[zone.target];
-        const auto skip = sample.rom                    ? kRomZones
-                          : sample.start == sample.end ? kEmptyZones
-                          : sample.rate == 0           ? kRatelessZones
-                                                       : kListings;
-        if (skip != kListings) {
-          found[skip] = true;
+        const auto unplayable = [&]() -> std::optional<Listing> {
+          if (sample.rom) return kRomZones;
+          if (sample.start == sample.end) return kEmptyZones;
+          if (sample.rate == 0) return kRatelessZones;
+          return std::nullopt;
+        }();
+        if (unplayable) {
+          listed[*unplayable] = true;
           continue;
         }
         zone.points = place(zone, instrument.global, sample);
-        if (zone.points.fault == Points::Fault::kLoopOutside) found[kLoopsOutside] = true;
-        if (zone.points.fault == Points::Fault::kLoopEmpty) found[kEmptyLoops] = true;
+        if (zone.points.fault == Points::Fault::kLoopOutside) listed[kLoopsOutside] = true;
+        if (zone.points.fault == Points::Fault::kLoopEmpty) listed[kEmptyLoops] = true;
         playable.push_back(zone);
       }
       instrument.local = std::move(playable);
@@ -400,8 +412,8 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
                                                        "instrument")});
     }
   }
-  for (std::size_t listing = 0; listing < kListings; ++listing)
-    if (found[listing]) result.ignored_.emplace_back(kListed[listing]);
+  for (std::size_t listing = 0; listing < kListingCount; ++listing)
+    if (listed[listing]) result.ignored_.emplace_back(kListingEntries[listing]);
   return result;
 }
 
@@ -416,9 +428,7 @@ SoundFont::Points SoundFont::place(const ParsedZone& zone,
   // Every generator here is valid only in an instrument, so the instrument's
   // value is the zone's.
   const auto value = [&](Generator g) -> std::int64_t {
-    if (zone.given[g]) return zone.amounts[g];
-    if (global && global->given[g]) return global->amounts[g];
-    return kGeneratorDefaults[g];
+    return given(zone, global, g).value_or(kGeneratorDefaults[g]);
   };
   const auto address = [&](std::uint32_t header, Generator fine, Generator coarse) {
     return std::int64_t{header} + value(fine) + std::int64_t{32768} * value(coarse);
@@ -465,13 +475,6 @@ std::vector<SoundFont::Zone> SoundFont::zones(PresetNumber number) const {
     invalid("no preset at bank " + std::to_string(number.bank) + " program " +
             std::to_string(number.program));
 
-  // A local zone's value, else its global zone's, else none.
-  const auto given = [](const ParsedZone& local, const std::optional<ParsedZone>& global,
-                        std::size_t g) -> std::optional<std::int16_t> {
-    if (local.given[g]) return local.amounts[g];
-    if (global && global->given[g]) return global->amounts[g];
-    return std::nullopt;
-  };
   // A range's low and high bytes, intersected with another range.
   const auto intersect = [](std::int16_t range, std::uint8_t& low, std::uint8_t& high) {
     low = std::max(low, static_cast<std::uint8_t>(range & 0xff));

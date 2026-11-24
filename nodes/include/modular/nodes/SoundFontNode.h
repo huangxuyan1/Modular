@@ -106,9 +106,10 @@ private:
   // delay, then up from 0 to 1, down to -1 and back to 0 every period.
   struct Lfo {
     std::uint64_t delay = 0; // frames left before it starts
+    double step = 0;         // periods per frame
     double phase = 0;        // where it is in its period, from 0 to 1
     double value() const;    // this frame's
-    void advance(double step); // to the next frame, step being periods per frame
+    void advance();          // to the next frame
   };
 
   // The voice's two-pole low-pass, a state-variable filter whose coefficients
@@ -138,9 +139,8 @@ private:
     Timeline volume, modulation; // all but the hold and the decay
     double releaseFramesPerDb = 0, releaseFactor = 1;
     double modReleaseFrames = 0; // for a full change
-    Lfo modLfo, vibLfo;          // as each starts, with its delay
-    double modLfoStep = 0, vibLfoStep = 0;
-    bool pitchMoves = false; // an envelope or an LFO moves the pitch
+    Lfo modLfo, vibLfo;          // as each starts
+    bool pitchMoves = false;     // an envelope or an LFO moves the pitch
   };
 
   struct Voice {
