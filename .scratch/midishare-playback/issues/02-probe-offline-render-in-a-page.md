@@ -1,7 +1,7 @@
 # Probe: does the offline MIDI render run in a page as WebAssembly?
 
 Type: prototype
-Status: open
+Status: claimed
 Blocked by: 01
 
 ## Question
