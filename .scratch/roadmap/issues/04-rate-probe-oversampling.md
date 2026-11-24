@@ -120,6 +120,11 @@ is a fixed technique inside one effect, that opacity costs nothing; it stays int
 effect. It matters only if a user must be able to *author* the subgraph that runs at 4x. No
 current workflow or ticket asks for that.
 
+**User ruling (2026-11-24): not now, so no claim.** If an editable oversampled section is ever
+wanted, it becomes a moderate claim: a supernode whose inner graph runs at an integer multiple
+of the outer rate, visible to compile and Save. Until then it waits in the map's fog, under
+"Rate beyond oversampling".
+
 ### 5. One finding for delay compensation
 
 The probe had to choose its filter length so that latency came out in whole base frames. With 257
@@ -136,6 +141,9 @@ the ranking moves from catastrophic to no claim. This is the third catastrophic 
 that its probe did not bear out; tickets 11 and 12 each landed at moderate. Here the proxy was
 that rate would touch the port type and so revisit the three-domain model. Oversampling never
 needed rate in the port type.
+
+At the user's request, the rule and the two constraints from §3 and §5 are recorded in the
+kernel contract, `docs/project-foundations.md`.
 
 ### 7. Related pressures, noted and not probed
 

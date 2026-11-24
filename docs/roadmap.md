@@ -208,8 +208,11 @@ cheap-class node work rather than a claim. This is the third catastrophic rankin
 its probe did not bear out. Two constraints carry forward. `latencySamples()` cannot state a
 fraction of a base frame, so PDC can align an oversampled section only if its total latency is
 whole. And the nested-`Engine` form hides its inner graph from compile and Save/Open, which
-matters only if users must author what runs at 4x. Sub-rate analysis and live varispeed stay
-unprobed, in the map's fog.
+matters only if users must author what runs at 4x. The user ruled that not wanted now; if it
+ever is, it becomes a moderate claim, a supernode whose inner graph runs at an integer multiple
+of the outer rate and is visible to compile and Save. Sub-rate analysis and live varispeed stay
+unprobed, in the map's fog. The rate rule and its two constraints are now part of the kernel
+contract in `docs/project-foundations.md`.
 
 ## Out of scope
 

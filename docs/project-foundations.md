@@ -51,6 +51,13 @@ not settled by the feature spec.
   executed graph differs from the authored graph. Mid-playback, dropout-free
   recompilation remains open. Latency is structural rather than signal-dependent;
   runtime switching chooses between statically aligned paths.
+- A graph runs at one global sample rate: every node is prepared with it and processes
+  the same block. Oversampling happens inside nodes, as polyphase channels between an
+  upsampling and a downsampling node or in a node that owns a faster `Engine`; it is
+  never a per-port rate. A stateful node in a polyphase section steps through its
+  phases in time order, and an oversampled section's total latency must be a whole
+  number of base-rate frames. See map ticket 04
+  (`.scratch/roadmap/issues/04-rate-probe-oversampling.md`).
 - Port types have `{domain, sub, channels}`. `sub` is opaque to the kernel in every
   domain; only audio's `channels` is interpreted there. Speaker layout belongs in a
   nodes-layer subtype. Audio subtype 0 is a concrete unspecified subtype, not a

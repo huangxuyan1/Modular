@@ -223,7 +223,9 @@ In scope, not yet sharp enough to ticket. Graduates as the frontier advances.
 - **Rate beyond oversampling.** Ticket 04 found that oversampling needs no claim, and left three
   pressures unprobed. The first is an *authorable* at-rate subgraph: the nested-`Engine` form
   hides its inner graph from compile, Save/Open and the workspace, which matters only if a user
-  must edit what runs at 4x. The second is sub-rate analysis streams, which events carry
+  must edit what runs at 4x. The user ruled it not wanted now. If it ever is, it is a moderate
+  claim: a supernode whose inner graph runs at an integer multiple of the outer rate, visible
+  to compile and Save. The second is sub-rate analysis streams, which events carry
   block-size invariantly and v1's block-latched values do not. The third is varispeed of a live
   stream, whose signal-dependent latency the kernel contract rules out. None is sharp enough to
   ticket until a node or a workflow needs it.
