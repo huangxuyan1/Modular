@@ -68,8 +68,10 @@ the check page (below, and [web.md](../../../docs/web.md#checking-a-browser-by-h
 ## Comments
 
 **2026-11-24 — the agent's part.** Branch `claude/web-build-08-acceptance`, cut from a freshly
-fetched `origin/main` at `4241375` (web build 07). Nothing under `kernel/`, `workspace/`,
-`nodes/` or `apps/` changes.
+fetched `origin/main` at `4241375` (web build 07) and rebased, before its first push, onto
+`bc33cf8` (soundfont node 04, merged meanwhile). The rebase met no conflict. Every
+measurement below was made again on the rebased tree, and those are the numbers given.
+Nothing under `kernel/`, `workspace/`, `nodes/` or `apps/` changes.
 
 - *What was built.*
   - **The check page**, under `tests/web/`: `index.html` and `check.mjs`, and
@@ -84,8 +86,8 @@ fetched `origin/main` at `4241375` (web build 07). Nothing under `kernel/`, `wor
     `preview.sf2`, `preview.mid` and `preview.json`, now with every rate's values, into
     `build/web/web-check/`. The build also copies the page and the module's five files from
     `dist/` into that folder (`modular/`), so it can be served alone. The smoke test reads its
-    golden preview from there and checks 48 kHz, as before. The web build's CTest entries go
-    from 9 to 8, since the writer is no longer one.
+    golden preview from there and checks 48 kHz, as before. The web build registers one
+    CTest entry fewer, since the writer is no longer one.
   - **CI.** The `web` job uploads `build/web/web-check/` as a second artifact,
     `modular-web-check-<commit>`. The module's artifact, `build/web/dist/`, is unchanged.
   - **Docs.** `docs/web.md` gains **Checking a browser by hand**, the user's steps, and the
@@ -107,19 +109,22 @@ fetched `origin/main` at `4241375` (web build 07). Nothing under `kernel/`, `wor
     - last, a ten-note chord at velocity 127, released as the file ends, so the trim cuts its
       release inside the two-second tail (0.71 s of it is kept).
   - **Natively**, through `modular::web::Instrument`, MSVC Release and Debug, and **under
-    Node**, through the shipped loader: `dist/` from a clean build of `4241375`, Emscripten
-    6.0.13, Node 24.19.0. Each rate renders on a fresh instrument.
+    Node**, through the shipped loader: `dist/` from a clean build of the rebased branch
+    (`c0fb317`), Emscripten 6.0.13, Node 24.19.0. Each rate renders on a fresh instrument.
 
     | Rate | Frames | Blocks | Block 0 | Last block | Peak | Release, Debug, Node |
     | --- | --- | --- | --- | --- | --- | --- |
-    | 44.1 kHz | 1,509,493 | 369 | `0xd1e321ea91487253` | `0xbf4f85810eefe6b7` | 0.418573 | 910, 4,465, 1,035 ms |
-    | 48 kHz | 1,642,986 | 402 | `0x4865e999688f5b75` | `0x267a6b82316969a8` | 0.425973 | 1,019, 4,989, 1,125 ms |
+    | 44.1 kHz | 1,509,493 | 369 | `0xd1e321ea91487253` | `0xbf4f85810eefe6b7` | 0.418573 | 1,085, 4,882, 1,193 ms |
+    | 48 kHz | 1,642,986 | 402 | `0x4865e999688f5b75` | `0x267a6b82316969a8` | 0.425973 | 1,174, 5,385, 1,317 ms |
 
-    **Every frame count and block hash is equal** between native Release, native Debug and
-    Node, at both rates. 3,018,256 and 3,285,178 samples are non-zero. MSVC Debug and Release
-    now agree on the piano, where ticket 04 saw them differ at 44.1 kHz before spec A 08's
-    portable maths. Node took 1.10 to 1.14 times native Release time, inside the 1.1 to 1.25
-    the probe measured.
+    - **Every frame count and block hash is equal** between native Release, native Debug and
+      Node, at both rates. 3,018,256 and 3,285,178 samples are non-zero.
+    - MSVC Debug and Release now agree on the piano, where ticket 04 saw them differ at
+      44.1 kHz before spec A 08's portable maths.
+    - Node took 1.10 to 1.12 times native Release time, inside the 1.1 to 1.25 the probe
+      measured.
+    - Before the rebase, on `4241375`, every value was the same, so soundfont node 04 leaves
+      this preset's render unchanged. Each render took about 15 % less time there.
   - **Red:** with one 48 kHz block hash of the native values corrupted, the Node half reported
     `48000 Hz: 1642986 frames (golden 1642986), first differing block 200 (frames 819200 on)`
     and exited 1.
@@ -127,7 +132,7 @@ fetched `origin/main` at `4241375` (web build 07). Nothing under `kernel/`, `wor
   - **Setup.**
     - The page: `preview_timing.html`, served by `PROTOTYPE_browsers.py`, Python's
       `ThreadingHTTPServer` on 127.0.0.1, with `/dist/` the module from a clean build of
-      `e7ba836`, and `/piano.sf2` the extract, read in place.
+      `c0fb317`, and `/piano.sf2` the extract, read in place.
     - The browsers: Chrome 157.0.8103.79 and Edge 158.0.4370.33, each `--headless` with a
       fresh profile folder per page load, five loads each.
     - The machine: Windows 11 Pro, AMD Ryzen 7 9800X3D, 16 logical cores.
@@ -138,24 +143,26 @@ fetched `origin/main` at `4241375` (web build 07). Nothing under `kernel/`, `wor
 
     | Browser | Import loader and glue | `loadModular` | `createInstrument` | First render | Later renders |
     | --- | --- | --- | --- | --- | --- |
-    | Chrome | 4.5 | 3.3 | 12.8 | 4.3 | 1.6 |
-    | Edge | 7.5 | 4.8 | 13.7 | 4.9 | 1.7 |
+    | Chrome | 4.3 | 3.3 | 13.7 | 4.7 | 1.9 |
+    | Edge | 8.9 | 4.4 | 13.4 | 5.2 | 1.9 |
 
     - The first render is middle C at 48 kHz, 35,435 frames (0.74 s), right after
       `createInstrument`.
     - Later renders are the median of 25 more of the same.
     - The ranges over the loads:
-      - Chrome: `loadModular` 2.9–3.8, `createInstrument` 12.5–14.4, first render 3.7–5.0,
-        later medians 1.5–1.6;
-      - Edge: `loadModular` 4.0–5.9, `createInstrument` 11.5–16.1, first render 4.6–6.1,
-        later medians 1.5–2.5.
+      - Chrome: `loadModular` 3.0–4.7, `createInstrument` 12.6–16.1, first render 4.0–5.1,
+        later medians 1.6–1.9;
+      - Edge: `loadModular` 3.9–5.7, `createInstrument` 12.4–16.6, first render 4.9–5.6,
+        later medians 1.8–1.9.
     - Other previews, medians of 11 per load:
-      - A0 (key 21), 37,956 frames: Chrome 1.5–1.8, Edge 1.5–2.7;
-      - C8 (key 108), 16,334 frames: Chrome 1.4–1.5, Edge 1.4–2.4;
-      - middle C at 44.1 kHz, 32,556 frames: Chrome 1.3–1.5, Edge 1.3–2.4.
-    - The slowest single later render in any load: Chrome 2.9, Edge 3.1.
-    - Fetching the 7.8 MB extract from 127.0.0.1 took 8.7–30.7. That is a local disk's time,
+      - A0 (key 21), 37,956 frames: Chrome 1.7–1.8, Edge 1.6–1.8;
+      - C8 (key 108), 16,334 frames: Chrome 1.5–1.6, Edge 1.5–1.6;
+      - middle C at 44.1 kHz, 32,556 frames: Chrome 1.5–1.6, Edge 1.5–1.6.
+    - The slowest single later render in any load: Chrome 3.4, Edge 3.1.
+    - Fetching the 7.8 MB extract from 127.0.0.1 took 7.7–23.7. That is a local disk's time,
       not a network's.
+    - Before the rebase, on `e7ba836`, the same run's medians, in the table's order, were
+      Chrome 4.5, 3.3, 12.8, 4.3 and 1.6, and Edge 7.5, 4.8, 13.7, 4.9 and 1.7.
   - **For midishare's choice of thread.**
     - A render runs on the calling thread, so its time is how long it blocks the page.
     - On this machine a preview blocks for about 1.5–2 ms, the first after
@@ -163,18 +170,19 @@ fetched `origin/main` at `4241375` (web build 07). Nothing under `kernel/`, `wor
       13 ms, and `loadModular` for 3–5 ms once its files are fetched.
     - Each is under one 60 Hz frame (16.7 ms), even on a device several times slower.
     - A whole piece renders in proportion to its length and voices: the 33.5 s acceptance
-      clip, with up to about a hundred voices, took about 1.0–1.1 s under Node, which ran
-      within 1.14 times native here.
+      clip, with up to about a hundred voices, took about 1.2–1.3 s under Node, which ran
+      within 1.12 times native here.
     - The numbers are from one fast desktop, headless, and a phone may be several times
       slower.
 - *The check page, headless first.* Through `check_driver.html`, which opens the page in a
   same-origin frame and posts its outcome, so the page itself posts nothing. Served from
-  `build/web/web-check/` as built at `e7ba836`, not dirty:
+  `build/web/web-check/` as built at `c0fb317`, not dirty:
   - Chrome 157 and Edge 158, headless: **every hash matched**, at 44.1 kHz (15,058 frames,
     4 blocks), 48 kHz (16,390 frames, 5 blocks) and 22.05 kHz (7,530 frames, 2 blocks).
   - The user's own command, `python -m http.server 8765 --bind 127.0.0.1 --directory
     build/web/web-check` (Python 3.13.1), opened in the desktop app's built-in Chromium 156
-    browser: every hash matched, with the page as the user will see it.
+    browser, before the rebase (`e7ba836`): every hash matched, with the page as the user
+    will see it.
   - Opened from the file system, in headless Chrome, the page said "The check could not
     load. Serve this folder over HTTP, with .mjs files sent as JavaScript (text/javascript)."
   - **Red:** with block 2 of the 48 kHz values corrupted in the folder's `preview.json`, the
@@ -200,9 +208,9 @@ fetched `origin/main` at `4241375` (web build 07). Nothing under `kernel/`, `wor
   - The page renders the golden preview of `tests/WebGoldenClips.h` built by the test-side
     builder, never the extract. No soundfont file enters `tests/` (map ticket 08,
     decision 6).
-  - The golden values in the page's column come from the commit it was built with. When
-    soundfont node 04, being implemented now, changes the node's output and so these values,
-    the page follows with no change.
+  - The golden values in the page's column come from the commit it was built with, so a
+    later change to the node's output that updates them needs no change to the page.
+    Soundfont node 04, merged before this branch's first push, changed none of them.
 
 **For the user: Firefox and Safari** (the proposal for the planning hub to agree with the
 user; `docs/web.md`, *Checking a browser by hand*, has the same steps).
@@ -227,7 +235,7 @@ user; `docs/web.md`, *Checking a browser by hand*, has the same steps).
    with a ✓ on every row. At this ticket's commit the 48 kHz preview's golden block 0 is
    `0x7597ec3240543af8`, and the five 48 kHz blocks are `0x7597ec3240543af8`,
    `0x550bb0ded79d1774`, `0x187ad7db25192b84`, `0xf73b149c78a2ad3f` and
-   `0x907119e1db7fd826`. If soundfont node 04 merges first, the golden column shows its
-   values; the verdict is what counts.
+   `0x907119e1db7fd826`. If a later change updates the golden values before the check, the
+   golden column shows the new ones; the verdict is what counts.
 4. **Record here** for each browser: its name and version, the operating system, and whether
    every hash matched. A mismatch or failure is a finding for its own ticket.
