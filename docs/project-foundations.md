@@ -160,5 +160,6 @@ RESTRICT; do not treat the older index-based fragility as an open constraint.
 - `docs/node-io.md`: MIDI-file and hardware-node behavior.
 - `docs/graph-persistence.md`: Save/Open, id restoration and content codecs.
 - `docs/windows.md`: native Windows build, tests and editor setup.
-- `docs/web.md`: the web build, the render surface a page calls, and its local build.
+- `docs/web.md`: the web build, the render surface a page calls, its version and
+  manifest, its CI job and its local build.
 - `.scratch/graph-editor/planning.md`: ticket links and recorded verification evidence.

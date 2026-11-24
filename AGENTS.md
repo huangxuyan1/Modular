@@ -28,8 +28,9 @@ relevant linked contract instead of treating this summary as the complete design
   `docs/graph-persistence.md` for Save/Open.
 - **Build and tests:** On Windows run
   `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_windows.ps1`.
-  Read `docs/windows.md` for focused checks and environment details. Elsewhere use
-  CMake and CTest. Do not claim tests pass without running them.
+  Read `docs/windows.md` for focused checks and environment details, and `docs/web.md`
+  for the `web` presets and their CI job. Elsewhere use CMake and CTest. Do not claim
+  tests pass without running them.
 - **Code:** C++20, two-space indent, media-free kernel, graph-scoped NodeId/PortId,
   RESTRICT on wired primitive deletion, and block-size-invariant processing. Follow
   `docs/project-foundations.md` and the surrounding code for detailed contracts.
