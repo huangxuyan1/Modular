@@ -169,12 +169,6 @@ In scope, not yet sharp enough to ticket. Graduates as the frontier advances.
 - **Where the render runs in the page** (main thread or a Web Worker), and what the site shows
   while it renders. midishare's call, informed by the probe's render times; it reaches this map
   only if it changes the contract.
-- **Repeated renders on one loaded soundfont.** Rebuilding the graph per clip is simplest, but
-  reading a soundfont is costly to repeat. Reusing the graph builds a new `Engine` on it per
-  render, which is exactly the `prepare()` question roadmap ticket 10 holds open. The node
-  parses its soundfont when it is loaded, never in `prepare()`, so a new `Engine` does not read
-  it again (the node-shape decision above). Sharp once the contract ticket says what the graph
-  holds.
 - **Sound parity.** Not a map ticket (planning hub, 2026-11-24, on
   [Which part of the SoundFont format does the node read?](issues/09-soundfont-format-subset.md)).
   The user judges by ear on the live site, after the node passes its FluidSynth comparison,
