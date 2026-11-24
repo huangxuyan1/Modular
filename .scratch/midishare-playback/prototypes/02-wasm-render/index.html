@@ -1,0 +1,16 @@
+<!doctype html>
+<!-- PROTOTYPE, throwaway: midishare-playback ticket 02. Served by browsers.py, which maps
+     /out/ to build.ps1's output folder. ?variant=noexc|jsexc|wasmexc|exnref picks the module;
+     ?only=instantiate skips the renders; ?report=1 posts the results back to browsers.py. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>running</title>
+</head>
+<body>
+  <p>Modular offline render probe: renders test clips in a WebAssembly module, compares them
+    with the native render, and plays one through a silent AudioBufferSourceNode.</p>
+  <pre id="result">running</pre>
+  <script type="module" src="page.mjs"></script>
+</body>
+</html>

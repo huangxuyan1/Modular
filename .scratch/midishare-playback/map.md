@@ -119,6 +119,11 @@ build, as roadmap ticket 04's did. Research findings live under `research/` here
   throw; the rest plays as the spec's rules say, with a list of what was ignored. Velocity is
   each note-on's byte, channel 10 plays the preset, and each stereo side is its own mono voice.
   FluidSynth is the comparison renderer for the piano.
+- [Probe: does the offline MIDI render run in a page as WebAssembly?](issues/02-probe-offline-render-in-a-page.md)
+  — Yes, with no source change: `midi_cli`'s graph built with `em++` renders in Node, Chrome and
+  Edge bit for bit equal to native, 1.1 to 1.25 times native time (a 261 s worst-case clip in about
+  0.36 s). Recommended: native WebAssembly exceptions (legacy encoding), caught at the exported
+  function and returned as a message; 37.7 KB Brotli with the glue.
 
 ## Not yet specified
 
