@@ -230,11 +230,13 @@ TEST_CASE("a sample played between its points is interpolated") {
   auto file = oneZone(ramp, {set(gen::kPan, -500), set(gen::kOverridingRootKey, 72)});
   const auto out = play(build(file), {{13, noteOn(0, 60, 100)}}, {48000, 128, 1200});
   const auto onset = firstSounding(out.left);
-  // Past the attack and hold, frame k of the voice reads point k / 2.
+  // Past the attack and hold, frame k of the voice reads point k / 2, so the
+  // output rises by half a point's step every frame. The low-pass delays a
+  // ramp but keeps its slope.
   for (std::size_t k = 200; k < 600; ++k) {
     CAPTURE(k);
-    CHECK(out.left[onset + k] ==
-          doctest::Approx((32.0 * k + 64) / 32768 * noteGain(100)).epsilon(1e-6));
+    CHECK(out.left[onset + k + 1] - out.left[onset + k] ==
+          doctest::Approx(32.0 / 32768 * noteGain(100)).epsilon(1e-3));
   }
 }
 
@@ -393,6 +395,85 @@ TEST_CASE("initialAttenuation and the modulators together attenuate by at most 1
   const auto out = play(envelopeFont({set(gen::kInitialAttenuation, 1000)}),
                         {{13, noteOn(0, 60, 1)}}, {48000, 128, 1000});
   CHECK(std::abs(db(out.left.at(500) / 0.5) + 144) <= 0.1);
+}
+
+namespace {
+
+// A tone and a steady reference through the same voice settings: the right
+// channel plays a sine of `hertz`, the left a steady sample, both at 16000 and
+// recorded at the graph's rate. The low-pass passes the steady sample
+// unchanged, so the right channel against the left is the filter's gain.
+Bytes toneFont(std::vector<Generator> generators, double hertz, double rate,
+               std::size_t points) {
+  File file;
+  const auto sampleRate = static_cast<std::uint32_t>(rate);
+  file.samples = {{"steady", steady(16000, points), sampleRate},
+                  {"tone", sine(hertz / rate, points), sampleRate}};
+  file.instruments.push_back({"pair",
+                              {{generators},
+                               {{set(gen::kPan, -500), set(gen::kSampleId, 0)}},
+                               {{set(gen::kPan, 500), set(gen::kSampleId, 1)}}}});
+  file.presets.push_back({"preset", 0, 0, {{{set(gen::kInstrument, 0)}}}});
+  return build(file);
+}
+
+// The tone's gain over frames [from, to), in dB: its amplitude, from its RMS,
+// against the steady sample's level in the middle of the window.
+double toneGainDb(const Stereo& out, std::size_t from, std::size_t to) {
+  double sum = 0;
+  for (std::size_t i = from; i < to; ++i) sum += double(out.right.at(i)) * out.right.at(i);
+  return db(std::sqrt(2 * sum / static_cast<double>(to - from)) /
+            out.left.at((from + to) / 2));
+}
+
+// A Butterworth low-pass's gain at `hertz` with its cutoff at `cutoff`: the
+// design for Q 0 cB.
+double butterworthDb(double hertz, double cutoff) {
+  return -10 * std::log10(1 + std::pow(hertz / cutoff, 4));
+}
+
+} // namespace
+
+TEST_CASE("the filter is a two-pole low-pass 3 dB down at its derived cutoff") {
+  // At velocity 127 the default velocity-to-cutoff modulator takes 18.75
+  // cents off initialFilterFc, so 8340 cents puts the cutoff at 8321.25
+  // cents: 1000 Hz. The design is 3 dB down there, 0.26 dB an octave below
+  // and 12.3 dB an octave above, as a two-pole filter falls.
+  for (const double rate : {44100.0, 48000.0}) {
+    for (const double hertz : {1000.0, 500.0, 2000.0}) {
+      CAPTURE(rate);
+      CAPTURE(hertz);
+      const auto font = toneFont({set(gen::kInitialFilterFc, 8340)}, hertz, rate,
+                                 static_cast<std::size_t>(rate));
+      const auto out = play(font, {{13, noteOn(0, 60, 127)}},
+                            {rate, 128, static_cast<std::uint64_t>(rate / 2)});
+      const auto window = static_cast<std::size_t>(rate / 10);
+      CHECK(std::abs(toneGainDb(out, 2000, 2000 + window) - butterworthDb(hertz, 999.966)) <=
+            1);
+    }
+  }
+}
+
+TEST_CASE("velocity lowers the cutoff linearly so a softer note is quieter and never brighter") {
+  // The default velocity-to-cutoff modulator: -2400 cents times (128 - v) /
+  // 128 at every velocity, with no switch at 64. From the default piano's
+  // 11623 cents it gives these cutoffs, and a 4 kHz tone passes each as the
+  // design says. Each softer note is quieter and its tone darker.
+  const auto font = toneFont({set(gen::kInitialFilterFc, 11623)}, 4000, 48000, 48000);
+  double lastLevel = 1, lastTone = 1;
+  for (const auto& [velocity, cutoff] :
+       {std::pair{127, 6661.2}, std::pair{105, 5249.0}, std::pair{85, 4226.7},
+        std::pair{64, 3366.9}, std::pair{63, 3330.6}, std::pair{48, 2831.2},
+        std::pair{40, 2596.2}, std::pair{1, 1701.8}}) {
+    CAPTURE(velocity);
+    const auto out = play(font, {{13, noteOn(0, 60, velocity)}}, {48000, 128, 12000});
+    const double tone = toneGainDb(out, 2000, 6800);
+    CHECK(std::abs(tone - butterworthDb(4000, cutoff)) <= 1);
+    CHECK(tone < lastTone);
+    CHECK(out.left.at(4400) < lastLevel);
+    lastTone = tone;
+    lastLevel = out.left.at(4400);
+  }
 }
 
 TEST_CASE("a stereo pair plays as two voices and keeps its image") {

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <numbers>
 #include <stdexcept>
 
 #include "SoundFontMaths.h"
@@ -24,6 +25,10 @@ constexpr double kMostAttenuation = 1440;
 // power-on value. Only the volume's adds anything: expression (CC11) is at
 // 127, pan (CC10) centred, the pitch wheel centred, and the rest at 0.
 constexpr int kPowerOnVolume = 100;
+// The default velocity-to-cutoff modulator's depth in cents, reached at
+// velocity 0. It is linear at every velocity, with no velocity switch, so a
+// softer note is never brighter (ticket 09, D2).
+constexpr double kVelocityToCutoff = -2400;
 
 double seconds(std::int32_t timecents) { return maths::exp2(timecents / 1200.0); }
 
@@ -203,6 +208,9 @@ void SoundFontNode::noteOn(std::uint8_t channel, std::uint8_t key, std::uint8_t 
     const double attenuation =
         std::clamp(plan.attenuation + concaveAttenuation(velocity), 0.0, kMostAttenuation);
     voice.gain = maths::exp10(-attenuation / 200);
+    // And the velocity-to-cutoff one to initialFilterFc.
+    voice.cutoff = plan.zone.generators[SoundFont::kInitialFilterFc] +
+                   kVelocityToCutoff * (128 - velocity) / 128;
     voice.active = sounds(voice, plan);
   }
 }
@@ -294,6 +302,39 @@ double SoundFontNode::volume(const Voice& voice, const PreparedZone& plan) {
   }
 }
 
+// The cutoff for the voice's next frame, in whole cents.
+std::int64_t SoundFontNode::cutoff(const Voice& voice, const PreparedZone&) {
+  return std::llround(voice.cutoff);
+}
+
+// The specification's two-pole low-pass, as a state-variable filter whose
+// response is the bilinear transform's: its cutoff is exact, it passes a
+// steady signal unchanged, and its coefficients change smoothly with the
+// cutoff. At Q 0 cB it is a Butterworth response, 3 dB down at the cutoff
+// (ticket 04 reads initialFilterQ). The cutoff is kept below 0.45 of the graph's
+// rate, as FluidSynth keeps it, so a high one cannot reach Nyquist.
+void SoundFontNode::Filter::tune(std::int64_t cutoff, double rate) {
+  cents = cutoff;
+  // Absolute cents: 6900 is 440 Hz.
+  const double hertz =
+      std::min(440 * maths::exp2(static_cast<double>(cutoff - 6900) / 1200), 0.45 * rate);
+  const double angle = kPi * hertz / rate;
+  const double g = maths::sin(angle) / maths::cos(angle);
+  constexpr double kDamping = std::numbers::sqrt2; // 1 / Q, for Q = 1 / sqrt(2)
+  a1 = 1 / (1 + g * (g + kDamping));
+  a2 = g * a1;
+  a3 = g * a2;
+}
+
+double SoundFontNode::Filter::step(double in) {
+  const double v3 = in - state2;
+  const double v1 = a1 * state1 + a2 * v3;
+  const double v2 = state2 + a2 * state1 + a3 * v3;
+  state1 = 2 * v1 - state1;
+  state2 = 2 * v2 - state2;
+  return v2;
+}
+
 // Settles a voice for its next frame. False once it has ended: a voice ends
 // on the frame after its last sound, so a note-on there finds its slot free.
 bool SoundFontNode::sounds(Voice& voice, const PreparedZone& plan) {
@@ -309,6 +350,8 @@ void SoundFontNode::render(Voice& voice, float* left, float* right, std::uint32_
   for (std::uint32_t i = from; i < to; ++i) {
     auto& envelope = voice.volume;
     if (envelope.stage != Stage::kDelay) { // in the delay, silent, and the sample waits
+      if (const auto cents = cutoff(voice, plan); cents != voice.filter.cents)
+        voice.filter.tune(cents, rate_);
       // Linear interpolation. While looping, the loop's last point is followed
       // by its first, so no point past the loop is read; past the sample's
       // last point the sample is silent.
@@ -317,8 +360,11 @@ void SoundFontNode::render(Voice& voice, float* left, float* right, std::uint32_
       if (voice.looping && next == plan.loopEnd) next = plan.loopStart;
       const double a = sound_font_->point(start + index);
       const double b = next < plan.points ? sound_font_->point(start + next) : 0.0;
-      const double sample = (a + (b - a) * (voice.position - index)) / 32768.0 *
-                            volume(voice, plan) * voice.gain;
+      // The filter comes before the amplifier, as in the specification's
+      // synthesis model.
+      const double sample =
+          voice.filter.step((a + (b - a) * (voice.position - index)) / 32768.0) *
+          volume(voice, plan) * voice.gain;
       left[i] += static_cast<float>(sample * plan.panLeft);
       right[i] += static_cast<float>(sample * plan.panRight);
       voice.position += voice.increment;
