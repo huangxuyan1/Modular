@@ -1,8 +1,8 @@
 # Modular
 
 The ubiquitous language for Modular: a minimal graph runtime from which DAW-like
-applications are meant to emerge. Terms here are the canonical vocabulary; CLAUDE.md holds
-the decisions, this file holds the words.
+applications are meant to emerge. Terms here are the canonical vocabulary; `docs/adr/` and
+`docs/project-foundations.md` hold the decisions, this file holds the words.
 
 ## Language
 

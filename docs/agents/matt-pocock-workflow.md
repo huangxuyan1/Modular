@@ -1,8 +1,8 @@
 # Matt Pocock workflow review and persistent agreement
 
 Reviewed 2026-09-12 against the installed skill files and this conversation.
-The essential operational rules are inlined in both root `AGENTS.md` and
-`CLAUDE.md` for startup discovery. Detailed project decisions and conventions now
+The essential operational rules are in root `AGENTS.md`, which `CLAUDE.md` imports,
+for startup discovery. Detailed project decisions and conventions now
 live in `docs/project-foundations.md`; this document records workflow evidence and
 distinctions. It is not a feature spec or implementation ticket.
 
@@ -226,6 +226,16 @@ prefers editing only the existing instruction file. The user's explicit request 
 self-contained Codex instructions overrides that default. The writing-for-agents
 preference for avoiding duplicate sources is handled by maintaining identical copies;
 it does not override the user's request to include the content directly.
+
+*Changed 2026-11-24, at the user's request.* `AGENTS.md` alone holds the shared
+rules. `CLAUDE.md` starts with Claude Code's `@AGENTS.md` import and adds only
+Claude Code context. Neither tool now depends on following a textual pointer:
+- Codex reads the full rules from `AGENTS.md` itself.
+- Claude Code inlines the import when a session starts.
+
+That keeps what the identical copies protected without duplicating them.
+`scripts/check_docs.py` checks the import in place of byte identity. The two
+paragraphs above record the earlier arrangement.
 
 Official [Codex instruction discovery](https://learn.chatgpt.com/docs/agent-configuration/agents-md)
 loads selected instruction files at run startup, with a default combined budget of

@@ -2,10 +2,10 @@
 
 ## Start here
 
-`AGENTS.md` and `CLAUDE.md` must stay byte-identical. Both contain the full
-startup rules for their respective native discovery; neither is a pointer to the
-other. This file is intentionally short. Before changing a layer, read the relevant
-linked contract instead of treating this summary as the complete design.
+`AGENTS.md` holds the full startup rules for every agent. `CLAUDE.md` imports it
+with `@AGENTS.md` and adds only context specific to Claude Code, so shared rules
+belong here. This file is intentionally short. Before changing a layer, read the
+relevant linked contract instead of treating this summary as the complete design.
 
 - **Purpose and architecture:** Modular is a minimal, media-neutral graph language
   from which a DAW can emerge; it is not a DAW-specific engine. `kernel/` owns graph,
@@ -100,6 +100,10 @@ triage and domain-doc operations are in `docs/agents/issue-tracker.md`,
   before resolving one per session (except research). Planning is the default;
   execution needs explicit user scope. See `docs/agents/issue-tracker.md` and
   `docs/agents/matt-skills-catalog.md` for complete mechanics and other routes.
+- Work that changes Modular follows this workflow whichever project asks for it.
+  Another project, such as the midishare website, may run without it; its requests
+  are inputs to grilling and tickets here, and only the user authorizes a phase
+  change or a ticket.
 
 ## Agent skills
 

@@ -1,9 +1,10 @@
 """Documentation checks for the CI gate; also runnable locally with Python 3.
 
 Checks every tracked Markdown file for repository-internal links whose target
-file or heading anchor does not exist, and that AGENTS.md and CLAUDE.md are
-byte-identical. External (scheme) links are not fetched: that check would
-depend on the network and other sites. Exits non-zero on any problem.
+file or heading anchor does not exist, and that CLAUDE.md imports AGENTS.md with
+a line reading @AGENTS.md outside code, so Claude Code loads the shared rules.
+External (scheme) links are not fetched: that check would depend on the network
+and other sites. Exits non-zero on any problem.
 
 Usage, from anywhere in the checkout:  python scripts/check_docs.py
 """
@@ -16,7 +17,8 @@ import urllib.parse
 from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parent.parent
-IDENTICAL_FILES = ("AGENTS.md", "CLAUDE.md")
+CLAUDE_FILE = "CLAUDE.md"
+AGENTS_IMPORT = "@AGENTS.md"
 
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 INLINE_CODE = re.compile(r"(`+)(?:(?!\1).)+?\1")
@@ -116,16 +118,17 @@ def check_links(files):
   return problems
 
 
-def check_identical():
-  first, second = (ROOT / name for name in IDENTICAL_FILES)
-  if first.read_bytes() != second.read_bytes():
-    return [f"{IDENTICAL_FILES[0]} and {IDENTICAL_FILES[1]} must be byte-identical"]
-  return []
+def check_claude_imports_agents():
+  """CLAUDE.md must import AGENTS.md; Claude Code ignores imports inside code."""
+  text = (ROOT / CLAUDE_FILE).read_text(encoding="utf-8")
+  if any(line.strip() == AGENTS_IMPORT for line in prose(text)):
+    return []
+  return [f"{CLAUDE_FILE} must import the shared rules with a line reading {AGENTS_IMPORT}"]
 
 
 def main():
   files = tracked_files()
-  problems = check_links(files) + check_identical()
+  problems = check_links(files) + check_claude_imports_agents()
   for problem in problems:
     print(problem)
   markdown = sum(1 for name in files if name.suffix.lower() == ".md")
