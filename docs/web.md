@@ -20,8 +20,9 @@ configure preset names as CMake's emulator:
 - kernel purity and the soundfont node's portable-maths check
   (`soundfont_portable_maths`), which read the source;
 - the render core's tests (`web_core_tests`), the [golden clips](#golden-clips) among them,
-  and the module's smoke test (`web_smoke`, with `web_smoke_fixture`, which writes its
-  soundfonts and the golden preview first).
+  and the module's smoke test (`web_smoke`). Its fixtures, its soundfont and the golden
+  preview, are written by the build, with `web_smoke_fixture`, which the build runs under
+  Node; the golden preview goes into the [check page](#checking-a-browser-by-hand)'s folder.
 
 The render core, `modular_web_core`, is the C++ behind the module. It also builds and is
 tested natively on Windows ([windows.md](windows.md)). The module, `modular_web`, its loader
@@ -98,8 +99,10 @@ memory with the test-side soundfont builder and MIDI writer (`tests/MidiTestFile
 rate, natively in Debug and Release and under Node here, against the same values, so the
 module's render equals the native one by transitivity. The smoke test renders the preview
 at 48 kHz through the loader and checks the same values with the hash ported to
-JavaScript; `web_smoke_fixture` writes it the preview's soundfont, MIDI bytes and values.
-The soundfont node's own golden test, in `soundfont_tests`, runs here too.
+JavaScript (`tests/web/golden_hash.mjs`); the build's `web_smoke_fixture` writes the
+preview's soundfont, MIDI bytes and values at every rate into the
+[check page](#checking-a-browser-by-hand)'s folder, which renders all three rates in a
+browser. The soundfont node's own golden test, in `soundfont_tests`, runs here too.
 
 **A change that alters a rendered clip updates the values in the same commit,** whether it
 changes the render core or the soundfont node ([node-io.md](node-io.md)). On a mismatch
@@ -251,6 +254,46 @@ and twenty more renders of it left both the memory and the heap in use where the
   send the `.wasm` as `application/wasm` for streaming compilation; otherwise the glue falls
   back to compiling from a downloaded copy.
 
+### Checking a browser by hand
+
+Node is the golden check's runtime, since WebAssembly computes the same bits in every
+engine, so no browser is checked on every change. The *check page* lets a person confirm
+that once in a browser, such as Firefox or Safari, which the development machine lacks. It
+renders the golden preview through the loader at 44.1, 48 and 22.05 kHz and shows each
+rate's frame count and block hashes beside the [golden values](#golden-clips).
+
+- **Where it is.** `tests/web/` holds the page, `index.html` and `check.mjs`, and
+  `golden_hash.mjs`, the golden hash in JavaScript, which the smoke test shares. The build
+  writes the page into `build/web/web-check/` with its fixtures, the golden preview's
+  `preview.sf2`, `preview.mid` and `preview.json`, and a copy of the module's files in
+  `modular/`. The [`web` CI job](#continuous-integration) uploads that folder as an
+  artifact of its own, `modular-web-check-<commit>`, apart from the module's.
+- **What it needs.** Any static server that sends `.mjs` files as JavaScript, and nothing
+  else. The `http.server` of Python 3.10 or later does. Opened from the file system, the
+  page cannot load its modules, and says so.
+
+The steps:
+
+1. Take the folder of the commit to check, either:
+   - from CI: on GitHub, open that commit's `CI` run, download the artifact
+     `modular-web-check-<commit>` under **Artifacts**, and unzip it into an empty folder.
+     GitHub's command line does the same:
+     `gh run download <run id> --name modular-web-check-<commit> --dir <folder>`;
+   - or from a local build: `build/web/web-check/`, after `cmake --build --preset web`.
+2. In that folder, start a server, `python3 -m http.server 8000 --bind 127.0.0.1` (on
+   Windows, `python`), and open `http://127.0.0.1:8000/` in the browser to check. For a
+   browser on another device, such as Safari on an iPhone, serve with `--bind 0.0.0.0`
+   instead and open `http://<the serving computer's local network address>:8000/` on the
+   device; the folder is then open to the local network until the server stops. Stop it
+   with Ctrl+C.
+3. The page should say, in green, **Every hash matched, at 44100, 48000, 22050 Hz**, with
+   every row marked ✓. Its golden column holds the preview's values in
+   `tests/WebGoldenClips.h` at the folder's commit; when the page was added, the 48 kHz
+   preview's block 0 was `0x7597ec3240543af8`. A mismatch shows in red with the first
+   differing block. The page also shows the browser's user agent and the module's commit.
+
+Record the browser and its version, the operating system, and whether every hash matched.
+
 ## Version and manifest
 
 The build reads the checkout's commit each time it builds the module, not only when CMake
@@ -312,7 +355,10 @@ build path fails the gate. On `ubuntu-24.04`, the job:
    environment (`emsdk_env.sh`), which sets the `EMSDK` and `EMSDK_NODE` the presets read;
 4. shows the manifest in the run's summary;
 5. uploads `build/web/dist/`, which holds only the four files and the manifest, as one
-   workflow artifact, `modular-web-<commit>`, kept for GitHub's default retention.
+   workflow artifact, `modular-web-<commit>`, kept for GitHub's default retention;
+6. uploads `build/web/web-check/`, the [check page](#checking-a-browser-by-hand) with its
+   fixtures and a copy of the module, as a second artifact, `modular-web-check-<commit>`,
+   so the module's artifact holds only what a client takes.
 
 **The pin.** Emscripten 6.0.13 is pinned in one place in the workflow, the `web` job's
 `EMSCRIPTEN_VERSION`, beside `EMSDK_COMMIT`, the commit its emsdk tag must resolve to, and

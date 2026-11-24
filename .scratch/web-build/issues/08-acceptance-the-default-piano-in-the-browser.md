@@ -16,11 +16,14 @@ the [spec](../spec.md) (Further Notes, Acceptance), map ticket 04's decision 8 a
   so the piano sounds right: loops, filter, velocity and the full pool;
 - the user's steps below.
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
+
+The agent's part is done. One item waits for the user: Firefox and Safari, checked by hand on
+the check page (below, and [web.md](../../../docs/web.md#checking-a-browser-by-hand)).
 
 ## Checklist
 
-- [ ] **The default piano, module against native.** Use the extract from ticket 04, kept
+- [x] **The default piano, module against native.** Use the extract from ticket 04, kept
   outside the repository. A throwaway harness under `.scratch/web-build/prototypes/`, outside
   the build, renders a clip covering the piano's key ranges and velocities at 44.1 and 48 kHz,
   twice:
@@ -29,7 +32,7 @@ the [spec](../spec.md) (Further Notes, Acceptance), map ticket 04's decision 8 a
 
   Frame counts and per-block hashes are equal. Rendered audio and licensed files are never
   committed.
-- [ ] **The preview's timing in a browser** (map ticket 04, decision 8). With the extract
+- [x] **The preview's timing in a browser** (map ticket 04, decision 8). With the extract
   loaded, a local page times one-note renders in Chrome or Edge, headless, served by a local
   static server:
   - the first render after `createInstrument`;
@@ -37,7 +40,7 @@ the [spec](../spec.md) (Further Notes, Acceptance), map ticket 04's decision 8 a
 
   Also time `loadModular` and `createInstrument`, and record everything under Comments for
   midishare's choice between the main thread and a Web Worker.
-- [ ] **The check page** (ruling G10):
+- [x] **The check page** (ruling G10):
   - It is committed with the tests and built into the build tree with its fixtures: the
     preview clip's soundfont and MIDI bytes.
   - It renders the clip through the loader and shows the frame count, each block's hash and
@@ -53,7 +56,178 @@ the [spec](../spec.md) (Further Notes, Acceptance), map ticket 04's decision 8 a
   - How the user reaches the files (the check artifact or a local build) and serves them is
     agreed with the user through the planning hub before this item starts.
   - The agent checks the same page headless in Chrome or Edge first.
-- [ ] Any mismatch or failure is recorded as a finding with its own follow-up ticket proposed to
+
+  **Waiting for the user.** The agent checked the page headless in Chrome and Edge: every hash
+  matched (Comments). The proposed steps are under Comments, **For the user**; they await the
+  planning hub's agreement with the user, then the user's results.
+- [x] Any mismatch or failure is recorded as a finding with its own follow-up ticket proposed to
   the planning hub, not fixed here.
-- [ ] Nothing changes under `kernel/` or `workspace/`, and no product code changes. The full
+- [x] Nothing changes under `kernel/` or `workspace/`, and no product code changes. The full
   native suite and the `web` job pass, and `/code-review` runs on the branch's diff.
+
+## Comments
+
+**2026-11-24 — the agent's part.** Branch `claude/web-build-08-acceptance`, cut from a freshly
+fetched `origin/main` at `4241375` (web build 07). Nothing under `kernel/`, `workspace/`,
+`nodes/` or `apps/` changes.
+
+- *What was built.*
+  - **The check page**, under `tests/web/`: `index.html` and `check.mjs`, and
+    `golden_hash.mjs`, the golden hash of `tests/GoldenRender.h` in JavaScript, moved out of
+    the smoke test so the page and the test share one port. The page loads the module from
+    `modular/`, renders the golden preview of `tests/WebGoldenClips.h` at 44.1, 48 and
+    22.05 kHz, and shows each rate's frame count and block hashes beside the golden ones, with
+    a verdict, the browser's user agent and the module's `version`. Opened from the file
+    system, where it cannot load its modules, it says so.
+  - **Its fixtures, built.** `web_smoke_fixture` now runs in the build, not as a CTest
+    fixture: it writes the smoke test's soundfont as before, and the golden preview's
+    `preview.sf2`, `preview.mid` and `preview.json`, now with every rate's values, into
+    `build/web/web-check/`. The build also copies the page and the module's five files from
+    `dist/` into that folder (`modular/`), so it can be served alone. The smoke test reads its
+    golden preview from there and checks 48 kHz, as before. The web build's CTest entries go
+    from 9 to 8, since the writer is no longer one.
+  - **CI.** The `web` job uploads `build/web/web-check/` as a second artifact,
+    `modular-web-check-<commit>`. The module's artifact, `build/web/dist/`, is unchanged.
+  - **Docs.** `docs/web.md` gains **Checking a browser by hand**, the user's steps, and the
+    second artifact; `docs/windows.md` says CI checks no browser and uploads the page.
+  - **The throwaway harness**, `.scratch/web-build/prototypes/08-default-piano/`:
+    `PROTOTYPE_piano_native.cpp`, built by its own `CMakeLists.txt` against the render core;
+    `PROTOTYPE_piano_node.mjs`; and `PROTOTYPE_browsers.py` with `preview_timing.*` and
+    `check_driver.html`. Its build, the clip and every rendering stay outside the repository.
+- *The default piano, module against native.* The extract read in place, never copied:
+  `%USERPROFILE%\soundfonts\extracts\fluidr3-gm-0-0-yamaha-grand-piano.sf2`, 7,812,018 bytes,
+  SHA-256 `9609e512c25098284c6c0d402da0a5c85be77656e148262a2b93b834a5be0d08`, the extract
+  regenerated from `main` after ticket 04 merged (its side file says so).
+  - **The clip** (the harness's `clip`), 8,117 bytes, SHA-256
+    `131a0d16026ab4aedf4934d4e5fd961dc1bc6c4b3d93d6773694d8330e87fe92`, 33.52 s:
+    - nine sweeps of every key the piano plays, 0 to 108, one per velocity layer of its preset
+      (1–64, then eight of eight, to 121–127), even keys at the layer's lowest velocity and
+      odd ones at its highest, so all twenty key ranges at both edges of all nine layers;
+    - then the root key of each key range held 8 s, so every sample plays into its loop;
+    - last, a ten-note chord at velocity 127, released as the file ends, so the trim cuts its
+      release inside the two-second tail (0.71 s of it is kept).
+  - **Natively**, through `modular::web::Instrument`, MSVC Release and Debug, and **under
+    Node**, through the shipped loader: `dist/` from a clean build of `4241375`, Emscripten
+    6.0.13, Node 24.19.0. Each rate renders on a fresh instrument.
+
+    | Rate | Frames | Blocks | Block 0 | Last block | Peak | Release, Debug, Node |
+    | --- | --- | --- | --- | --- | --- | --- |
+    | 44.1 kHz | 1,509,493 | 369 | `0xd1e321ea91487253` | `0xbf4f85810eefe6b7` | 0.418573 | 910, 4,465, 1,035 ms |
+    | 48 kHz | 1,642,986 | 402 | `0x4865e999688f5b75` | `0x267a6b82316969a8` | 0.425973 | 1,019, 4,989, 1,125 ms |
+
+    **Every frame count and block hash is equal** between native Release, native Debug and
+    Node, at both rates. 3,018,256 and 3,285,178 samples are non-zero. MSVC Debug and Release
+    now agree on the piano, where ticket 04 saw them differ at 44.1 kHz before spec A 08's
+    portable maths. Node took 1.10 to 1.14 times native Release time, inside the 1.1 to 1.25
+    the probe measured.
+  - **Red:** with one 48 kHz block hash of the native values corrupted, the Node half reported
+    `48000 Hz: 1642986 frames (golden 1642986), first differing block 200 (frames 819200 on)`
+    and exited 1.
+- *The preview's timing in a browser* (map ticket 04, decision 8).
+  - **Setup.**
+    - The page: `preview_timing.html`, served by `PROTOTYPE_browsers.py`, Python's
+      `ThreadingHTTPServer` on 127.0.0.1, with `/dist/` the module from a clean build of
+      `e7ba836`, and `/piano.sf2` the extract, read in place.
+    - The browsers: Chrome 157.0.8103.79 and Edge 158.0.4370.33, each `--headless` with a
+      fresh profile folder per page load, five loads each.
+    - The machine: Windows 11 Pro, AMD Ryzen 7 9800X3D, 16 logical cores.
+    - The renders, on the page's main thread, as the loader runs them today: the preview is
+      midishare's, one key held 0.25 s at velocity 105, then its release; the file ends as the
+      key is let go.
+  - **Medians over the five loads**, in ms:
+
+    | Browser | Import loader and glue | `loadModular` | `createInstrument` | First render | Later renders |
+    | --- | --- | --- | --- | --- | --- |
+    | Chrome | 4.5 | 3.3 | 12.8 | 4.3 | 1.6 |
+    | Edge | 7.5 | 4.8 | 13.7 | 4.9 | 1.7 |
+
+    - The first render is middle C at 48 kHz, 35,435 frames (0.74 s), right after
+      `createInstrument`.
+    - Later renders are the median of 25 more of the same.
+    - The ranges over the loads:
+      - Chrome: `loadModular` 2.9–3.8, `createInstrument` 12.5–14.4, first render 3.7–5.0,
+        later medians 1.5–1.6;
+      - Edge: `loadModular` 4.0–5.9, `createInstrument` 11.5–16.1, first render 4.6–6.1,
+        later medians 1.5–2.5.
+    - Other previews, medians of 11 per load:
+      - A0 (key 21), 37,956 frames: Chrome 1.5–1.8, Edge 1.5–2.7;
+      - C8 (key 108), 16,334 frames: Chrome 1.4–1.5, Edge 1.4–2.4;
+      - middle C at 44.1 kHz, 32,556 frames: Chrome 1.3–1.5, Edge 1.3–2.4.
+    - The slowest single later render in any load: Chrome 2.9, Edge 3.1.
+    - Fetching the 7.8 MB extract from 127.0.0.1 took 8.7–30.7. That is a local disk's time,
+      not a network's.
+  - **For midishare's choice of thread.**
+    - A render runs on the calling thread, so its time is how long it blocks the page.
+    - On this machine a preview blocks for about 1.5–2 ms, the first after
+      `createInstrument` about 4–5 ms. Making the instrument, a one-off, blocks for about
+      13 ms, and `loadModular` for 3–5 ms once its files are fetched.
+    - Each is under one 60 Hz frame (16.7 ms), even on a device several times slower.
+    - A whole piece renders in proportion to its length and voices: the 33.5 s acceptance
+      clip, with up to about a hundred voices, took about 1.0–1.1 s under Node, which ran
+      within 1.14 times native here.
+    - The numbers are from one fast desktop, headless, and a phone may be several times
+      slower.
+- *The check page, headless first.* Through `check_driver.html`, which opens the page in a
+  same-origin frame and posts its outcome, so the page itself posts nothing. Served from
+  `build/web/web-check/` as built at `e7ba836`, not dirty:
+  - Chrome 157 and Edge 158, headless: **every hash matched**, at 44.1 kHz (15,058 frames,
+    4 blocks), 48 kHz (16,390 frames, 5 blocks) and 22.05 kHz (7,530 frames, 2 blocks).
+  - The user's own command, `python -m http.server 8765 --bind 127.0.0.1 --directory
+    build/web/web-check` (Python 3.13.1), opened in the desktop app's built-in Chromium 156
+    browser: every hash matched, with the page as the user will see it.
+  - Opened from the file system, in headless Chrome, the page said "The check could not
+    load. Serve this folder over HTTP, with .mjs files sent as JavaScript (text/javascript)."
+  - **Red:** with block 2 of the 48 kHz values corrupted in the folder's `preview.json`, the
+    smoke test failed with `48000 Hz: 16390 frames (golden 16390), first differing block 2
+    (frames 8192 on)` and printed the render's values. The build then wrote the file again.
+- *Processes and servers.*
+  - Every browser started under a profile folder named for the run (`wb08-<random>-…`), and
+    was stopped by its process tree and then by every process whose command line named its
+    folder.
+  - At the end, no process named any of them: 0 left, checked by the script and again by
+    hand.
+  - The servers, the script's and the static one, were stopped, and nothing listens on
+    their ports.
+  - The browsers' other processes were not touched.
+- *Findings.* No mismatch and no failure, so no follow-up ticket is proposed.
+- *Checks.*
+  - Native, through the script: Debug 11/11 and Release 11/11 CTest entries, both `desktop`
+    tests included.
+  - `ctest --preset web`, Emscripten 6.0.13 and its Node on Windows: 8/8 entries, the smoke
+    test reading its golden preview from `web-check/`.
+  - `python scripts/check_docs.py`: 0 problems. `git diff --check`: clean.
+- *Kept from the spec, on purpose.*
+  - The page renders the golden preview of `tests/WebGoldenClips.h` built by the test-side
+    builder, never the extract. No soundfont file enters `tests/` (map ticket 08,
+    decision 6).
+  - The golden values in the page's column come from the commit it was built with. When
+    soundfont node 04, being implemented now, changes the node's output and so these values,
+    the page follows with no change.
+
+**For the user: Firefox and Safari** (the proposal for the planning hub to agree with the
+user; `docs/web.md`, *Checking a browser by hand*, has the same steps).
+
+1. **Take the folder.** Once this pull request merges, open the `CI` run of the push to `main`
+   on GitHub and download the artifact `modular-web-check-<that commit>` under **Artifacts**.
+   Or use GitHub's command line,
+   `gh run download <run id> --name modular-web-check-<commit> --dir modular-web-check`. Unzip
+   it into an empty folder. It holds `index.html`, `check.mjs`, `golden_hash.mjs`,
+   `preview.sf2`, `preview.mid`, `preview.json` and `modular/`.
+2. **Serve it.** In that folder, `python3 -m http.server 8000 --bind 127.0.0.1` (Python 3.10
+   or later; on Windows, `python`), then open `http://127.0.0.1:8000/`.
+   - **Firefox:** current desktop Firefox, on any computer. Installing it on the development
+     machine is the user's own step.
+   - **Safari on a Mac:** the same command in Terminal; macOS's own `python3` may be older
+     than 3.10.
+   - **Safari on an iPhone or iPad**, or a Mac without Python 3.10: serve from another computer
+     on the same network with `--bind 0.0.0.0`, and open
+     `http://<that computer's local network address>:8000/`. Windows may ask to let Python
+     through its firewall. Stop the server with Ctrl+C afterwards.
+3. **Read the page.** It should say, in green, "Every hash matched, at 44100, 48000, 22050 Hz",
+   with a ✓ on every row. At this ticket's commit the 48 kHz preview's golden block 0 is
+   `0x7597ec3240543af8`, and the five 48 kHz blocks are `0x7597ec3240543af8`,
+   `0x550bb0ded79d1774`, `0x187ad7db25192b84`, `0xf73b149c78a2ad3f` and
+   `0x907119e1db7fd826`. If soundfont node 04 merges first, the golden column shows its
+   values; the verdict is what counts.
+4. **Record here** for each browser: its name and version, the operating system, and whether
+   every hash matched. A mismatch or failure is a finding for its own ticket.

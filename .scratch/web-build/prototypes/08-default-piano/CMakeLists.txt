@@ -3,8 +3,13 @@
 # checkout two folders up, and links the harness to it. Configure it into a folder outside
 # the repository:
 #
-#   cmake -S .scratch/web-build/prototypes/08-default-piano -B <folder> -G "Visual Studio 17 2022" -A x64
+#   cmake -S .scratch/web-build/prototypes/08-default-piano -B <folder> \
+#     -G "Visual Studio 17 2022" -A x64
 #   cmake --build <folder> --config Release --target piano_native
+#
+# Then, outside the repository: piano_native clip clip.mid; piano_native render <extract>
+# clip.mid native.json 44100 48000; and node PROTOTYPE_piano_node.mjs with the built
+# dist/modular.mjs, the extract, clip.mid and native.json.
 cmake_minimum_required(VERSION 3.20)
 project(PianoAcceptance CXX)
 

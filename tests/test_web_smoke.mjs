@@ -4,7 +4,9 @@
 //
 //   node test_web_smoke.mjs <dist/modular.mjs> <soundfont written by web_smoke_fixture>
 //                           <web-test-module/modular.mjs>
-//                           <golden directory written by web_smoke_fixture>
+//                           <web-check/, the golden directory web_smoke_fixture writes>
+//
+// The build runs web_smoke_fixture before any test.
 //
 // The soundfont plays a looping sine panned full left, so a note sounds on the left
 // channel and leaves the right one silent.
