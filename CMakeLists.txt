@@ -137,6 +137,20 @@ target_include_directories(soundfont_tests PRIVATE third_party/doctest)
 target_link_libraries(soundfont_tests PRIVATE modular_soundfont)
 add_test(NAME soundfont_tests COMMAND soundfont_tests)
 
+# The soundfont extract tool, scripts/soundfont_extract.py, checked through its command
+# line against renders by the node. Native only: the script runs the helper directly.
+if(NOT CMAKE_CROSSCOMPILING)
+  find_package(Python3 3.8 COMPONENTS Interpreter)
+  add_executable(soundfont_extract_helper tests/soundfont_extract_helper.cpp)
+  target_link_libraries(soundfont_extract_helper PRIVATE modular_soundfont)
+  add_test(NAME soundfont_extract COMMAND "${CMAKE_COMMAND}"
+    "-DPYTHON=${Python3_EXECUTABLE}"
+    "-DTOOL=${CMAKE_CURRENT_SOURCE_DIR}/scripts/soundfont_extract.py"
+    "-DHELPER=$<TARGET_FILE:soundfont_extract_helper>"
+    "-DWORK_ROOT=${CMAKE_CURRENT_BINARY_DIR}/soundfont-extract-tests"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_soundfont_extract.cmake")
+endif()
+
 add_test(NAME midi_cli_smoke COMMAND "${CMAKE_COMMAND}"
   "-DCLI=$<TARGET_FILE:midi_cli>"
   "-DFIXTURE=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/one-note.mid"
