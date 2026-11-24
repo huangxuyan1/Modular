@@ -77,9 +77,7 @@ private:
     kDelay, kAttack, kHold, kDecay, kSustain, kRelease, kOff
   };
 
-  // How many frames an envelope's timed stages last. prepare() derives the
-  // delay, the attack and the sustain; a note-on, the hold and the decay,
-  // which key scaling makes depend on the key.
+  // How many frames an envelope's timed stages last, derived at a note-on.
   struct Timeline {
     std::uint64_t delay = 0, attack = 0, hold = 0;
     std::uint64_t decay = 0; // frames from the peak to the sustain or the end
@@ -122,32 +120,21 @@ private:
     double step(double in);
   };
 
-  // One zone of the selected preset, with what depends on the sample rate.
+  // One zone of the selected preset, with the modulators a note evaluates on
+  // it: the default ones no instrument modulator replaces, then the
+  // instrument's, then the preset's.
   struct PreparedZone {
     SoundFont::Zone zone;
-    int root = 60;
     double rateRatio = 1; // sample rate over graph rate
-    int tuning = 0;       // cents: coarseTune, fineTune and the header's correction
-    double panLeft = 0, panRight = 0;
-    double attenuation = 0; // centibels: initialAttenuation plus held controllers
-    double damping = 0;     // the filter's 1 / Q
-    double filterGain = 1;  // the filter's gain at DC
-    // Points from the zone's start: those it plays, and its loop.
-    std::size_t points = 0, loopStart = 0, loopEnd = 0;
-    bool loops = false;          // loops while held
-    bool loopsInRelease = false; // and through its release
-    Timeline volume, modulation; // all but the hold and the decay
-    double releaseFramesPerDb = 0, releaseFactor = 1;
-    double modReleaseFrames = 0; // for a full change
-    Lfo modLfo, vibLfo;          // as each starts
-    bool pitchMoves = false;     // an envelope or an LFO moves the pitch
+    std::vector<SoundFont::Modulator> modulators;
   };
 
+  // A sounding sample. Its note-on derives what it plays from its zone's
+  // generators plus its modulators' outputs for the note, fixed for its life.
   struct Voice {
     bool active = false;
     bool held = false;
     bool looping = false;
-    std::uint32_t plan = 0;
     std::uint64_t note = 0;    // its note-on's number in stream order
     std::uint64_t ordinal = 0; // which of its key's note-ons started it
     std::uint64_t noteOff = 0; // its note-off's number, once released
@@ -155,6 +142,21 @@ private:
     // A taken voice's frames left to fade out, its next frame's gain being
     // fadeLeft over the fade's length; 0 for a voice that is not fading.
     std::uint32_t fadeLeft = 0;
+    // Its points: the first it plays, in the sample data, and from there the
+    // count it plays and its loop.
+    std::uint32_t start = 0;
+    std::size_t points = 0, loopStart = 0, loopEnd = 0;
+    bool loopsInRelease = false; // its loop lasts through its release
+    double rateRatio = 1;        // its sample's rate over the graph's
+    double panLeft = 0, panRight = 0;
+    double damping = 0; // the filter's 1 / Q
+    double releaseFramesPerDb = 0, releaseFactor = 1;
+    double modReleaseFrames = 0; // the modulation release's, for a full change
+    // What the envelopes and LFOs move, at their full level: cents of pitch
+    // and cutoff, and centibels of volume.
+    double modEnvToPitch = 0, modLfoToPitch = 0, vibLfoToPitch = 0;
+    double modEnvToFilterFc = 0, modLfoToFilterFc = 0, modLfoToVolume = 0;
+    bool pitchMoves = false; // an envelope or an LFO moves the pitch
     Envelope volume, modulation;
     double decayFactor = 1;    // the volume's fall per frame in its decay
     double modDecayFrames = 0; // the modulation decay's frames for a full change
@@ -162,11 +164,11 @@ private:
     // Cents from the zone's root, scaled and tuned, before modulation.
     double pitch = 0;
     double position = 0, increment = 0;
-    // The gain of its total attenuation (initialAttenuation, the held
-    // controllers and its velocity, clamped), times the filter's at DC.
+    // The gain of its total attenuation (initialAttenuation plus its
+    // modulators, clamped), times the filter's at DC.
     double gain = 1;
-    // Cents: initialFilterFc plus the velocity modulator, before the
-    // modulation envelope.
+    // Cents: initialFilterFc plus its modulators, before the modulation
+    // envelope and LFO.
     double baseCutoff = 0;
     Filter filter;
   };
@@ -191,14 +193,17 @@ private:
   void select(SoundFont::PresetNumber preset, std::vector<SoundFont::Zone> zones);
   void noteOn(std::uint8_t channel, std::uint8_t key, std::uint8_t velocity);
   void noteOff(std::uint8_t channel, std::uint8_t key);
+  void start(Voice& voice, const PreparedZone& plan, std::uint8_t key,
+             std::uint8_t velocity) const;
+  void scaleToKey(Voice& voice, const SoundFont::Values& generators, int key) const;
   std::size_t takeNote();
-  void scaleToKey(Voice& voice, const PreparedZone& plan, int key) const;
-  void startRelease(Voice& voice);
+  void fadeOut(Slot& slot) const;
+  static void startRelease(Voice& voice);
   void render(Voice& voice, float* left, float* right, std::uint32_t from,
-              std::uint32_t to);
-  static bool sounds(Voice& voice, const PreparedZone& plan);
-  static double volume(const Voice& voice, const PreparedZone& plan);
-  static double modulation(const Voice& voice, const PreparedZone& plan);
+              std::uint32_t to) const;
+  static bool sounds(Voice& voice);
+  static double volume(const Voice& voice);
+  static double modulation(const Voice& voice);
 
   PortId midi_ = kNoPort, out_ = kNoPort;
   std::optional<SoundFont> sound_font_;

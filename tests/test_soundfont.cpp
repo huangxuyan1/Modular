@@ -2106,6 +2106,119 @@ TEST_CASE("the ignored list is empty while the node is empty and follows its con
   CHECK(rig.node().ignored().empty());
 }
 
+namespace {
+
+// Source enumerators (section 8.2.1): a controller in the low byte, with the
+// MIDI-controller flag 0x80, then the direction (0x100 for down), the polarity
+// (0x200 for bipolar) and the curve type from bit 10.
+constexpr std::uint16_t kNoController = 0x0000; // a constant 1
+constexpr std::uint16_t kVelocitySource = 0x0002;
+constexpr std::uint16_t kKeySource = 0x0003;
+constexpr std::uint16_t kDown = 0x0100, kBipolar = 0x0200;
+constexpr std::uint16_t kLinear = 0x0000, kConcave = 0x0400, kConvex = 0x0800,
+                        kSwitch = 0x0c00;
+constexpr std::uint16_t kAbsolute = 2; // the transform taking a modulator's size
+
+// A modulator whose source is the constant 1, so its output is its amount.
+Modulator constant(std::uint16_t destination, int amount) {
+  return {kNoController, destination, static_cast<std::int16_t>(amount), 0, 0};
+}
+
+// A zone on which every generator a modulator can move changes what it plays:
+// a tone at 352.8 kHz, eight points a frame at 44.1 kHz before its tuning,
+// whose loop lasts while the note is held, under both envelopes, both LFOs and
+// a resonant filter, all key-scaled, tuned and panned. Its loop and its end
+// leave room for the coarse address offsets, 32768 points each.
+std::vector<Generator> everyGenerator() {
+  return {set(gen::kModLfoToPitch, 30),      set(gen::kVibLfoToPitch, 20),
+          set(gen::kModEnvToPitch, -100),    set(gen::kInitialFilterFc, 9000),
+          set(gen::kInitialFilterQ, 100),    set(gen::kModLfoToFilterFc, 300),
+          set(gen::kModEnvToFilterFc, -600), set(gen::kModLfoToVolume, 40),
+          set(gen::kPan, 100),               set(gen::kDelayModLfo, -8000),
+          set(gen::kFreqModLfo, 600),        set(gen::kDelayVibLfo, -9000),
+          set(gen::kFreqVibLfo, 300),        set(gen::kDelayModEnv, -9000),
+          set(gen::kAttackModEnv, -7000),    set(gen::kHoldModEnv, -8000),
+          set(gen::kDecayModEnv, -4000),     set(gen::kSustainModEnv, 300),
+          set(gen::kReleaseModEnv, -3000),   set(gen::kKeynumToModEnvHold, 20),
+          set(gen::kKeynumToModEnvDecay, -30), set(gen::kDelayVolEnv, -9000),
+          set(gen::kAttackVolEnv, -7000),    set(gen::kHoldVolEnv, -8000),
+          set(gen::kDecayVolEnv, -2000),     set(gen::kSustainVolEnv, 100),
+          set(gen::kReleaseVolEnv, -2000),   set(gen::kKeynumToVolEnvHold, 30),
+          set(gen::kKeynumToVolEnvDecay, -20), set(gen::kInitialAttenuation, 100),
+          set(gen::kCoarseTune, 1),          set(gen::kFineTune, 10),
+          set(gen::kScaleTuning, 90),        set(gen::kSampleModes, 3),
+          set(gen::kOverridingRootKey, 60)};
+}
+
+// The zone above with `generator` set to `value` and the given modulators.
+Bytes everyGeneratorFont(std::uint16_t generator, int value,
+                         std::vector<Modulator> modulators = {}) {
+  auto generators = everyGenerator();
+  generators.push_back(set(generator, value));
+  File file = oneZone(sine(0.0012, 70000), generators, 352800);
+  file.samples[0].loop = Loop{33000, 36000};
+  file.instruments[0].zones[0].modulators = std::move(modulators);
+  return build(file);
+}
+
+// A note at key 72 held through the decay to the sustain, then released while
+// the sample still plays: it runs out about frame 6300.
+const std::vector<Timed> kEveryGeneratorNote{{13, noteOn(0, 72, 100)},
+                                             {4001, noteOff(0, 72)}};
+const Run kEveryGeneratorRun{44100, 128, 8000};
+
+// A generator, the value the zone gives it, and a step that keeps it in range.
+struct Step {
+  std::uint16_t generator;
+  int value, step;
+};
+
+// Every generator a modulator can move, each by a step the render shows.
+const std::vector<Step> kEveryStep{
+    {gen::kModLfoToPitch, 30, 25},         {gen::kVibLfoToPitch, 20, 15},
+    {gen::kModEnvToPitch, -100, 150},      {gen::kInitialFilterFc, 9000, 500},
+    {gen::kInitialFilterQ, 100, 80},       {gen::kModLfoToFilterFc, 300, -200},
+    {gen::kModEnvToFilterFc, -600, 400},   {gen::kModLfoToVolume, 40, -30},
+    {gen::kPan, 100, -250},                {gen::kDelayModLfo, -8000, 1200},
+    {gen::kFreqModLfo, 600, 300},          {gen::kDelayVibLfo, -9000, 1500},
+    {gen::kFreqVibLfo, 300, 400},          {gen::kDelayModEnv, -9000, 1000},
+    {gen::kAttackModEnv, -7000, 800},      {gen::kHoldModEnv, -8000, 900},
+    {gen::kDecayModEnv, -4000, 600},       {gen::kSustainModEnv, 300, 200},
+    {gen::kReleaseModEnv, -3000, 700},     {gen::kKeynumToModEnvHold, 20, 15},
+    {gen::kKeynumToModEnvDecay, -30, 20},  {gen::kDelayVolEnv, -9000, 1100},
+    {gen::kAttackVolEnv, -7000, 900},      {gen::kHoldVolEnv, -8000, 700},
+    {gen::kDecayVolEnv, -2000, 500},       {gen::kSustainVolEnv, 100, 150},
+    {gen::kReleaseVolEnv, -2000, 400},     {gen::kKeynumToVolEnvHold, 30, -25},
+    {gen::kKeynumToVolEnvDecay, -20, 30},  {gen::kInitialAttenuation, 100, 90},
+    {gen::kCoarseTune, 1, -2},             {gen::kFineTune, 10, 37},
+    {gen::kScaleTuning, 90, -15},          {gen::kSampleModes, 3, -2},
+    {gen::kOverridingRootKey, 60, 5},      {gen::kStartAddrsOffset, 0, 37},
+    {gen::kEndAddrsOffset, 0, -37},        {gen::kStartloopAddrsOffset, 0, 37},
+    {gen::kEndloopAddrsOffset, 0, -37},    {gen::kStartAddrsCoarseOffset, 0, 1},
+    {gen::kEndAddrsCoarseOffset, 0, -1},   {gen::kStartloopAddrsCoarseOffset, 0, -1},
+    {gen::kEndloopAddrsCoarseOffset, 0, 1}};
+
+} // namespace
+
+TEST_CASE("a file modulator adds its output to its destination generator for the voice's life") {
+  // A modulator whose source is the constant 1 plays as its amount added to
+  // the generator, bit for bit, whatever the generator.
+  for (const auto& [generator, value, step] : kEveryStep) {
+    CAPTURE(generator);
+    const auto modulated =
+        play(everyGeneratorFont(generator, value, {constant(generator, step)}),
+             kEveryGeneratorNote, kEveryGeneratorRun);
+    const auto moved =
+        play(everyGeneratorFont(generator, value + step), kEveryGeneratorNote,
+             kEveryGeneratorRun);
+    CHECK(modulated.left == moved.left);
+    CHECK(modulated.right == moved.right);
+    // The step is heard: the generator's own value plays differently.
+    CHECK(play(everyGeneratorFont(generator, value), kEveryGeneratorNote,
+               kEveryGeneratorRun).left != moved.left);
+  }
+}
+
 // Counts the global allocations made while `counting` is set.
 namespace {
 bool counting = false;
