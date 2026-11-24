@@ -70,8 +70,12 @@ the user's delegation, from the open notes of tickets 01, 02 and 08.
 
 **2026-11-24 — implemented.** Branch `claude/soundfont-node-04-rest-of-the-voice`, cut from a
 freshly fetched `origin/main` at `f57d9ce`. Before the push it was rebased onto `1febc11`
-(web build 05, the `web` CI job, and 06, the render surface's hardening). Only
-`docs/windows.md` conflicted, in its CI section; both sides were kept.
+(web build 05, the `web` CI job, and 06, the render surface's hardening), and then onto
+`4241375` (web build 07, golden clips natively and under Node). Only documentation
+conflicted (`docs/windows.md`, `docs/node-io.md` and `docs/web.md`); both sides were kept.
+Web build 07's golden clips (`tests/WebGoldenClips.h`) pass unchanged: they use none of
+this ticket's paths, and with its generators at their defaults the node renders the same
+bits as before.
 
 - *What was built.*
   - **The reader** (`nodes/src/SoundFont.cpp`).
@@ -148,17 +152,20 @@ freshly fetched `origin/main` at `f57d9ce`. Before the push it was rebased onto 
   `std::tanh`, `cosf`, `::exp10`, `std::beta` and `expintf`, also after a `/*` inside a
   string. It passed `maths::` calls, allowed functions, comments and strings, and failed with
   its maths header missing.
-- *Checks, on the final tree*, after the rebase and the review fixes:
+- *Checks, on the final tree*, after both rebases and the review fixes:
   - Script focused checks: `-Target soundfont_tests -TestRegex
-    '^(soundfont_tests|soundfont_portable_maths)$'`.
+    '^(soundfont_tests|soundfont_portable_maths)$'`, and after the second rebase
+    `-TestRegex '^(soundfont_tests|web_core_tests|soundfont_portable_maths)$'`.
   - Full suite through the script: Debug 12/12 and Release 12/12 CTest entries, with both
-    `desktop` tests, kernel purity and the new `soundfont_portable_maths`. The golden values
-    are the same in both. One Debug run failed `soundfont_extract` because this session edited
-    a file between the two runs it compares, which stamps the tree's dirty flag; the rerun,
-    with the tree left alone, passed.
+    `desktop` tests, kernel purity, web build 07's golden clips in `web_core_tests`, and the
+    new `soundfont_portable_maths`. The golden values are the same in both. Before the
+    second rebase, one Debug run failed `soundfont_extract` because this session edited a
+    file between the two runs it compares, which stamps the tree's dirty flag; the rerun,
+    with the tree left alone, passed, as has every run since.
   - The `web` presets, by hand with emsdk 6.0.13 and its Node 24.19.0, as `docs/web.md`
-    describes: 10/10 CTest entries. `soundfont_tests` passes all 85 cases under Node, both
-    golden clips with the native values.
+    describes: 10/10 CTest entries. Under Node, `soundfont_tests` passes all 85 cases, both
+    golden clips with the native values, and `web_core_tests` all 21, web build 07's golden
+    clips included.
   - `python scripts/check_docs.py`: 0 problems. `git diff --check`: clean.
   - Nothing under `kernel/` or `workspace/` changed.
 - *Review.* `/code-review` ran on both axes over `git diff origin/main...HEAD` at `b6e9d51`,
