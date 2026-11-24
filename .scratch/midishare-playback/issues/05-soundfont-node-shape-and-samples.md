@@ -227,3 +227,23 @@ SoundFont meaning.
   [Measure the FluidR3_GM piano before it becomes the default](10-measure-the-fluidr3-piano.md).
   Nothing here depends on that choice: a single-preset extract loads with its one preset
   selected (D3).
+
+### Planning hub review (2026-11-24)
+
+The ticket session returned two questions about the user's intent. The planning hub settled
+them under the judgment the user delegated to it for this map ("All, on your best judgment").
+
+- **A node, not a supernode.** The user's own words in charting round 1 were "a soundfont
+  node". The word "supernode" appears only in the plan in the midishare repository, which the
+  user never approved (map, **Sources of fact**). D1 stands.
+- **The default piano belongs to the client.** The user's words were "a soundfont node that
+  reads a piano soundfont as default". A client meets this by loading the piano into the node,
+  and midishare's graph does exactly that. D4 stands: the node library ships no soundfont. This
+  keeps a licensed binary out of Modular's library and repository, and keeps the node reusable.
+  A later client such as a DAW can carry its own default. Bundling a default piano with Modular
+  later would be an addition that changes nothing here. The planning hub reports this reading to
+  the user for confirmation.
+
+The contract questions this answer raised (how the soundfont's bytes reach the node, one
+channel or two, and the tail) belong to
+[What does the page hand Modular, and what does it get back?](04-page-to-modular-contract.md).
