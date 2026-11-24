@@ -57,23 +57,21 @@ inline Render measure(double rate, const std::vector<float>& left,
   return render;
 }
 
-// "" when the render matches its golden values; otherwise where it first
-// differs: its frame count, or its first differing block.
+// "" when the render matches its golden values; otherwise its frame count
+// against the golden one, and its first differing block.
 inline std::string difference(const Render& expected, const Render& actual) {
+  const auto common = std::min(expected.blocks.size(), actual.blocks.size());
+  std::size_t block = 0;
+  while (block < common && actual.blocks[block] == expected.blocks[block]) ++block;
+  if (actual.frames == expected.frames && block == actual.blocks.size()) return "";
   char text[160];
-  if (actual.frames != expected.frames) {
-    std::snprintf(text, sizeof text, "%.0f Hz: %llu frames, golden %llu", actual.rate,
-                  static_cast<unsigned long long>(actual.frames),
-                  static_cast<unsigned long long>(expected.frames));
-    return text;
-  }
-  for (std::size_t b = 0; b < actual.blocks.size(); ++b)
-    if (b >= expected.blocks.size() || actual.blocks[b] != expected.blocks[b]) {
-      std::snprintf(text, sizeof text, "%.0f Hz: block %zu of %zu (frames %zu on) differs",
-                    actual.rate, b, actual.blocks.size(), b * kBlockFrames);
-      return text;
-    }
-  return "";
+  std::snprintf(text, sizeof text,
+                "%.0f Hz: %llu frames (golden %llu), first differing block %zu "
+                "(frames %zu on)",
+                actual.rate, static_cast<unsigned long long>(actual.frames),
+                static_cast<unsigned long long>(expected.frames), block,
+                block * kBlockFrames);
+  return text;
 }
 
 // The renders' values as C++ initializers, to paste over the golden ones.

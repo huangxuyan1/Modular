@@ -5,7 +5,8 @@
 // std:: in units in the last place, and writes every value to <dump.bin> for
 // compare.py. Inputs computed with std:: (the filter's angles, the decay
 // factors' arguments, the gains' velocity term) may differ between builds;
-// compare.py says so.
+// compare.py says so. The results are in the ticket's comments
+// (../../issues/08-portable-maths.md).
 //
 //   PROTOTYPE_maths_probe <dump.bin>
 //

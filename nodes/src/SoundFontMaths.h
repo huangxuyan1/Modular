@@ -9,10 +9,10 @@
 // Emscripten's, and MSVC's Debug build with its Release build. Map ticket 08
 // decided that a browser render matches the native one bit for bit, so the node
 // calls none of them. No build fuses these operations (the root
-// CMakeLists.txt), so each routine gives the same bits in every build. Over the
-// node's inputs each is within a few units in the last place of the true value,
-// far inside the node's tolerances. A change here changes the rendered bits, so
-// it updates the soundfont tests' golden values in the same commit.
+// CMakeLists.txt), so each routine gives the same bits in every build. Over its
+// stated domain each is within three units in the last place of the true value,
+// far inside the node's tolerances. A change here can change the rendered bits,
+// so it updates the soundfont tests' golden values in the same commit.
 //
 // The series' coefficients are quotients of integers that doubles hold exactly,
 // which a compiler folds with the correct rounding IEEE 754 requires of the
@@ -20,6 +20,25 @@
 namespace modular::nodes::soundfont_maths {
 
 namespace detail {
+
+// e^t for |t| up to (ln 2) / 2, by its Taylor series to degree 13, whose
+// remainder there is below 1e-17.
+inline double expNear(double t) {
+  double p = 1.0 / 6227020800.0; // 1/13!
+  p = p * t + 1.0 / 479001600.0;
+  p = p * t + 1.0 / 39916800.0;
+  p = p * t + 1.0 / 3628800.0;
+  p = p * t + 1.0 / 362880.0;
+  p = p * t + 1.0 / 40320.0;
+  p = p * t + 1.0 / 5040.0;
+  p = p * t + 1.0 / 720.0;
+  p = p * t + 1.0 / 120.0;
+  p = p * t + 1.0 / 24.0;
+  p = p * t + 1.0 / 6.0;
+  p = p * t + 0.5;
+  p = p * t + 1.0;
+  return p * t + 1.0;
+}
 
 // sin r for |r| a little over pi/4, by its Taylor series to r^17, whose
 // remainder there is below 1e-19.
@@ -36,7 +55,8 @@ inline double sinNear(double r) {
   return r + r * r2 * p;
 }
 
-// cos r for |r| a little over pi/4, by its Taylor series to r^18.
+// cos r for |r| a little over pi/4, by its Taylor series to r^18, whose
+// remainder there is below 1e-20.
 inline double cosNear(double r) {
   const double r2 = r * r;
   double p = -1.0 / 6402373705728000.0; // -1/18!
@@ -50,42 +70,52 @@ inline double cosNear(double r) {
   return 1.0 - 0.5 * r2 + r2 * r2 * p;
 }
 
-// x less k pi/2, for the whole number k nearest x / (pi/2), and |x| below
-// 2^20. pi/2 is split into its first 33 bits, whose product with k is then
-// exact, and the rest (fdlibm's constants).
-inline double quadrant(double x, long long& k) {
+// An angle as r + k pi/2, with k the whole number nearest to it over pi/2.
+struct QuarterTurns {
+  double r;
+  long long k;
+};
+
+// For |x| below 2^20. pi/2 is split into its first 33 bits, whose product with
+// k is then exact, and the rest (fdlibm's pio2_1 and pio2_1t).
+inline QuarterTurns quarterTurns(double x) {
   const double n = std::floor(x * 0.63661977236758134308 + 0.5); // 2/pi
-  k = static_cast<long long>(n);
-  return (x - n * 1.57079632673412561417) - n * 6.07710050650619224932e-11;
+  return {(x - n * 1.57079632673412561417) - n * 6.07710050650619224932e-11,
+          static_cast<long long>(n)};
+}
+
+// sin(r + k pi/2) for |r| a little over pi/4.
+inline double sinQuarterTurns(double r, long long k) {
+  switch (k & 3) {
+  case 0: return sinNear(r);
+  case 1: return cosNear(r);
+  case 2: return -sinNear(r);
+  default: return -cosNear(r);
+  }
 }
 
 } // namespace detail
 
-// 2^x for |x| below 1000: x = n + f with n whole and |f| at most 1/2, so
-// 2^f = e^(f ln 2), by its Taylor series to degree 13, whose remainder there
-// is below 1e-17. ldexp applies 2^n exactly.
+// 2^x for |x| below 1000: x = n + f with n whole and |f| at most 1/2, so 2^f is
+// e^(f ln 2), and ldexp applies 2^n exactly.
 inline double exp2(double x) {
   const double n = std::floor(x + 0.5);
-  const double t = (x - n) * 0.69314718055994530942; // ln 2
-  double p = 1.0 / 6227020800.0; // 1/13!
-  p = p * t + 1.0 / 479001600.0;
-  p = p * t + 1.0 / 39916800.0;
-  p = p * t + 1.0 / 3628800.0;
-  p = p * t + 1.0 / 362880.0;
-  p = p * t + 1.0 / 40320.0;
-  p = p * t + 1.0 / 5040.0;
-  p = p * t + 1.0 / 720.0;
-  p = p * t + 1.0 / 120.0;
-  p = p * t + 1.0 / 24.0;
-  p = p * t + 1.0 / 6.0;
-  p = p * t + 0.5;
-  p = p * t + 1.0;
-  p = p * t + 1.0;
-  return std::ldexp(p, static_cast<int>(n));
+  return std::ldexp(detail::expNear((x - n) * 0.69314718055994530942), // ln 2
+                    static_cast<int>(n));
 }
 
-// 10^x for |x| below 300, as 2^(x log2 10): centibels to gain.
-inline double exp10(double x) { return exp2(x * 3.32192809488736234787); }
+// 10^x for |x| below 300, for decibels and centibels: x = n log10 2 + r with n
+// whole and |r| at most (log10 2) / 2, so 10^x is 2^n e^(r ln 10). log10 2 is
+// split into its first 32 bits, whose product with n is then exact, and the
+// rest, so r keeps its precision where exp2(x log2 10) would lose up to
+// |x log2 10| units in the last place to that product's rounding.
+inline double exp10(double x) {
+  const double n = std::floor(x * 3.32192809488736234787 + 0.5); // log2 10
+  const double r = (x - n * 0.3010299955494701862335205078125) // log10 2's first 32 bits
+                   - n * 1.14511008980218384211e-10;             // and the rest
+  return std::ldexp(detail::expNear(r * 2.30258509299404568402), // ln 10
+                    static_cast<int>(n));
+}
 
 // log10 x for finite x above 0. x = m 2^e with m from sqrt(1/2) to sqrt(2), so
 // ln m = 2 atanh s, with s = (m - 1) / (m + 1) below 0.172 in size, by its
@@ -114,27 +144,15 @@ inline double log10(double x) {
   return e * 0.30102999566398119521 + lnM * 0.43429448190325182765; // log10 2, log10 e
 }
 
-// sin x and cos x for |x| below 2^20.
+// sin x and cos x for |x| below 2^20; cos x is sin(x + pi/2).
 inline double sin(double x) {
-  long long k = 0;
-  const double r = detail::quadrant(x, k);
-  switch (k & 3) {
-  case 0: return detail::sinNear(r);
-  case 1: return detail::cosNear(r);
-  case 2: return -detail::sinNear(r);
-  default: return -detail::cosNear(r);
-  }
+  const auto [r, k] = detail::quarterTurns(x);
+  return detail::sinQuarterTurns(r, k);
 }
 
 inline double cos(double x) {
-  long long k = 0;
-  const double r = detail::quadrant(x, k);
-  switch (k & 3) {
-  case 0: return detail::cosNear(r);
-  case 1: return -detail::sinNear(r);
-  case 2: return -detail::cosNear(r);
-  default: return detail::sinNear(r);
-  }
+  const auto [r, k] = detail::quarterTurns(x);
+  return detail::sinQuarterTurns(r, k + 1);
 }
 
 } // namespace modular::nodes::soundfont_maths

@@ -1736,7 +1736,7 @@ std::vector<std::int16_t> integerTone(std::size_t points, int period, std::uint3
 //
 // Both envelopes have every stage, and the modulation envelope moves the
 // cutoff. The preset adds 4 dB of attenuation.
-Bytes everyPath() {
+Bytes everyPathFont() {
   File file;
   file.samples = {{"low", integerTone(9000, 128, 1), 32000, 60},
                   {"high", integerTone(4000, 37, 2), 25000, 67},
@@ -1767,7 +1767,8 @@ Bytes everyPath() {
               set(gen::kSampleModes, 1), set(gen::kPan, 250),
               set(gen::kInitialFilterFc, 5000), set(gen::kModEnvToFilterFc, -1800),
               set(gen::kSampleId, 1)}},
-        Zone{{range(gen::kKeyRange, 64, 80), set(gen::kPan, -170), set(gen::kSampleId, 2)}}}});
+        Zone{{range(gen::kKeyRange, 64, 80), set(gen::kPan, -170),
+              set(gen::kSampleId, 2)}}}});
   file.presets.push_back({"every path", 0, 0,
                           {Zone{{set(gen::kInitialAttenuation, 40)}},
                            Zone{{set(gen::kInstrument, 0)}}}});
@@ -1807,7 +1808,8 @@ std::vector<Timed> everyPathClip(double rate) {
       {490, noteOn(13, 60, 96)},  {600, noteOff(13, 60)},     {640, noteOff(13, 60)}};
   const auto perSecond = static_cast<std::uint64_t>(rate);
   std::vector<Timed> result;
-  for (const auto& [ms, message] : clip) result.push_back({3 + ms * perSecond / 1000, message});
+  for (const auto& [ms, message] : clip)
+    result.push_back({3 + ms * perSecond / 1000, message});
   return result;
 }
 
@@ -1842,7 +1844,7 @@ TEST_CASE("a clip through every maths path renders its golden bits at three rate
     // Rendered past its end, then trimmed after the last frame either channel
     // sounds on.
     const auto cap = static_cast<std::uint64_t>(2 * rate);
-    auto out = play(everyPath(), everyPathClip(rate), {rate, 97, cap}, voiceLimit(6));
+    auto out = play(everyPathFont(), everyPathClip(rate), {rate, 97, cap}, voiceLimit(6));
     std::size_t end = 0;
     for (std::size_t i = 0; i < out.left.size(); ++i)
       if (out.left[i] != 0 || out.right[i] != 0) end = i + 1;

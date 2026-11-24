@@ -86,10 +86,9 @@ The file rules follow the [Standard MIDI Files specification](https://midi.org/s
 
 Status: soundfont-node ticket 01, the tracer, ticket 02, loops and the piano's tone,
 ticket 03, the voice policy, ticket 06, persistence, and ticket 08, portable maths.
-Ticket 04 adds the rest of
-the voice and the ignored list, and 05 file modulators and exclusive class. The rules
-marked *interim* below change then. See `.scratch/soundfont-node/spec.md` for the end
-state.
+Ticket 04 adds the rest of the voice and the ignored list, and 05 file modulators and
+exclusive class. The rules marked *interim* below change then. See
+`.scratch/soundfont-node/spec.md` for the end state.
 
 Include `modular/nodes/SoundFontNode.h` and link `modular_soundfont`. That library
 holds the SoundFont 2 reader (`SoundFont`) and the node, and links only the
@@ -279,7 +278,7 @@ built only from operations IEEE 754 makes exact or correctly rounded (`+ - * /`,
 `floor`, `ldexp`, `frexp` and conversions), and no build fuses them (see
 [project-foundations.md](project-foundations.md#implementation-conventions)). So the
 same graph, soundfont, notes and sample rate render the same bits in every build.
-The routines are within a few units in the last place of the true values, far
+The routines are within three units in the last place of the true values, far
 inside the node's tolerances. A golden test in `soundfont_tests` pins those bits: a
 clip through every maths path the node has, at 44.1, 48 and 22.05 kHz, as its frame
 count and a hash of every 4,096 frames (`tests/GoldenRender.h`). A change that alters
