@@ -1,4 +1,5 @@
-// Writes the web smoke test's fixtures, so the test needs no licensed file:
+// Writes the fixtures of the web smoke test and the web check page, so neither
+// needs a licensed file. The build runs it:
 //
 //   web_smoke_fixture <soundfont> <golden directory>
 //
@@ -6,10 +7,11 @@
 // with a half-second release. A note therefore sounds on the left channel only,
 // and its release runs past the file's end.
 //
-// The golden directory receives the golden preview of WebGoldenClips.h, which the
-// smoke test renders through JavaScript: its soundfont (preview.sf2), its MIDI
-// bytes (preview.mid) and its golden values at 48 kHz (preview.json). The render
-// core's tests check the same values natively and under Node.
+// The golden directory, the check page's folder, receives the golden preview of
+// WebGoldenClips.h, which the smoke test and the page render through JavaScript:
+// its soundfont (preview.sf2), its MIDI bytes (preview.mid) and its golden values
+// at every rate (preview.json). The render core's tests check the same values
+// natively and under Node.
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -56,17 +58,22 @@ std::vector<std::uint8_t> smokeSoundFont() {
   return sf2test::build(file);
 }
 
-// A golden render as JSON: its rate, its frame count and its block hashes, each
-// as a hexadecimal string, since a JSON number cannot hold 64 bits exactly.
-std::vector<std::uint8_t> goldenJson(const golden::Render& render) {
+// Golden renders as JSON: each one's rate, its frame count and its block hashes,
+// each as a hexadecimal string, since a JSON number cannot hold 64 bits exactly.
+std::vector<std::uint8_t> goldenJson(const std::vector<golden::Render>& renders) {
+  std::string json = "{\"renders\": [\n";
   char text[64];
-  std::snprintf(text, sizeof text, "{\"rate\": %.0f, \"frames\": %llu, \"blocks\": [",
-                render.rate, static_cast<unsigned long long>(render.frames));
-  std::string json = text;
-  for (std::size_t b = 0; b < render.blocks.size(); ++b) {
-    std::snprintf(text, sizeof text, "%s\"0x%016llx\"", b == 0 ? "" : ", ",
-                  static_cast<unsigned long long>(render.blocks[b]));
+  for (std::size_t r = 0; r < renders.size(); ++r) {
+    const auto& render = renders[r];
+    std::snprintf(text, sizeof text, "  {\"rate\": %.0f, \"frames\": %llu, \"blocks\": [",
+                  render.rate, static_cast<unsigned long long>(render.frames));
     json += text;
+    for (std::size_t b = 0; b < render.blocks.size(); ++b) {
+      std::snprintf(text, sizeof text, "%s\"0x%016llx\"", b == 0 ? "" : ", ",
+                    static_cast<unsigned long long>(render.blocks[b]));
+      json += text;
+    }
+    json += r + 1 < renders.size() ? "]},\n" : "]}\n";
   }
   json += "]}\n";
   return {json.begin(), json.end()};
@@ -86,17 +93,10 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "web_smoke_fixture: cannot create %s\n", argv[2]);
     return 1;
   }
-  const golden::Render* preview = nullptr;
-  for (const auto& render : webgolden::kPreviewGolden)
-    if (render.rate == 48000) preview = &render;
-  if (!preview) {
-    std::fprintf(stderr, "web_smoke_fixture: no golden preview at 48 kHz\n");
-    return 1;
-  }
   const bool written =
       writeFile(argv[1], smokeSoundFont()) &&
       writeFile(goldenDirectory / "preview.sf2", webgolden::soundFont()) &&
       writeFile(goldenDirectory / "preview.mid", webgolden::previewClip()) &&
-      writeFile(goldenDirectory / "preview.json", goldenJson(*preview));
+      writeFile(goldenDirectory / "preview.json", goldenJson(webgolden::kPreviewGolden));
   return written ? 0 : 1;
 }

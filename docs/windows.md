@@ -85,8 +85,9 @@ makes it fail rather than pass.
   `web` job ([web.md](web.md#golden-clips)).
 - **Build path, web:** on `ubuntu-24.04`, a `web` job installs the pinned Emscripten,
   builds with the `web` presets, runs the web build's tests under Node and
-  uploads the built module as an artifact. [web.md](web.md#continuous-integration)
-  describes it, and [what the web build covers](web.md#what-the-web-build-covers).
+  uploads the built module as an artifact, and the browser check page as another.
+  [web.md](web.md#continuous-integration) describes it, and
+  [what the web build covers](web.md#what-the-web-build-covers).
 
 CI does not cover:
 
@@ -96,6 +97,8 @@ CI does not cover:
   graph editor, record that local result as the ticket's GUI evidence;
 - whether external links resolve, audible playback through an audio device, or native
   builds on other platforms, such as macOS or Linux; the web build is the `web` job's;
+- any browser: the `web` job runs the module under Node, and a browser is checked by hand
+  on the [check page](web.md#checking-a-browser-by-hand);
 - releases or deployment; nothing merges automatically.
 
 ## Moving between machines

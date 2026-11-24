@@ -1,0 +1,22 @@
+<!doctype html>
+<!-- PROTOTYPE, throwaway: web build ticket 08. Opens the web check page (tests/web/, as the
+     build writes it into build/web/web-check/, served at /check/ by PROTOTYPE_browsers.py) in
+     a same-origin frame, waits for its outcome and posts it to /result. The check page itself
+     posts nothing, so a person serving it with any static server sees the same page. -->
+<html lang="en">
+<head><meta charset="utf-8"><title>Check driver</title></head>
+<body>
+<iframe id="check" src="/check/index.html" width="900" height="700"></iframe>
+<script type="module">
+  const frame = document.getElementById('check');
+  let outcome;
+  for (let tries = 0; tries < 1200 && outcome === undefined; ++tries) {
+    if (frame.contentWindow?.modularCheck) outcome = await frame.contentWindow.modularCheck;
+    else await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  outcome ??= { matched: false, error: 'the check page did not start' };
+  outcome.verdict = frame.contentDocument?.getElementById('verdict')?.textContent;
+  await fetch('/result', { method: 'POST', body: JSON.stringify({ page: 'check', ...outcome }) });
+</script>
+</body>
+</html>

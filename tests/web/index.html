@@ -1,0 +1,37 @@
+<!doctype html>
+<!-- The web check page: does this browser render the golden preview bit for bit as the
+     native build does? docs/web.md, "Checking a browser by hand", says how to serve it. The
+     build copies it into build/web/web-check/ beside check.mjs, the module and the preview's
+     fixtures. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Modular web check</title>
+<style>
+  :root { color-scheme: light dark; --match: #1a7f37; --mismatch: #cf222e; }
+  @media (prefers-color-scheme: dark) { :root { --match: #3fb950; --mismatch: #f85149; } }
+  body { font: 16px/1.5 system-ui, sans-serif; margin: 0 auto; max-width: 52rem; padding: 1rem; }
+  h1 { font-size: 1.4rem; }
+  h2 { font-size: 1.1rem; margin-top: 1.5rem; }
+  #verdict { font-size: 1.2rem; font-weight: 600; }
+  .match { color: var(--match); }
+  .mismatch { color: var(--mismatch); }
+  dt { font-weight: 600; }
+  dd { margin: 0 0 0.5rem; overflow-wrap: anywhere; }
+  table { border-collapse: collapse; }
+  th, td { padding: 0.1rem 0.8rem 0.1rem 0; text-align: left; }
+  td, code { font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+<h1>Modular web check</h1>
+<p id="verdict">Rendering&hellip;</p>
+<dl id="about"></dl>
+<div id="renders"></div>
+<script type="module" src="check.mjs"
+        onerror="document.getElementById('verdict').textContent =
+                 'The check could not load. Serve this folder over HTTP, with .mjs files ' +
+                 'sent as JavaScript (text/javascript).'"></script>
+</body>
+</html>
