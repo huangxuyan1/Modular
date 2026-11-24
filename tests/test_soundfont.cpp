@@ -670,3 +670,180 @@ TEST_CASE("for now a note-on that finds too few free voices is not started") {
   CHECK(crowded.left == alone.left);
   CHECK(crowded.right == alone.right);
 }
+
+namespace {
+
+// A small file using both levels' global zones, two instruments, a modulator
+// and three samples, so a load walks every list.
+File richFile() {
+  File file;
+  file.samples = {{"a", steady(1000, 40)}, {"b", steady(2000, 30)}, {"c", steady(3000, 20)}};
+  file.instruments = {
+      {"one", {{{set(gen::kPan, -500)}, {{0x0502, 48, 960, 0, 0}}},
+               {{range(gen::kKeyRange, 0, 63), set(gen::kSampleId, 0)}},
+               {{range(gen::kKeyRange, 64, 127), set(gen::kSampleId, 1)}}}},
+      {"two", {{{set(gen::kSampleId, 2)}}}}};
+  file.presets = {{"p", 0, 0,
+                   {{{set(gen::kInitialAttenuation, 10)}},
+                    {{range(gen::kVelRange, 0, 99), set(gen::kInstrument, 0)}},
+                    {{range(gen::kVelRange, 100, 127), set(gen::kInstrument, 1)}}}}};
+  return file;
+}
+
+// The message a load throws, or "" if it loads.
+std::string loadError(const Bytes& bytes) {
+  Graph graph;
+  auto& node = static_cast<SoundFontNode&>(graph.node(graph.addNode<SoundFontNode>()));
+  try {
+    node.load(bytes);
+  } catch (const std::invalid_argument& error) {
+    return error.what();
+  }
+  return "";
+}
+
+bool refused(const Bytes& bytes) { return loadError(bytes).rfind("soundfont: ", 0) == 0; }
+
+std::size_t find(const Bytes& bytes, const std::string& tag) {
+  return static_cast<std::size_t>(std::search(bytes.begin(), bytes.end(), tag.begin(),
+                                              tag.end()) - bytes.begin());
+}
+
+Chunk& list(Parts& parts, const std::string& tag) {
+  for (auto& chunk : parts.pdta)
+    if (chunk.tag == tag) return chunk;
+  throw std::logic_error("no such list");
+}
+
+} // namespace
+
+TEST_CASE("the rich test file loads") { CHECK(loadError(build(richFile())).empty()); }
+
+TEST_CASE("truncated soundfonts are refused at every byte boundary") {
+  const auto bytes = build(richFile());
+  for (std::size_t length = 0; length < bytes.size(); ++length) {
+    CAPTURE(length);
+    CHECK(refused(Bytes(bytes.begin(), bytes.begin() + length)));
+  }
+}
+
+TEST_CASE("a malformed RIFF structure is refused") {
+  auto bytes = build(richFile());
+  SUBCASE("not a RIFF file") { bytes[0] = 'X'; }
+  SUBCASE("not a soundfont form") { bytes[8] = 'X'; }
+  SUBCASE("a chunk that overruns its list") {
+    const auto at = find(bytes, "pgen") + 4;
+    put32(bytes, at, bytes[at] + 4);
+  }
+  SUBCASE("data after the RIFF chunk") { bytes.push_back(0); }
+  SUBCASE("lists missing") {
+    auto parts = sf2test::parts(richFile());
+    SUBCASE("no ifil version") { parts.info.erase(parts.info.begin()); }
+    SUBCASE("an ifil version of the wrong size") { parts.info[0].data.push_back(0); }
+    SUBCASE("no generator list") { parts.pdta.erase(parts.pdta.begin() + 7); }
+    SUBCASE("no sample headers") { parts.pdta.pop_back(); }
+    bytes = assemble(parts);
+  }
+  CHECK(refused(bytes));
+}
+
+TEST_CASE("a hydra list of the wrong size is refused") {
+  auto parts = sf2test::parts(richFile());
+  SUBCASE("a partial record") { list(parts, "pgen").data.push_back(0); }
+  SUBCASE("sample headers cut short") { list(parts, "shdr").data.resize(46 * 3); }
+  SUBCASE("more bags than the presets use") { // a second copy of the terminal bag
+    auto& bags = list(parts, "pbag").data;
+    const Bytes terminal(bags.end() - 4, bags.end());
+    bags.insert(bags.end(), terminal.begin(), terminal.end());
+  }
+  SUBCASE("more generators than the bags use") {
+    list(parts, "igen").data.insert(list(parts, "igen").data.end(), 4, 0);
+  }
+  SUBCASE("more modulators than the bags use") {
+    list(parts, "imod").data.insert(list(parts, "imod").data.end(), 10, 0);
+  }
+  CHECK(refused(assemble(parts)));
+}
+
+TEST_CASE("an index or a sample pointing outside its list or the sample data is refused") {
+  auto parts = sf2test::parts(richFile());
+  SUBCASE("a preset's bags out of order") { put16(list(parts, "phdr").data, 24, 5); }
+  SUBCASE("a bag's generators out of order") { put16(list(parts, "ibag").data, 4, 9); }
+  SUBCASE("a bag's modulators out of order") { put16(list(parts, "pbag").data, 2, 1); }
+  SUBCASE("an instrument index past the instruments") {
+    put16(list(parts, "pgen").data, 4 * 2 + 2, 2);
+  }
+  SUBCASE("a sample index past the samples") { put16(list(parts, "igen").data, 4 * 2 + 2, 3); }
+  SUBCASE("a sample ending past the sample data") {
+    put32(list(parts, "shdr").data, 24, 100000);
+  }
+  SUBCASE("a sample ending before it starts") { put32(list(parts, "shdr").data, 46 + 24, 3); }
+  CHECK(refused(assemble(parts)));
+}
+
+TEST_CASE("a file with no preset is refused") {
+  auto file = richFile();
+  file.presets.clear();
+  CHECK(loadError(build(file)) == "soundfont: no preset");
+}
+
+TEST_CASE("sf3 files and versions other than 2 are refused") {
+  auto file = richFile();
+  SUBCASE("version 3") {
+    file.major = 3;
+    CHECK(loadError(build(file)) == "soundfont: compressed samples (sf3) are not supported");
+  }
+  SUBCASE("a compressed sample") {
+    file.samples[2].type = kMonoSample | kCompressedSample;
+    CHECK(loadError(build(file)) == "soundfont: compressed samples (sf3) are not supported");
+  }
+  SUBCASE("version 1") {
+    file.major = 1;
+    CHECK(refused(build(file)));
+  }
+  SUBCASE("versions 2.01 and 2.04 load") {
+    file.minor = 1;
+    CHECK(loadError(build(file)).empty());
+  }
+}
+
+TEST_CASE("for now a zone whose sample is in ROM, empty or rateless is refused") {
+  // Interim rule until ticket 04 skips and lists such zones.
+  auto file = richFile();
+  SUBCASE("in ROM") { file.samples[1].type = kRomSample; }
+  SUBCASE("empty") { file.samples[1].points.clear(); }
+  SUBCASE("no sample rate") { file.samples[1].rate = 0; }
+  CHECK(refused(build(file)));
+}
+
+TEST_CASE("a ROM sample no zone plays does not stop a load") {
+  auto file = richFile();
+  file.samples.push_back({"rom", {}, 48000, 60, kRomSample});
+  auto parts = sf2test::parts(file);
+  put32(list(parts, "shdr").data, 46 * 3 + 24, 1u << 30); // ROM addresses, not ours
+  CHECK(loadError(assemble(parts)).empty());
+}
+
+TEST_CASE("a 24-bit extension is skipped and the file plays at 16 bits") {
+  auto file = oneZone(steady(16384, 2000), {set(gen::kPan, -500)});
+  const auto plain = play(build(file), kOneNote, {48000, 128, 1000});
+  file.sm24 = true;
+  const auto extended = play(build(file), kOneNote, {48000, 128, 1000});
+  CHECK(extended.left == plain.left);
+}
+
+TEST_CASE("generators and modulators the node does not read are ignored silently") {
+  // An effects send, as on the default piano, a reserved generator, an
+  // unknown one and a modulator, at both levels.
+  const auto plain = oneZone(steady(16384, 2000), {set(gen::kPan, -500)});
+  auto extra = plain;
+  auto& zone = extra.instruments[0].zones[0];
+  zone.generators.insert(zone.generators.begin(),
+                         {set(gen::kReverbEffectsSend, 100), set(14, 7), set(99, 3)});
+  zone.modulators.push_back({0x0502, 48, 960, 0, 0});
+  extra.presets[0].zones[0].generators.insert(extra.presets[0].zones[0].generators.begin(),
+                                              set(gen::kReverbEffectsSend, 100));
+  extra.presets[0].zones[0].modulators.push_back({0x0502, 48, 960, 0, 0});
+  const auto expected = play(build(plain), kOneNote, {48000, 128, 1000});
+  CHECK(play(build(extra), kOneNote, {48000, 128, 1000}).left == expected.left);
+}

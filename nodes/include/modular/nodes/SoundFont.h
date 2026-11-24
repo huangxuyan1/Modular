@@ -86,6 +86,7 @@ private:
   struct Sample {
     std::uint32_t start = 0, end = 0, rate = 0;
     std::uint8_t originalPitch = 60;
+    bool rom = false; // its points are in a ROM, not in the file
   };
 
   std::vector<std::uint8_t> bytes_;

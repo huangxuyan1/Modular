@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace modular::nodes {
 namespace {
@@ -62,21 +63,27 @@ Chunk chunk(Reader& parent) {
   return {tag, data};
 }
 
-// The hydra's nine lists, located by tag, each a run of fixed-size records.
-struct Hydra {
-  static constexpr std::string_view kTags[] = {"phdr", "pbag", "pmod", "pgen", "inst",
-                                               "ibag", "imod", "igen", "shdr"};
-  static constexpr std::size_t kRecordSizes[] = {38, 4, 10, 4, 22, 4, 10, 4, 46};
-  std::optional<Reader> lists[9];
+// The hydra's nine lists in the specification's order, each a run of
+// fixed-size records that ends with a terminal record.
+enum HydraList : std::size_t { kPhdr, kPbag, kPmod, kPgen, kInst, kIbag, kImod, kIgen, kShdr };
+constexpr std::size_t kHydraLists = 9;
+constexpr std::string_view kListTags[kHydraLists] = {"phdr", "pbag", "pmod", "pgen", "inst",
+                                                     "ibag", "imod", "igen", "shdr"};
+constexpr std::size_t kRecordSizes[kHydraLists] = {38, 4, 10, 4, 22, 4, 10, 4, 46};
 
-  Reader records(std::size_t list, std::size_t& count) const {
-    const auto& data = *lists[list];
-    if (data.size() % kRecordSizes[list] != 0 || data.size() < kRecordSizes[list])
-      invalid(std::string(kTags[list]) + " list of the wrong size");
-    count = data.size() / kRecordSizes[list];
-    return data;
-  }
-};
+using Generators = std::vector<std::pair<std::uint16_t, std::uint16_t>>;
+
+// Where each record's run starts in the next list: a preset's bags, a bag's
+// generators. The starts never fall, and the terminal record's start is the
+// next list's terminal record, so every run lies inside that list and every
+// record of it belongs to a run.
+void checkRuns(const std::vector<std::uint16_t>& starts, std::size_t count,
+               std::string_view list) {
+  for (std::size_t i = 1; i < starts.size(); ++i)
+    if (starts[i] < starts[i - 1]) invalid(std::string(list) + " indexes out of order");
+  if (starts.back() + std::size_t{1} != count)
+    invalid(std::string(list) + " indexes do not end at the list's end");
+}
 
 // The specification's defaults (section 8.1.3), where they are not zero.
 constexpr auto kGeneratorDefaults = [] {
@@ -143,75 +150,144 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
   Reader file(result.bytes_, 0);
   auto riff = chunk(file);
   if (riff.tag != "RIFF") invalid("missing RIFF header");
+  if (!file.empty()) invalid("data after the RIFF chunk");
   if (riff.data.tag() != "sfbk") invalid("not a soundfont");
 
+  // The form's three lists, by type. Other chunks are skipped by their sizes.
   std::optional<Reader> info, sdta, pdta;
   while (!riff.data.empty()) {
     auto list = chunk(riff.data);
     if (list.tag != "LIST") continue;
     const auto type = list.data.tag();
-    auto& slot = type == "INFO" ? info : type == "sdta" ? sdta : pdta;
-    if (type != "INFO" && type != "sdta" && type != "pdta") continue;
-    slot = list.data;
+    auto* slot = type == "INFO"   ? &info
+                 : type == "sdta" ? &sdta
+                 : type == "pdta" ? &pdta
+                                  : nullptr;
+    if (slot == nullptr) continue;
+    if (*slot) invalid("duplicate " + std::string(type) + " list");
+    *slot = list.data;
   }
-  if (!info || !sdta || !pdta) invalid("missing INFO, sdta or pdta list");
+  if (!info) invalid("missing INFO list");
+  if (!sdta) invalid("missing sdta list");
+  if (!pdta) invalid("missing pdta list");
 
-  std::size_t samplePoints = 0;
+  std::optional<Reader> version;
+  while (!info->empty()) {
+    auto sub = chunk(*info);
+    if (sub.tag == "ifil") version = sub.data;
+  }
+  if (!version) invalid("missing ifil version");
+  if (version->size() != 4) invalid("ifil version of the wrong size");
+  const auto major = version->integer(2);
+  if (major == 3) invalid("compressed samples (sf3) are not supported");
+  if (major != 2) invalid("only version 2 files are supported");
+
+  // 16-bit sample data. A 24-bit extension (sm24) is skipped, so a 24-bit file
+  // plays at 16 bits, as the specification allows. No smpl chunk is no data.
+  std::size_t points = 0;
   while (!sdta->empty()) {
     auto sub = chunk(*sdta);
     if (sub.tag != "smpl") continue;
+    if (sub.data.size() % 2 != 0) invalid("sample data of odd size");
     result.sample_data_ = sub.data.offset();
-    samplePoints = sub.data.size() / 2;
+    points = sub.data.size() / 2;
   }
 
-  Hydra hydra;
+  std::optional<Reader> lists[kHydraLists];
   while (!pdta->empty()) {
     auto sub = chunk(*pdta);
-    for (std::size_t i = 0; i < 9; ++i)
-      if (sub.tag == Hydra::kTags[i]) hydra.lists[i] = sub.data;
+    for (std::size_t i = 0; i < kHydraLists; ++i) {
+      if (sub.tag != kListTags[i]) continue;
+      if (lists[i]) invalid("duplicate " + std::string(kListTags[i]) + " list");
+      lists[i] = sub.data;
+    }
+  }
+  std::size_t counts[kHydraLists];
+  for (std::size_t i = 0; i < kHydraLists; ++i) {
+    if (!lists[i]) invalid("missing " + std::string(kListTags[i]) + " list");
+    if (lists[i]->size() % kRecordSizes[i] != 0 || lists[i]->size() < kRecordSizes[i])
+      invalid(std::string(kListTags[i]) + " list of the wrong size");
+    counts[i] = lists[i]->size() / kRecordSizes[i];
   }
 
-  std::size_t counts[9];
-  Reader lists[9] = {hydra.records(0, counts[0]), hydra.records(1, counts[1]),
-                     hydra.records(2, counts[2]), hydra.records(3, counts[3]),
-                     hydra.records(4, counts[4]), hydra.records(5, counts[5]),
-                     hydra.records(6, counts[6]), hydra.records(7, counts[7]),
-                     hydra.records(8, counts[8])};
+  // Samples first: the instruments' zones are checked against them.
+  {
+    Reader list = *lists[kShdr];
+    for (std::size_t i = 0; i + 1 < counts[kShdr]; ++i) {
+      list.take(20); // name
+      Sample sample;
+      sample.start = list.integer(4);
+      sample.end = list.integer(4);
+      list.take(8); // loop points: every zone plays its sample once, for now
+      sample.rate = list.integer(4);
+      sample.originalPitch = static_cast<std::uint8_t>(list.integer(1));
+      list.take(3); // pitch correction and link
+      const auto type = list.integer(2);
+      if ((type & 0x10) != 0) invalid("compressed samples (sf3) are not supported");
+      sample.rom = (type & 0x8000) != 0;
+      result.samples_.push_back(sample);
+    }
+    for (const auto& sample : result.samples_)
+      if (!sample.rom && (sample.start > sample.end || sample.end > points))
+        invalid("a sample lies outside the sample data");
+  }
 
-  // Bags hold [generator, modulator] indexes; zone z spans bag z to bag z + 1.
-  const auto readBags = [&](Reader list, std::size_t count) {
-    std::vector<std::uint16_t> generators(count);
-    for (std::size_t i = 0; i < count; ++i) {
-      generators[i] = static_cast<std::uint16_t>(list.integer(2));
-      list.integer(2);
+  // A bag holds where its zone's generators and modulators start; zone z runs
+  // from bag z to bag z + 1. Modulators are not read yet, but their runs are
+  // checked like the generators'.
+  struct Bags {
+    std::vector<std::uint16_t> generators, modulators;
+  };
+  const auto readBags = [&](HydraList bagList, HydraList modulatorList,
+                            HydraList generatorList, std::string_view level) {
+    Reader list = *lists[bagList];
+    Bags bags;
+    for (std::size_t i = 0; i < counts[bagList]; ++i) {
+      bags.generators.push_back(static_cast<std::uint16_t>(list.integer(2)));
+      bags.modulators.push_back(static_cast<std::uint16_t>(list.integer(2)));
+    }
+    checkRuns(bags.generators, counts[generatorList], std::string(level) + " generator");
+    checkRuns(bags.modulators, counts[modulatorList], std::string(level) + " modulator");
+    return bags;
+  };
+  const auto readGenerators = [&](HydraList generatorList) {
+    Reader list = *lists[generatorList];
+    Generators generators(counts[generatorList]);
+    for (auto& [oper, amount] : generators) {
+      oper = static_cast<std::uint16_t>(list.integer(2));
+      amount = static_cast<std::uint16_t>(list.integer(2));
     }
     return generators;
   };
-  const auto readGenerators = [&](Reader list, std::size_t count) {
-    std::vector<std::pair<std::uint16_t, std::uint16_t>> generators(count);
-    for (auto& g : generators) {
-      g.first = static_cast<std::uint16_t>(list.integer(2));
-      g.second = static_cast<std::uint16_t>(list.integer(2));
+  // A preset's or instrument's header: where its bags start.
+  const auto readHeaders = [&](HydraList headerList, std::size_t size, HydraList bagList,
+                               std::string_view level, auto&& each) {
+    Reader list = *lists[headerList];
+    std::vector<std::uint16_t> bags(counts[headerList]);
+    for (auto& bag : bags) {
+      auto record = list.take(size);
+      each(record);
+      bag = static_cast<std::uint16_t>(record.integer(2));
     }
-    return generators;
+    checkRuns(bags, counts[bagList], std::string(level) + " bag");
+    return bags;
   };
-  const auto presetBags = readBags(lists[1], counts[1]);
-  const auto presetGenerators = readGenerators(lists[3], counts[3]);
-  const auto instrumentBags = readBags(lists[5], counts[5]);
-  const auto instrumentGenerators = readGenerators(lists[7], counts[7]);
 
-  // Zones [first, last) of one preset or instrument, the first possibly global.
-  const auto readZones = [&](const std::vector<std::uint16_t>& bags,
-                             const std::vector<std::pair<std::uint16_t, std::uint16_t>>& gens,
-                             std::size_t first, std::size_t last, std::uint16_t terminal,
-                             bool& hasGlobal, ParsedZone& global,
-                             std::vector<ParsedZone>& zones) {
+  // Zones [first, last) of one preset or instrument. A first zone without a
+  // terminal generator is the global zone; a later one is ignored. Generators
+  // after the terminal one are ignored; a repeated one keeps its last value.
+  const auto readZones = [](const Bags& bags, const Generators& generators,
+                            std::size_t first, std::size_t last, std::uint16_t terminal,
+                            std::size_t targets, std::string_view target, bool& hasGlobal,
+                            ParsedZone& global, std::vector<ParsedZone>& zones) {
     for (std::size_t bag = first; bag < last; ++bag) {
       ParsedZone zone;
       bool terminated = false;
-      for (std::size_t g = bags[bag]; g < bags[bag + 1] && !terminated; ++g) {
-        const auto [oper, amount] = gens[g];
+      for (std::size_t g = bags.generators[bag];
+           g < bags.generators[bag + 1] && !terminated; ++g) {
+        const auto [oper, amount] = generators[g];
         if (oper == terminal) {
+          if (amount >= targets) invalid(std::string(target) + " index out of range");
           zone.target = amount;
           terminated = true;
         } else if (oper < kGeneratorCount) {
@@ -228,53 +304,46 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
   };
 
   {
-    Reader list = lists[0];
-    std::vector<std::pair<PresetNumber, std::size_t>> headers(counts[0]);
-    for (auto& [number, bag] : headers) {
-      list.take(20);
-      number.program = static_cast<std::uint16_t>(list.integer(2));
-      number.bank = static_cast<std::uint16_t>(list.integer(2));
-      bag = list.integer(2);
-      list.take(12);
-    }
-    for (std::size_t p = 0; p + 1 < headers.size(); ++p) {
-      Preset preset;
-      preset.number = headers[p].first;
-      readZones(presetBags, presetGenerators, headers[p].second, headers[p + 1].second,
-                kInstrument, preset.hasGlobal, preset.global, preset.zones);
-      result.presets_.push_back(std::move(preset));
-    }
-  }
-  {
-    Reader list = lists[4];
-    std::vector<std::size_t> bags(counts[4]);
-    for (auto& bag : bags) {
-      list.take(20);
-      bag = list.integer(2);
-    }
-    for (std::size_t i = 0; i + 1 < bags.size(); ++i) {
+    const auto bags = readBags(kIbag, kImod, kIgen, "instrument");
+    const auto generators = readGenerators(kIgen);
+    const auto starts = readHeaders(kInst, 22, kIbag, "instrument",
+                                    [](Reader& record) { record.take(20); }); // name
+    for (std::size_t i = 0; i + 1 < starts.size(); ++i) {
       Instrument instrument;
-      readZones(instrumentBags, instrumentGenerators, bags[i], bags[i + 1], kSampleId,
-                instrument.hasGlobal, instrument.global, instrument.zones);
+      readZones(bags, generators, starts[i], starts[i + 1], kSampleId,
+                result.samples_.size(), "sample", instrument.hasGlobal, instrument.global,
+                instrument.zones);
+      // Interim: refused until ticket 04 skips such zones and lists them.
+      for (const auto& zone : instrument.zones) {
+        const auto& sample = result.samples_[zone.target];
+        if (sample.rom) invalid("a zone's sample is in rom");
+        if (sample.start == sample.end) invalid("a zone's sample is empty");
+        if (sample.rate == 0) invalid("a zone's sample has no sample rate");
+      }
       result.instruments_.push_back(std::move(instrument));
     }
   }
   {
-    Reader list = lists[8];
-    for (std::size_t i = 0; i + 1 < counts[8]; ++i) {
-      list.take(20);
-      Sample sample;
-      sample.start = list.integer(4);
-      sample.end = list.integer(4);
-      list.integer(4);
-      list.integer(4);
-      sample.rate = list.integer(4);
-      sample.originalPitch = static_cast<std::uint8_t>(list.integer(1));
-      list.take(5);
-      result.samples_.push_back(sample);
+    const auto bags = readBags(kPbag, kPmod, kPgen, "preset");
+    const auto generators = readGenerators(kPgen);
+    std::vector<PresetNumber> numbers;
+    const auto starts = readHeaders(kPhdr, 38, kPbag, "preset", [&](Reader& record) {
+      record.take(20); // name
+      PresetNumber number;
+      number.program = static_cast<std::uint16_t>(record.integer(2));
+      number.bank = static_cast<std::uint16_t>(record.integer(2));
+      numbers.push_back(number);
+    });
+    if (starts.size() < 2) invalid("no preset");
+    for (std::size_t p = 0; p + 1 < starts.size(); ++p) {
+      Preset preset;
+      preset.number = numbers[p];
+      readZones(bags, generators, starts[p], starts[p + 1], kInstrument,
+                result.instruments_.size(), "instrument", preset.hasGlobal, preset.global,
+                preset.zones);
+      result.presets_.push_back(std::move(preset));
     }
   }
-  (void)samplePoints;
   return result;
 }
 
