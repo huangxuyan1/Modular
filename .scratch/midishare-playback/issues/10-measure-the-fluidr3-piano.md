@@ -1,7 +1,7 @@
 # Measure the FluidR3_GM piano before it becomes the default
 
 Type: task
-Status: open
+Status: claimed
 Blocked by: 07
 
 ## Question
