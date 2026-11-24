@@ -145,6 +145,15 @@ build, as roadmap ticket 04's did. Research findings live under `research/` here
   extract tool is a `scripts/` Python script in spec B; the extract lives only in midishare,
   with its MIT notice. No isolation headers. A pre-existing libc++ break in persistence goes
   to its own fix ticket.
+- [How is a browser render checked against a native one?](issues/08-browser-render-checked-against-native.md)
+  — bit for bit, by construction. The soundfont node computes its output with portable `exp2`,
+  `sin` and `cos` instead of the maths library (its spec's new ticket 08). MIDI times move from
+  `long double` to `double` as spec B's first ticket, reversing ticket 02's decision 2 because
+  MSVC and wasm32 round half-frame ties apart; that also fixes ticket 03's persistence break.
+  GCC and Clang build with `-ffp-contract=off`. CTest checks golden per-block hashes natively
+  and under Node, in the `web` job under `CI gate`; Firefox and Safari are checked once by hand.
+  Every map ticket is now closed. Nothing left under Not yet specified blocks spec B (ticket
+  04's decision 4 answers the repeated-renders item), so spec B can start.
 
 ## Not yet specified
 

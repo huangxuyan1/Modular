@@ -1,7 +1,7 @@
 # How is a browser render checked against a native one?
 
 Type: grilling
-Status: claimed
+Status: resolved
 Blocked by: 02
 
 ## Question
@@ -21,13 +21,76 @@ Decide, using the probe's measured difference:
 - Is that check part of `CI gate`, and therefore part of the decision in
   [Where does the web build live, and how does a built module reach the site?](03-where-the-web-build-lives.md)?
 
+## Answer
+
+Resolved 2026-11-24. **A browser render equals the native render bit for bit, by construction,
+and CTest checks it under Node against golden values committed in the test.** Every call below
+was decided by the planning hub under the judgment the user delegated for this map ("All, on
+your best judgment"), 2026-11-24, on the investigation under **Comments**, whose J1 to J8 hold
+the options and the evidence. Like every planning record, it is provisional until its planning
+PR merges.
+
+1. **The claim: bit for bit, by construction** (J1). For the same graph, soundfont bytes, MIDI
+   bytes and sample rate, the web module's render equals the native render in every float
+   sample and in length. It covers `MidiFileNode`, the soundfont node and what the web glue
+   wires after them; `SineSynthNode` stays as it is. A tolerance was rejected: at its strongest
+   it misses everything below −90 dBFS, needs reference samples instead of a hash, and cannot
+   bound a full pool's cascade when a voice ends a frame later.
+2. **The soundfont node uses no maths library on any value that reaches its output** (J2).
+   - The node library gets a portable `exp2` and `sin`/`cos`, built only from operations IEEE
+     754 makes exact or correctly rounded. A table is allowed only if filled from them. This is
+     node policy, in `nodes/`.
+   - It is delivered as the soundfont node spec's
+     [08: portable maths](../../soundfont-node/issues/08-portable-maths.md), blocked by its 01.
+     Its test is a golden per-block hash of a clip through every maths path, run natively; the
+     Node half joins with spec B.
+   - Ticket 01's implementer was told to route every such call through one internal header of
+     named functions, implemented with `std::` for now, so that ticket swaps the bodies in one
+     place. Tickets 02, 04 and 05 add calls through the same header.
+3. **MIDI times move from `long double` to `double`** in `MidiFile`, `MidiFileNode` and
+   `PrimitivePersistence` (J3).
+   - **This reverses ticket 02's planning hub decision 2**, which held the change back because
+     nothing needed it. The probe's half-frame ties are a real need: MSVC's 64-bit and wasm32's
+     128-bit `long double` put 9,881 of 21.5 million events on different frames.
+   - It changes nothing under MSVC, whose `long double` already is a 64-bit double. It also
+     fixes the libc++ `std::from_chars` break that ticket 03 names (its decision 2), so this
+     prefactor is the fix ticket that decision asks for. Whether persistence then joins the
+     web build is spec B's call.
+   - It is an input to spec B, as its first ticket, a prefactor.
+4. **Compiler flags** (J4). MSVC keeps `/fp:precise`. The root `CMakeLists.txt` adds
+   `-ffp-contract=off` for GCC and Clang. Never `-ffast-math`, `-mrelaxed-simd` or
+   flush-to-zero. An input to spec B.
+5. **The check** (J5). A CTest test with golden values committed in it: per clip and rate, the
+   frame count and a hash per 4,096-frame block. The same test runs natively in the Windows
+   jobs and under Node in the web build. A small Node smoke test also renders through the
+   shipped module's JavaScript surface. An input to spec B.
+6. **Clips** (J6).
+   - A soundfont built in memory with the soundfont node spec's test-side builder. No
+     soundfont file enters `tests/`.
+   - Four clips: every maths path; the timing tie (`Q:1/4=90` at 48 kHz, an event every 40
+     ticks through tick 15,000); the pool at a voice limit of 4; the one-note preview.
+   - Rates 44.1, 48 and 22.05 kHz.
+   - The FluidR3 extract is checked once at acceptance, outside `tests/`.
+7. **`CI gate`: yes** (J7), inside the web job that
+   [ticket 03](03-where-the-web-build-lives.md) decided.
+8. **Browsers** (J8). Node is the check's runtime, since WebAssembly arithmetic is the same in
+   every engine. No browser gets a periodic check. Once, at acceptance, the user checks by hand
+   that Firefox and Safari show the golden hash on the page. Installing Firefox for that is the
+   user's own step.
+
+**Inputs to spec B**, the web build and its render surface, which this answer does not ticket:
+the `double` prefactor (3), the flags (4), the check and its smoke test (5), the clips beyond
+the soundfont node's own (6), the gate (7) and the browsers' acceptance step (8). Nothing
+changes under `kernel/` or `workspace/`. No ADR and no `CONTEXT.md` term.
+
 ## Comments
 
 ### Investigation pass, 2026-11-24
 
-A ticket session investigated and recommended; nothing here is decided. The planning hub
-decides each call under the judgment the user delegated for this map, except where a call is
-marked **[user approval needed]**. Calls marked **[Modular]** are this repository's to decide.
+A ticket session investigated and recommended; the planning hub then decided every call (see
+**Answer**). This section is the evidence, as it stood before the decisions. Calls marked
+**[Modular]** were this repository's to decide; **[user approval needed]** marked what would
+have needed the user.
 Modular facts are at `origin/main` 0d0db07; the [soundfont node spec](../../soundfont-node/spec.md),
 merged while this ran (28c95d6), and ticket 03's open planning PR are taken into account where
 they bear on a call. The numbers come from a throwaway probe,
