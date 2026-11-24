@@ -8,13 +8,14 @@
 // browser's render must match the native one bit for bit (map ticket 08, still
 // open), a later ticket replaces these with portable routines built only from
 // operations IEEE 754 rounds exactly; until then they wrap the standard
-// library. Rounding to integers, ceil, + - * / and sqrt are exact already and
-// need no wrapper.
+// library. Rounding to integers, ceil, fmod, + - * / and sqrt are exact
+// already and need no wrapper.
 namespace modular::nodes::soundfont_maths {
 
 inline double exp2(double x) { return std::exp2(x); }
 inline double exp10(double x) { return std::pow(10.0, x); }
 inline double log10(double x) { return std::log10(x); }
 inline double sin(double x) { return std::sin(x); }
+inline double tan(double x) { return std::tan(x); }
 
 } // namespace modular::nodes::soundfont_maths

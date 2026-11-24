@@ -89,6 +89,7 @@ void SoundFontNode::prepare(const PrepareInfo& info) {
   const auto frames = [&](std::int32_t timecents) {
     return static_cast<std::uint64_t>(std::llround(seconds(timecents) * rate));
   };
+  rate_ = rate;
   plans_.clear();
   plans_.reserve(zones_.size());
   for (const auto& zone : zones_) {
@@ -99,20 +100,22 @@ void SoundFontNode::prepare(const PrepareInfo& info) {
               : zone.originalPitch <= 127 ? zone.originalPitch : 60;
     plan.rateRatio = zone.sampleRate / rate;
     // Equal-power pan: sin on both sides keeps +-500 exactly one-sided.
-    const double gain = maths::exp10(-g[SoundFont::kInitialAttenuation] / 200.0);
     const double pan = g[SoundFont::kPan];
-    plan.gainLeft = gain * maths::sin((500 - pan) / 1000 * kPi / 2);
-    plan.gainRight = gain * maths::sin((500 + pan) / 1000 * kPi / 2);
-    plan.delayFrames = frames(g[SoundFont::kDelayVolEnv]);
-    plan.attackFrames = frames(g[SoundFont::kAttackVolEnv]);
-    plan.holdFrames = frames(g[SoundFont::kHoldVolEnv]);
+    plan.panLeft = maths::sin((500 - pan) / 1000 * kPi / 2);
+    plan.panRight = maths::sin((500 + pan) / 1000 * kPi / 2);
+    plan.attenuation = g[SoundFont::kInitialAttenuation];
+    plan.points = zone.sampleEnd - zone.sampleStart;
+
+    plan.volume.delay = frames(g[SoundFont::kDelayVolEnv]);
+    plan.volume.attack = frames(g[SoundFont::kAttackVolEnv]);
+    plan.volume.hold = frames(g[SoundFont::kHoldVolEnv]);
     // Decay and release fall at a constant rate in dB: 100 dB over the time.
     const double decayFramesPerDb = seconds(g[SoundFont::kDecayVolEnv]) * rate / 100;
     plan.decayFactor = maths::exp10(-1 / (20 * decayFramesPerDb));
     const double sustainDb = g[SoundFont::kSustainVolEnv] / 10.0;
-    plan.sustainLevel = maths::exp10(-sustainDb / 20);
-    plan.decayEnds = sustainDb >= kFloorDb;
-    plan.decayFrames = static_cast<std::uint64_t>(
+    plan.volume.sustain = maths::exp10(-sustainDb / 20);
+    plan.volume.decayEnds = sustainDb >= kFloorDb;
+    plan.volume.decay = static_cast<std::uint64_t>(
         std::ceil(std::min(sustainDb, kFloorDb) * decayFramesPerDb));
     plan.releaseFramesPerDb = seconds(g[SoundFont::kReleaseVolEnv]) * rate / 100;
     plan.releaseFactor = maths::exp10(-1 / (20 * plan.releaseFramesPerDb));
@@ -157,7 +160,8 @@ void SoundFontNode::noteOn(std::uint8_t channel, std::uint8_t key, std::uint8_t 
   ++note_ons_;
   std::size_t slot = 0;
   for (std::uint32_t p = 0; p < plans_.size(); ++p) {
-    if (!matches(plans_[p].zone, key, velocity)) continue;
+    const auto& plan = plans_[p];
+    if (!matches(plan.zone, key, velocity)) continue;
     while (voices_[slot].active) ++slot;
     auto& voice = voices_[slot];
     voice = Voice{};
@@ -166,8 +170,9 @@ void SoundFontNode::noteOn(std::uint8_t channel, std::uint8_t key, std::uint8_t 
     voice.note = note_ons_;
     voice.channel = channel;
     voice.key = key;
-    voice.increment = maths::exp2((key - plans_[p].root) / 12.0) * plans_[p].rateRatio;
-    voice.active = sounds(voice, plans_[p]);
+    voice.increment = maths::exp2((key - plan.root) / 12.0) * plan.rateRatio;
+    voice.gain = maths::exp10(-plan.attenuation / 200);
+    voice.active = sounds(voice, plan);
   }
 }
 
@@ -186,97 +191,103 @@ void SoundFontNode::noteOff(std::uint8_t channel, std::uint8_t key) {
 void SoundFontNode::startRelease(Voice& voice) {
   voice.held = false;
   const auto& plan = plans_[voice.plan];
-  if (!settle(voice, plan)) {
+  if (!voice.volume.settle(plan.volume)) {
     voice.active = false;
     return;
   }
-  const double start = level(voice, plan);
+  const double start = volume(voice, plan);
   const double startDb = start > 0 ? -20 * maths::log10(start) : kFloorDb;
-  voice.stage = Stage::kRelease;
-  voice.frame = 0;
-  voice.level = start;
-  voice.releaseFrames = startDb < kFloorDb ? static_cast<std::uint64_t>(std::ceil(
-                            (kFloorDb - startDb) * plan.releaseFramesPerDb))
-                                           : 0;
-  if (voice.releaseFrames == 0) voice.active = false;
+  voice.volume.release(start, startDb < kFloorDb
+                                  ? static_cast<std::uint64_t>(std::ceil(
+                                        (kFloorDb - startDb) * plan.releaseFramesPerDb))
+                                  : 0);
+  if (voice.volume.stage == Stage::kOff) voice.active = false;
 }
 
-// Passes over the envelope's finished stages, so the voice's stage holds its
-// next frame. False once its envelope has ended.
-bool SoundFontNode::settle(Voice& voice, const PreparedZone& plan) {
+bool SoundFontNode::Envelope::settle(const Timeline& timeline) {
   for (;;) {
-    switch (voice.stage) {
+    switch (stage) {
     case Stage::kDelay:
-      if (voice.frame < plan.delayFrames) return true;
-      voice.stage = Stage::kAttack;
+      if (frame < timeline.delay) return true;
+      stage = Stage::kAttack;
       break;
     case Stage::kAttack:
-      if (voice.frame < plan.attackFrames) return true;
-      voice.stage = Stage::kHold;
+      if (frame < timeline.attack) return true;
+      stage = Stage::kHold;
       break;
     case Stage::kHold:
-      if (voice.frame < plan.holdFrames) return true;
-      voice.stage = Stage::kDecay;
-      voice.level = 1;
+      if (frame < timeline.hold) return true;
+      stage = Stage::kDecay;
+      level = 1;
       break;
     case Stage::kDecay:
-      if (voice.frame < plan.decayFrames) return true;
-      if (plan.decayEnds) return false;
-      voice.stage = Stage::kSustain;
-      voice.level = plan.sustainLevel;
-      return true;
+      if (frame < timeline.decay) return true;
+      stage = timeline.decayEnds ? Stage::kOff : Stage::kSustain;
+      level = timeline.sustain;
+      break;
     case Stage::kSustain:
       return true;
     case Stage::kRelease:
-      return voice.frame < voice.releaseFrames;
+      if (frame < releaseFrames) return true;
+      stage = Stage::kOff;
+      break;
+    case Stage::kOff:
+      return false;
     }
-    voice.frame = 0;
+    frame = 0;
   }
 }
 
-// The envelope's level for the voice's next frame, once settled.
-double SoundFontNode::level(const Voice& voice, const PreparedZone& plan) {
-  switch (voice.stage) {
+void SoundFontNode::Envelope::release(double from, std::uint64_t frames) {
+  stage = frames > 0 ? Stage::kRelease : Stage::kOff;
+  frame = 0;
+  level = from;
+  releaseFrames = frames;
+}
+
+// The volume envelope's level for the voice's next frame, once settled.
+double SoundFontNode::volume(const Voice& voice, const PreparedZone& plan) {
+  const auto& envelope = voice.volume;
+  switch (envelope.stage) {
   case Stage::kDelay:
+  case Stage::kOff:
     return 0;
   case Stage::kAttack: // a linear rise in amplitude, reaching the peak on its last frame
-    return static_cast<double>(voice.frame + 1) / static_cast<double>(plan.attackFrames);
+    return static_cast<double>(envelope.frame + 1) / static_cast<double>(plan.volume.attack);
   case Stage::kHold:
     return 1;
   default:
-    return voice.level;
+    return envelope.level;
   }
 }
 
 // Settles a voice for its next frame. False once it has ended: a voice ends
 // on the frame after its last sound, so a note-on there finds its slot free.
 bool SoundFontNode::sounds(Voice& voice, const PreparedZone& plan) {
-  if (!settle(voice, plan)) return false;
-  const std::uint64_t points = plan.zone.sampleEnd - plan.zone.sampleStart;
-  return static_cast<std::uint64_t>(voice.position) < points;
+  if (!voice.volume.settle(plan.volume)) return false;
+  return static_cast<std::uint64_t>(voice.position) < plan.points;
 }
 
 void SoundFontNode::render(Voice& voice, float* left, float* right, std::uint32_t from,
                            std::uint32_t to) {
   const auto& plan = plans_[voice.plan];
-  const auto& zone = plan.zone;
-  const std::uint64_t points = zone.sampleEnd - zone.sampleStart;
+  const auto start = plan.zone.sampleStart;
   for (std::uint32_t i = from; i < to; ++i) {
-    if (voice.stage != Stage::kDelay) { // in the delay, silent, and the sample waits
+    auto& envelope = voice.volume;
+    if (envelope.stage != Stage::kDelay) { // in the delay, silent, and the sample waits
       // Linear interpolation; past the last point the sample is silent.
       const auto index = static_cast<std::uint64_t>(voice.position);
-      const double a = sound_font_->point(zone.sampleStart + index);
-      const double b =
-          index + 1 < points ? sound_font_->point(zone.sampleStart + index + 1) : 0.0;
-      const double sample =
-          (a + (b - a) * (voice.position - index)) / 32768.0 * level(voice, plan);
-      left[i] += static_cast<float>(sample * plan.gainLeft);
-      right[i] += static_cast<float>(sample * plan.gainRight);
+      const double a = sound_font_->point(start + index);
+      const double b = index + 1 < plan.points ? sound_font_->point(start + index + 1) : 0.0;
+      const double sample = (a + (b - a) * (voice.position - index)) / 32768.0 *
+                            volume(voice, plan) * voice.gain;
+      left[i] += static_cast<float>(sample * plan.panLeft);
+      right[i] += static_cast<float>(sample * plan.panRight);
       voice.position += voice.increment;
-      if (voice.stage == Stage::kDecay) voice.level *= plan.decayFactor;
-      else if (voice.stage == Stage::kRelease) voice.level *= plan.releaseFactor;
+      if (envelope.stage == Stage::kDecay) envelope.level *= plan.decayFactor;
+      else if (envelope.stage == Stage::kRelease) envelope.level *= plan.releaseFactor;
     }
-    ++voice.frame;
+    ++envelope.frame;
     if (!sounds(voice, plan)) {
       voice.active = false;
       return;

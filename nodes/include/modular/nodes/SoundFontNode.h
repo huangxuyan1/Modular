@@ -21,7 +21,7 @@ namespace modular::nodes {
 // A voice is one sounding sample: every instrument zone a note matches plays
 // as its own mono voice, placed by its pan. A note-off starts a voice's
 // release and frees nothing; a voice ends by itself, when its envelope has
-// fallen 96 dB after its attack or its sample has run out.
+// fallen 96 dB after its attack or its sample has run out with no loop left.
 //
 // Loading parses the whole file at authoring time. prepare() never reads the
 // file again: it derives what depends on the sample rate and resets the pool,
@@ -61,33 +61,70 @@ public:
   void process(ProcessContext& ctx) override;
 
 private:
-  enum class Stage : std::uint8_t { kDelay, kAttack, kHold, kDecay, kSustain, kRelease };
+  enum class Stage : std::uint8_t {
+    kDelay, kAttack, kHold, kDecay, kSustain, kRelease, kOff
+  };
+
+  // How many frames an envelope's timed stages last, derived by prepare().
+  struct Timeline {
+    std::uint64_t delay = 0, attack = 0, hold = 0;
+    std::uint64_t decay = 0; // frames from the peak to the sustain or the end
+    bool decayEnds = false;  // the decay ends the envelope instead of sustaining
+    double sustain = 1;      // the level the decay falls to
+  };
+
+  // Where an envelope is. Both envelopes share their stages' timing; they
+  // differ in how their decay and release move the level.
+  struct Envelope {
+    Stage stage = Stage::kDelay;
+    std::uint64_t frame = 0;         // frames into the stage
+    std::uint64_t releaseFrames = 0; // the release's length, from its start
+    double level = 0; // in decay, sustain and release: the volume's level for
+                      // the next frame, or the modulation's at the release start
+    // Passes over finished stages, so the stage holds the next frame. False
+    // once the envelope is off.
+    bool settle(const Timeline& timeline);
+    void release(double from, std::uint64_t frames);
+  };
+
+  // The voice's two-pole low-pass, a state-variable filter whose coefficients
+  // follow the cutoff in whole cents.
+  struct Filter {
+    std::optional<std::int64_t> cents; // the cutoff the coefficients are for
+    double a1 = 0, a2 = 0, a3 = 0;
+    double state1 = 0, state2 = 0;
+    void tune(std::int64_t cutoff, double rate);
+    double step(double in);
+  };
 
   // One zone of the selected preset, with what depends on the sample rate.
   struct PreparedZone {
     SoundFont::Zone zone;
     int root = 60;
-    double rateRatio = 1;  // sample rate over graph rate
-    double gainLeft = 0, gainRight = 0;
-    std::uint64_t delayFrames = 0, attackFrames = 0, holdFrames = 0;
-    double decayFactor = 1, sustainLevel = 1;
-    std::uint64_t decayFrames = 0; // peak to sustain, or to the 96 dB floor
-    bool decayEnds = false;        // the sustain lies at or below the floor
-    double releaseFramesPerDb = 0;
-    double releaseFactor = 1;
+    double rateRatio = 1; // sample rate over graph rate
+    double panLeft = 0, panRight = 0;
+    double attenuation = 0; // centibels: initialAttenuation plus held controllers
+    // Points from the zone's start: those it plays, and its loop.
+    std::uint64_t points = 0, loopStart = 0, loopEnd = 0;
+    bool loops = false;          // loops while held
+    bool loopsInRelease = false; // and through its release
+    Timeline volume, modulation;
+    double decayFactor = 1, releaseFramesPerDb = 0, releaseFactor = 1;
+    double modDecayFrames = 0, modReleaseFrames = 0; // for a full change
   };
 
   struct Voice {
     bool active = false;
     bool held = false;
+    bool looping = false;
     std::uint32_t plan = 0;
     std::uint64_t note = 0; // its note-on's number in stream order
     std::uint8_t channel = 0, key = 0;
-    Stage stage = Stage::kDelay;
-    std::uint64_t frame = 0; // frames into the stage
-    std::uint64_t releaseFrames = 0;
-    double level = 0;        // the envelope's level for the next frame
+    Envelope volume, modulation;
     double position = 0, increment = 0;
+    double gain = 1;   // the attenuation's, from its velocity
+    double cutoff = 0; // cents, before the modulation envelope
+    Filter filter;
   };
 
   void adopt(SoundFont soundFont);
@@ -97,9 +134,10 @@ private:
   void startRelease(Voice& voice);
   void render(Voice& voice, float* left, float* right, std::uint32_t from,
               std::uint32_t to);
-  static bool settle(Voice& voice, const PreparedZone& plan);
   static bool sounds(Voice& voice, const PreparedZone& plan);
-  static double level(const Voice& voice, const PreparedZone& plan);
+  static double volume(const Voice& voice, const PreparedZone& plan);
+  static double modulation(const Voice& voice, const PreparedZone& plan);
+  static std::int64_t cutoff(const Voice& voice, const PreparedZone& plan);
 
   PortId midi_ = kNoPort, out_ = kNoPort;
   std::optional<SoundFont> sound_font_;
@@ -109,6 +147,7 @@ private:
   std::uint32_t voice_limit_ = kDefaultVoiceLimit;
 
   // Execution state, built by prepare().
+  double rate_ = 0;
   std::vector<PreparedZone> plans_;
   std::vector<Voice> voices_;
   std::uint64_t note_ons_ = 0; // note-ons started, which numbers each note
