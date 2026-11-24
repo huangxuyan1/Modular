@@ -1,7 +1,8 @@
 // Modular's web loader: the surface a page or Node calls, over the WebAssembly module
 // built from apps/web/Exports.cpp. modular.d.mts declares it and docs/web.md describes it.
 //
-// Every call returns a promise, and one queue per loaded module runs the calls one at a
+// Every call returns a promise: the methods are async, so even a call that fails before it
+// is queued rejects rather than throws. One queue per loaded module runs the calls one at a
 // time, in call order, whichever instrument they name. A failed call rejects with an Error
 // carrying Modular's message and leaves the module and its instruments usable.
 import createModule from './modular_web.mjs';
@@ -44,7 +45,7 @@ export async function loadModular(options = {}) {
   // `made` is the instrument's handle in the module and the copy of the soundfont's bytes
   // it was made from, which it keeps for its life.
   const instrument = (made) => ({
-    render(midi, sampleRate) {
+    async render(midi, sampleRate) {
       // Copied now, so the page may change its array before the call runs.
       const bytes = new Uint8Array(midi);
       return enqueue(() => {
@@ -69,7 +70,7 @@ export async function loadModular(options = {}) {
   });
 
   return {
-    createInstrument(soundfont) {
+    async createInstrument(soundfont) {
       // The instrument's own copy, made once and never the page's array, which the page
       // may change or transfer.
       const bytes = new Uint8Array(soundfont);
