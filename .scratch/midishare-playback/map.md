@@ -99,6 +99,13 @@ build, as roadmap ticket 04's did. Research findings live under `research/` here
 - [Measure the FluidR3_GM piano before it becomes the default](issues/10-measure-the-fluidr3-piano.md)
   — it fits: the full piano preset extracts to a 7.45 MiB SF2 (5.13 MiB for notes 36–95);
   one velocity layer of 32 kHz stereo pairs played as panned mono zones, with an audible filter.
+- [What does the page hand Modular, and what does it get back?](issues/04-page-to-modular-contract.md)
+  — two layers: midishare's own `AudioEngine` calls a Modular surface that parses the soundfont's
+  bytes once into an instrument handle and renders abcjs's Download .mid bytes at a given rate
+  into two JavaScript-owned channels, release included (render to a 2 s cap, trim below
+  −80 dBFS). Preview is a one-note clip through the same call; errors reject with Modular's
+  message, and the abcjs fallback stays in the page until a clip census or a patched writer
+  clears the MIDI writer's defects. No kernel or workspace change.
 
 ## Not yet specified
 
