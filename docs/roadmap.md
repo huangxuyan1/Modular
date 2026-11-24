@@ -128,7 +128,7 @@ with the edit, so one Undo restores both. That arrives with supernode editing (A
 
 *Re-cut 2026-11-20.* The identity claim headed this section until it closed (see Proven), so
 "this" in the next paragraph is that claim. The claim left here is channel layout vs count,
-below. Ticket 04's rate probe may still promote something ahead of it.
+below. Ticket 04's rate probe has since resolved without displacing it.
 
 **Ticket 01's checklist promoted event payload shape ahead of this, and ticket 11's probe has
 since demoted it again** — to moderate, and out of the way. The 16-byte payload genuinely
@@ -145,6 +145,11 @@ inherit. Its claim is below; it competes for ordering no more than payload shape
 
 Both of the oracle's catastrophic-class items are therefore retired without churn, which leaves
 the tail's ordering resting on the map's own tickets rather than on the checklist.
+
+**Ticket 04's rate probe promoted nothing.** A 4x-oversampled distortion needs no kernel change
+(see the tail), so this claim stays next. The probe adds one more pair that the subtype keeps
+apart: a 4x signal carried as four polyphase channels, and a 4-channel bus. The claim and its
+demo do not change.
 
 > **Claim.** An 80-band spectral stream and an 80-channel speaker bus cannot be connected to
 > each other by mistake — and no file under `nodes/` changed to make that true.
@@ -179,8 +184,8 @@ spec requires, so PDC plus recompile-on-demand stays moderate provided the recom
 path is kept out of `Node`.
 
 Remaining candidates and their suspected classes are tracked under "Not yet
-specified" in `.scratch/roadmap/map.md`: rate / multi-rate (catastrophic, and currently
-absent from CLAUDE.md's ledger entirely), the per-sample subgraph domain (catastrophic),
+specified" in `.scratch/roadmap/map.md`: rate beyond oversampling (unprobed; see below),
+the per-sample subgraph domain (catastrophic),
 threading (expensive), dynamic polyphony (catastrophic), the command/edit API and its
 offline-then-live cut, the constraint plus annotation layer, persistence and the subtype-id
 policy, PDC and cycles (moderate), plugin-host node design, full realtime device IO with
@@ -194,6 +199,17 @@ longer blocked behind the type-system question. It also spun off one new claim, 
 moderate and independent of everything above: an unconnected `value` input currently reads
 zero, which is a wrong answer rather than a missing one for a plugin parameter that must read
 its current setting (map ticket 13).
+
+**Ticket 04 took rate off the catastrophic list.** A 4x-oversampled distortion renders
+sample-for-sample equal to a plain 4x reference, at every block size, with no kernel change. It
+works either as `audio<4>` polyphase channels between an upsampling and a downsampling node, or
+inside a node that owns a 4x `Engine`. So one global rate survives, and oversampling is
+cheap-class node work rather than a claim. This is the third catastrophic ranking in a row that
+its probe did not bear out. Two constraints carry forward. `latencySamples()` cannot state a
+fraction of a base frame, so PDC can align an oversampled section only if its total latency is
+whole. And the nested-`Engine` form hides its inner graph from compile and Save/Open, which
+matters only if users must author what runs at 4x. Sub-rate analysis and live varispeed stay
+unprobed, in the map's fog.
 
 ## Out of scope
 

@@ -138,13 +138,28 @@ Concede cleanly when a generalization adds a concept without adding information.
   Supernode is the container, **Template** the recipe. **Class: expensive, and the first of the
   four that earns the label** — node constructor signatures change. ADR-0004.
 
+- [Probe: can a 4x-oversampled effect be expressed in today's model?](issues/04-rate-probe-oversampling.md)
+  — yes, with no kernel change, so **no claim needed**: one global rate survives and rate leaves
+  the catastrophic class. Only rate as buffer length fails, because every port's view is the
+  block's `numFrames` and an upsampler has nowhere to put 4N frames. Two other forms render equal
+  to a plain 4x reference at every block size, cutting aliasing from −20.6 to −111.8 dB: the 4x
+  signal carried as `audio<4>` polyphase channels between an upsampling and a downsampling node,
+  and a node that owns a 4x `Engine`. Polyphase needs phase-aware stateful nodes (a stock
+  per-channel one is silently wrong, yet block-size invariant) and types identically to a
+  4-channel bus, which ADR-0003's subtype already covers. The nested Engine runs stock nodes at the
+  right rate, but its inner graph is invisible to compile, Save/Open and the workspace. **The
+  third catastrophic ranking in a row that its probe did not bear out.**
+
 ## Not yet specified
 
 In scope, not yet sharp enough to ticket. Graduates as the frontier advances.
 
 - **PDC and cycles, implementation shape.** Settled in principle (engine owns
-  compensation; cycle-breaking and PDC are one mechanism), unimplemented. Waiting on the
-  rate and arity rulings, since both could change what the compiler inserts delay into.
+  compensation; cycle-breaking and PDC are one mechanism), unimplemented. It was waiting on the
+  rate and arity rulings, since both could change what the compiler inserts delay into; both are
+  now in. *Sharpened by ticket 04:* rate adds no new kind of delay, since every node still runs
+  at the base rate. But `latencySamples()` counts whole base frames, so an oversampled section
+  must keep its total latency whole and absorb any fraction inside itself.
 - **Threading / parallel execution.** Engine v1 is single-threaded. Parallelism changes the
   compile (scheduling) and possibly node contracts (thread affinity). Expensive-class.
 - **Dynamic polyphony.** Spawning subgraph copies at runtime fights both "ports frozen at
@@ -201,7 +216,17 @@ In scope, not yet sharp enough to ticket. Graduates as the frontier advances.
   ids now exist as a mechanism with **none defined**, deliberately — the first surround node
   defines its layout ids and the first spectral node defines its own, each when it exists.
   Watch for the failure mode where every generic node acquires a subtype parameter nobody ever
-  passes, which would leave the guarantee permanently off in practice.
+  passes, which would leave the guarantee permanently off in practice. *Sharpened by ticket 04:*
+  oversampling is node-library work. Its polyphase stream is one more audio subtype for the first
+  oversampling node to define, and a stateful node on that stream must step through the phases
+  in time order, which a stock per-channel node silently does not.
+- **Rate beyond oversampling.** Ticket 04 found that oversampling needs no claim, and left three
+  pressures unprobed. The first is an *authorable* at-rate subgraph: the nested-`Engine` form
+  hides its inner graph from compile, Save/Open and the workspace, which matters only if a user
+  must edit what runs at 4x. The second is sub-rate analysis streams, which events carry
+  block-size invariantly and v1's block-latched values do not. The third is varispeed of a live
+  stream, whose signal-dependent latency the kernel contract rules out. None is sharp enough to
+  ticket until a node or a workflow needs it.
 
 ## Out of scope
 
