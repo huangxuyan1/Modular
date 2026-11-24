@@ -63,7 +63,9 @@ envelope.
 **2026-11-24 — implemented.** Branch `claude/soundfont-node-02-pianos-tone`, cut from a freshly
 fetched `origin/main` at `c6246ee`. Before the push it was rebased onto `53d38e5` (ticket 06,
 which touched the same headers and `docs/node-io.md`) and then onto `4db75a1` (spec B's
-planning). Both rebases were clean.
+planning). Both rebases were clean. `main` moved to `043113e` (web build 01: MIDI times in
+double, and no floating-point contraction) just as the branch was pushed. That was merged
+in, and the full suite ran 9/9 again in Debug and Release.
 
 - *What was built.*
   - **The reader** now reads each sample header's loop points. A zone's start, end and loop
