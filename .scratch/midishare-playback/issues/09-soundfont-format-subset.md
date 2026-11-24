@@ -125,7 +125,15 @@ candidates.
 |---|---|
 | Velocity to attenuation, 960 cB, concave | Honoured. The spec's concave curve comes to 40·log10(v/127) dB: −3.3 dB at velocity 105, −7.0 at 85, −11.9 at 64 and −16.9 at 48 |
 | Velocity to filter cutoff, −2400 cents | Honoured at every velocity: linear, with no velocity switch |
-| CC7 and CC11 to attenuation, CC10 to pan, CC1 and channel pressure to vibrato, CC91 and CC93 to the sends, the pitch wheel to pitch | Held at General MIDI's power-on values, because the node ignores controllers: CC7 100, CC10 64, CC11 127, the wheel centred, every other source 0. In effect a constant 4.2 dB from CC7, the value abcjs's files also send, and nothing else |
+| CC7 and CC11 to attenuation, CC10 to pan, CC1 and channel pressure to vibrato, CC91 and CC93 to the sends, the pitch wheel to pitch | Held at General MIDI's power-on values, because the node ignores controllers: CC7 100, CC10 64, CC11 127, the wheel centred, every other source 0, the sustain pedal (CC64) included. In effect a constant 4.2 dB from CC7, the value abcjs's files also send, and nothing else |
+
+**The sustain pedal is not followed**, nor any other controller. Ticket 04's decision 13.5
+ignores controllers; abcjs's files send the pedal only as "off" at each track's start (ticket
+04's facts); and abcjs's own synth ignores it, so today's sound has no pedal either. A DAW may
+want it later. It would be an addition, following §9.2 of the 2.04 spec: a note the pedal
+keeps stays in the key-on state, which
+[How does a released voice keep sounding until its release ends?](06-release-survives-voice-allocation.md)
+(D3) already ranks as held.
 
 **The velocity-to-cutoff choice.** Three readings exist. The default piano's cutoff, in kHz,
 derived from its 11623 cents as ticket 10 did, not rendered:
@@ -237,9 +245,8 @@ This is what ticket 04's decision 13.3 needs: velocity is honoured.
   pitch, as the spec describes for linked samples, would erase that.
 - **Pan law:** equal power between the extremes, so a centred mono zone is 3 dB down on each
   side, and ±500 is fully one-sided.
-- The pool's size, and whether it counts notes or voices, stay with
-  [How does a released voice keep sounding until its release ends?](06-release-survives-voice-allocation.md).
-  A note on this piano takes two voices.
+- This is the unit ticket 06's pool counts: one voice per sounding sample, 256 by default
+  (its D2). A note on this piano takes two, and the pool takes both together (its D3).
 
 ### D7. Loops, and when a voice ends
 
@@ -252,30 +259,36 @@ This is what ticket 04's decision 13.3 needs: velocity is honoured.
   the loop's end to the sample's end.
 - **Loop, start and end points** are the header's plus the zone's offset generators: the fine
   offset plus 32,768 times the coarse one.
-- **A voice ends** when its volume envelope reaches full attenuation (1000 cB, 100 dB, the
-  spec's silence) in decay or release, or when playback without a loop passes its sample's
-  end. On the default piano a voice ends when its release reaches silence, 0.4 to 1.2 s after
-  the note-off, or when a held note's decay does, 3.7 to 45 s after the note-on. Ticket 06's
-  pool and ticket 04's tail trim both see that end.
-- **Envelope shapes** follow the spec: the volume envelope's attack rises linearly in amplitude,
-  its decay and release fall at a constant rate in decibels, and a stage's time is the time for
-  its full 100 dB change, so a release that starts below full level ends sooner.
+- **A voice ends** as ticket 06 decided (its D1): when, after its attack, its volume envelope
+  has fallen 96 dB below its peak, or when playback with no loop left passes its sample's end.
+  On the default piano, whose zones all loop in mode 1, only the envelope ends a voice: about
+  0.4 to 1.2 s after the note-off, or within a held note's hold and decay, at most about 50 s.
+- **The envelope's shape**, which ticket 06 left here, follows the spec. Delay is silent and
+  hold is flat. The attack rises linearly in amplitude. Decay and release fall at a constant
+  rate in decibels, and a stage's time is the time for a full 100 dB change, so a release that
+  starts below full level ends sooner. Sustain is an attenuation in centibels; the piano's
+  1000 cB passes the 96 dB floor, so its held notes end by themselves.
+- **The gains on top of the envelope**, also left here: `initialAttenuation` plus the velocity
+  and held-controller modulators, clamped to the spec's 0–1440 cB, so no voice is ever louder
+  than its sample; the modulation LFO's volume term; equal-power pan (D6); and the filter.
+  None of them decides when a voice ends, which ticket 06 bases on the envelope alone.
 
 ### D8. Exclusive class
 
 *Decided under the node-policy delegation in `AGENTS.md`, 2026-11-24.*
 
 - **Honoured.** When a note starts a zone with a non-zero `exclusiveClass`, every other sounding
-  voice of that class is released quickly. The voices that note itself starts are spared,
-  since a pair's two sides share a class.
+  voice of that class ends. The voices that note itself starts are spared, since a pair's two
+  sides share a class.
 - **Its scope is the whole node, on every channel.** The spec makes a class's scope its preset,
   and the node plays one preset on every channel (ticket 05, D2).
-- **Released, not cut:** at the new note's sample, the old voice enters its release with its
-  volume and modulation envelopes' release times set to −200 timecents (0.89 s for the full
-  100 dB). That is FluidSynth's value; the spec confirms it in FluidSynth's source and follows
-  the source if it differs. A hard cut would click.
-- From then on it is an ordinary releasing voice for ticket 06's policy. The default piano has
-  no class, so this serves drum kits.
+- **It ends with ticket 06's fade:** from the new note's sample, the old voice fades linearly to
+  zero over 6 ms, as a voice taken for the pool does (ticket 06, D5), and its slot is free at
+  once. One way to end a voice early, not two. SFZ's exclusive groups (`off_by`) end a voice
+  with this same fast fade by default. FluidSynth instead gives the old voice a release of
+  −2000 timecents (about 0.3 s for 100 dB, as ticket 06 read its source), which lets a choked
+  open hi-hat ring on under the closed one. The default piano has no class, so this serves only drum kits, which no comparison
+  covers.
 
 ### D9. Channel 10: played like every other channel
 
@@ -319,8 +332,8 @@ This is what ticket 04's decision 13.3 needs: velocity is honoured.
   tolerances, which the spec may tune: pitch within ±1 cent of the derived pitch; each
   envelope stage within one frame of its derived time; velocity attenuation within 0.1 dB of
   D2's curve; the filter's gain at its derived cutoff within 1 dB of the design; a voice ending
-  on the frame its envelope reaches silence; and output bit-identical across block sizes, as
-  every node's must be.
+  on the frame its envelope has fallen 96 dB (ticket 06, D1); and output bit-identical across
+  block sizes, as every node's must be.
 - **FluidSynth is the comparison renderer** for the default piano. It made the renders the site
   plays today and is the most widely used SoundFont 2 player. It renders the same MIDI bytes
   and the same extract at the same sample rate, with reverb and chorus off. "Sounds right" then
@@ -370,7 +383,6 @@ of sources it did not re-read:
   hardware many soundfonts were made on. The node follows the spec's centibels. On the default
   piano this changes only the overall level. If a stretch-goal preset whose zones differ in
   attenuation sounds unbalanced against FluidSynth, revisit it under the same delegation.
-- **FluidSynth's exclusive-class release** of −200 timecents (D8).
 
 ### Open for the planning hub
 
