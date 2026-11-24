@@ -136,9 +136,12 @@ Nothing under `kernel/`, `workspace/`, `nodes/` or `apps/` changes.
     - The browsers: Chrome 157.0.8103.79 and Edge 158.0.4370.33, each `--headless` with a
       fresh profile folder per page load, five loads each.
     - The machine: Windows 11 Pro, AMD Ryzen 7 9800X3D, 16 logical cores.
-    - The renders, on the page's main thread, as the loader runs them today: the preview is
-      midishare's, one key held 0.25 s at velocity 105, then its release; the file ends as the
-      key is let go.
+    - The renders, on the page's main thread, as the loader runs them today. The preview
+      has midishare's shape: one key held 0.25 s at velocity 105, then its release; the file
+      ends as the key is let go. Its 35 bytes are written by the page, as the golden
+      preview's are. They lack the controller and tempo events that abcjs writes into
+      midishare's own preview (`getMidiFile(previewAbc(pitch))`, map ticket 04,
+      decision 8).
   - **Medians over the five loads**, in ms:
 
     | Browser | Import loader and glue | `loadModular` | `createInstrument` | First render | Later renders |
@@ -198,12 +201,54 @@ Nothing under `kernel/`, `workspace/`, `nodes/` or `apps/` changes.
     their ports.
   - The browsers' other processes were not touched.
 - *Findings.* No mismatch and no failure, so no follow-up ticket is proposed.
-- *Checks.*
-  - Native, through the script: Debug 11/11 and Release 11/11 CTest entries, both `desktop`
-    tests included.
-  - `ctest --preset web`, Emscripten 6.0.13 and its Node on Windows: 8/8 entries, the smoke
+- *Checks, on the rebased tree.*
+  - Native, through the script: Debug 12/12 and Release 12/12 CTest entries, both `desktop`
+    tests and soundfont node 04's `soundfont_portable_maths` included.
+  - `ctest --preset web`, Emscripten 6.0.13 and its Node on Windows: 9/9 entries, the smoke
     test reading its golden preview from `web-check/`.
   - `python scripts/check_docs.py`: 0 problems. `git diff --check`: clean.
+- *Review.* `/code-review` ran on both axes over `git diff origin/main...HEAD` at `82cff4d`,
+  with a clean working tree.
+  - Standards, fixed:
+    - the page rendered every rate on one instrument, against the spec's "a fresh graph or
+      instrument for each independent render". It now makes one per rate;
+    - **possible Speculative Generality:** `golden_hash.mjs` no longer exports
+      `kBlockFrames` or `firstDifferingBlock`, which nothing imports, and the page's outcome
+      drops the fields only the throwaway driver read;
+    - **possible Mysterious Name:** the page's `describe()` is `aboutLine()`. In
+      `CMakeLists.txt`, one list held the module's file names and then their copies' paths;
+      now there are three lists, with a comment on why the copy depends on the manifest
+      alone;
+    - the smoke test now fails with "no golden preview at 48 kHz" when the fixture lacks
+      that rate, as the fixture writer did before;
+    - in `docs/web.md`, "the same bits in every engine" now reads "in every browser and in
+      Node", so "engine" keeps the meaning `CONTEXT.md` gives it. The page is copied when
+      the preset is configured and the fixtures are built, as the docs now say. They no
+      longer claim more than was tried on the file system: Chrome was tried. On Python,
+      `mimetypes` was checked in 3.10, 3.11 and 3.13, and 3.13 served the page.
+  - Standards, kept:
+    - **possible Speculative Generality:** `globalThis.modularCheck`. It is how the agent
+      checks the same page headless, which this ticket asks, without the page posting
+      anything to a server;
+    - **possible Mysterious Name:** `web_smoke_fixture` now writes the check page's fixtures
+      too. Its header says so, and a rename would touch the docs and the earlier tickets'
+      evidence for no change in behaviour;
+    - **possible Duplicated Code:** the throwaway native harness repeats the fixture's JSON
+      loop. It is a prototype outside the build.
+  - Spec, fixed:
+    - the timed preview's bytes are written by the page, not by abcjs. Setup now says so;
+    - the last checklist item's CI and review evidence is recorded here before the pull
+      request merges.
+  - Spec, kept:
+    - The fixture writer moved from CTest into the build. The ticket's "built into the build
+      tree with its fixtures" needs the folder complete after a build alone, which is what
+      the CI artifact uploads and what a local build serves.
+    - `docs/web.md` describes the hand check as the general way to check a browser.
+      The logistics for this ticket's Firefox and Safari check are still a proposal: below,
+      under **For the user**, which awaits the planning hub's agreement with the user.
+  - Public content: every checkpoint was read for paths, account or machine names, emails
+    and secrets. It holds none. The extract's path is given as `%USERPROFILE%\…`, as ticket
+    04's evidence on `main` gives it. Every commit carries the noreply identity.
 - *Kept from the spec, on purpose.*
   - The page renders the golden preview of `tests/WebGoldenClips.h` built by the test-side
     builder, never the extract. No soundfont file enters `tests/` (map ticket 08,

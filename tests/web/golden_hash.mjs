@@ -2,7 +2,7 @@
 // the browser check page. The hash is FNV-1a, 64-bit, over each sample's IEEE 754 bits, their
 // four bytes least significant first, frames in order and left before right, started afresh
 // for every block of 4,096 frames. BigInt keeps it exact.
-export const kBlockFrames = 4096;
+const kBlockFrames = 4096;
 
 function blockHash(channels, from, to) {
   const views = channels.map((samples) =>
@@ -33,7 +33,7 @@ export function measure({ sampleRate, channels }) {
 
 // The first block at which `actual` differs from `golden`: as many as `actual` has when every
 // one of them matches.
-export function firstDifferingBlock(golden, actual) {
+function firstDifferingBlock(golden, actual) {
   const common = Math.min(golden.blocks.length, actual.blocks.length);
   let block = 0;
   while (block < common && actual.blocks[block] === golden.blocks[block]) ++block;

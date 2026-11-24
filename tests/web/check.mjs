@@ -11,7 +11,7 @@
 //   preview.sf2, preview.mid, preview.json    the golden preview and its values
 //
 // globalThis.modularCheck is a promise of the outcome, for a page that drives this one.
-import { difference, firstDifferingBlock, measure } from './golden_hash.mjs';
+import { difference, measure } from './golden_hash.mjs';
 
 const verdict = document.getElementById('verdict');
 const about = document.getElementById('about');
@@ -24,7 +24,8 @@ function element(tag, text, className) {
   return made;
 }
 
-function describe(term, detail) {
+// A line of what the page ran on, under the verdict.
+function aboutLine(term, detail) {
   about.append(element('dt', term), element('dd', detail));
 }
 
@@ -63,25 +64,25 @@ function showRender(golden, actual, problem) {
 }
 
 async function check() {
-  describe('Browser', navigator.userAgent);
+  aboutLine('Browser', navigator.userAgent);
   const { loadModular } = await import('./modular/modular.mjs');
   const [soundfont, midi, values] = await Promise.all(
     ['preview.sf2', 'preview.mid', 'preview.json'].map(fetchBytes));
   const { renders: goldens } = JSON.parse(new TextDecoder().decode(values));
   const modular = await loadModular();
   const { commit, dirty, emscripten } = modular.version;
-  describe('Module', `${commit}${dirty ? ', built from uncommitted changes' : ''}`);
-  describe('Emscripten', emscripten);
-  const instrument = await modular.createInstrument(soundfont);
-  const outcome = { matched: true, userAgent: navigator.userAgent, version: modular.version,
-                    renders: [] };
+  aboutLine('Module', `${commit}${dirty ? ', built from uncommitted changes' : ''}`);
+  aboutLine('Emscripten', emscripten);
+  const outcome = { matched: true, version: modular.version, renders: [] };
+  // A fresh instrument for each rate, as the render core's golden tests make one.
   for (const golden of goldens) {
+    const instrument = await modular.createInstrument(soundfont);
     const actual = measure(await instrument.render(midi, golden.rate));
     const problem = difference(golden, actual);
     showRender(golden, actual, problem);
     outcome.matched &&= problem === '';
     outcome.renders.push({ rate: golden.rate, frames: actual.frames, blocks: actual.blocks.length,
-                           matchingBlocks: firstDifferingBlock(golden, actual), problem });
+                           problem });
   }
   const rates = goldens.map((golden) => golden.rate).join(', ');
   verdict.textContent = outcome.matched
@@ -95,5 +96,5 @@ async function check() {
 globalThis.modularCheck = check().catch((error) => {
   verdict.textContent = `The check failed: ${error?.message ?? error}`;
   verdict.className = 'mismatch';
-  return { matched: false, userAgent: navigator.userAgent, error: String(error?.message ?? error) };
+  return { matched: false, error: String(error?.message ?? error) };
 });

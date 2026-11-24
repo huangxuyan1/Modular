@@ -257,20 +257,23 @@ and twenty more renders of it left both the memory and the heap in use where the
 ### Checking a browser by hand
 
 Node is the golden check's runtime, since WebAssembly computes the same bits in every
-engine, so no browser is checked on every change. The *check page* lets a person confirm
-that once in a browser, such as Firefox or Safari, which the development machine lacks. It
-renders the golden preview through the loader at 44.1, 48 and 22.05 kHz and shows each
-rate's frame count and block hashes beside the [golden values](#golden-clips).
+browser and in Node, so no browser is checked on every change. The *check page* lets a
+person confirm that once in a browser, such as Firefox or Safari, which the development
+machine lacks. It renders the golden preview through the loader at 44.1, 48 and 22.05 kHz,
+each on a fresh instrument, and shows each rate's frame count and block hashes beside the
+[golden values](#golden-clips).
 
 - **Where it is.** `tests/web/` holds the page, `index.html` and `check.mjs`, and
-  `golden_hash.mjs`, the golden hash in JavaScript, which the smoke test shares. The build
-  writes the page into `build/web/web-check/` with its fixtures, the golden preview's
-  `preview.sf2`, `preview.mid` and `preview.json`, and a copy of the module's files in
-  `modular/`. The [`web` CI job](#continuous-integration) uploads that folder as an
-  artifact of its own, `modular-web-check-<commit>`, apart from the module's.
-- **What it needs.** Any static server that sends `.mjs` files as JavaScript, and nothing
-  else. The `http.server` of Python 3.10 or later does. Opened from the file system, the
-  page cannot load its modules, and says so.
+  `golden_hash.mjs`, the golden hash in JavaScript, which the smoke test shares. Configuring
+  the `web` preset copies the page into `build/web/web-check/`, and building adds its
+  fixtures, the golden preview's `preview.sf2`, `preview.mid` and `preview.json`, and a copy
+  of the module's files in `modular/`. The [`web` CI job](#continuous-integration) uploads
+  that folder as an artifact of its own, `modular-web-check-<commit>`, apart from the
+  module's.
+- **What it needs.** Any static server that sends `.mjs` files with a JavaScript type, and
+  nothing else. Python's `http.server` maps them to one from Python 3.10. Opened from the
+  file system, the page cannot run: Chrome refuses its modules, and the page then says it
+  could not load.
 
 The steps:
 

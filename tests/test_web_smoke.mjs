@@ -424,6 +424,7 @@ test("the golden preview renders through the loader to the render core's golden 
   const read = (name) => new Uint8Array(readFileSync(join(goldenPath, name)));
   const { renders } = JSON.parse(Buffer.from(read('preview.json')).toString('utf8'));
   const golden = renders.find((render) => render.rate === 48000);
+  assert.ok(golden, 'no golden preview at 48 kHz');
   const instrument = await modular.createInstrument(read('preview.sf2'));
   const actual = measure(await instrument.render(read('preview.mid'), golden.rate));
   const problem = difference(golden, actual);

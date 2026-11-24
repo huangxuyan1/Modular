@@ -318,20 +318,23 @@ if(EMSCRIPTEN)
   foreach(page index.html check.mjs golden_hash.mjs)
     configure_file("tests/web/${page}" "${MODULAR_WEB_CHECK}/${page}" COPYONLY)
   endforeach()
-  set(web_check_module_files
+  # The copy depends on the manifest alone: no rule names the .wasm, which the module's link
+  # writes, and the manifest is written again after any of the files changes, since it holds
+  # each one's SHA-256.
+  set(web_module_files
     modular.mjs modular.d.mts modular_web.mjs modular_web.wasm modular.manifest.json)
-  set(web_check_module_sources ${web_check_module_files})
-  list(TRANSFORM web_check_module_sources PREPEND "${MODULAR_WEB_DIST}/")
-  list(TRANSFORM web_check_module_files PREPEND "${MODULAR_WEB_CHECK}/modular/")
-  add_custom_command(OUTPUT ${web_check_module_files}
+  set(web_module_shipped ${web_module_files})
+  list(TRANSFORM web_module_shipped PREPEND "${MODULAR_WEB_DIST}/")
+  set(web_module_copies ${web_module_files})
+  list(TRANSFORM web_module_copies PREPEND "${MODULAR_WEB_CHECK}/modular/")
+  add_custom_command(OUTPUT ${web_module_copies}
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${MODULAR_WEB_CHECK}/modular"
-    COMMAND "${CMAKE_COMMAND}" -E copy ${web_check_module_sources}
-      "${MODULAR_WEB_CHECK}/modular"
+    COMMAND "${CMAKE_COMMAND}" -E copy ${web_module_shipped} "${MODULAR_WEB_CHECK}/modular"
     DEPENDS "${MODULAR_WEB_MANIFEST}"
     COMMENT "Copying the web module beside the check page"
     VERBATIM)
   add_custom_target(modular_web_check ALL
-    DEPENDS "${MODULAR_WEB_SMOKE_SOUNDFONT}" ${web_check_fixtures} ${web_check_module_files})
+    DEPENDS "${MODULAR_WEB_SMOKE_SOUNDFONT}" ${web_check_fixtures} ${web_module_copies})
   add_dependencies(modular_web_check modular_web_manifest)
 
   add_test(NAME web_smoke COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR}
