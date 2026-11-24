@@ -102,13 +102,22 @@ private:
     void release(double from, std::uint64_t frames);
   };
 
+  // A low-frequency oscillator, the specification's triangle: 0 through its
+  // delay, then up from 0 to 1, down to -1 and back to 0 every period.
+  struct Lfo {
+    std::uint64_t delay = 0; // frames left before it starts
+    double phase = 0;        // where it is in its period, from 0 to 1
+    double value() const;    // this frame's
+    void advance(double step); // to the next frame, step being periods per frame
+  };
+
   // The voice's two-pole low-pass, a state-variable filter whose coefficients
   // follow the cutoff in whole cents.
   struct Filter {
     std::optional<std::int64_t> cents; // the cutoff the coefficients are for
     double a1 = 0, a2 = 0, a3 = 0;
     double state1 = 0, state2 = 0;
-    void tune(std::int64_t cutoff, double rate);
+    void tune(std::int64_t cutoff, double rate, double damping);
     double step(double in);
   };
 
@@ -120,6 +129,8 @@ private:
     int tuning = 0;       // cents: coarseTune, fineTune and the header's correction
     double panLeft = 0, panRight = 0;
     double attenuation = 0; // centibels: initialAttenuation plus held controllers
+    double damping = 0;     // the filter's 1 / Q
+    double filterGain = 1;  // the filter's gain at DC
     // Points from the zone's start: those it plays, and its loop.
     std::size_t points = 0, loopStart = 0, loopEnd = 0;
     bool loops = false;          // loops while held
@@ -127,6 +138,9 @@ private:
     Timeline volume, modulation; // all but the hold and the decay
     double releaseFramesPerDb = 0, releaseFactor = 1;
     double modReleaseFrames = 0; // for a full change
+    Lfo modLfo, vibLfo;          // as each starts, with its delay
+    double modLfoStep = 0, vibLfoStep = 0;
+    bool pitchMoves = false; // an envelope or an LFO moves the pitch
   };
 
   struct Voice {
@@ -144,11 +158,12 @@ private:
     Envelope volume, modulation;
     double decayFactor = 1;    // the volume's fall per frame in its decay
     double modDecayFrames = 0; // the modulation decay's frames for a full change
+    Lfo modLfo, vibLfo;
     // Cents from the zone's root, scaled and tuned, before modulation.
     double pitch = 0;
     double position = 0, increment = 0;
-    // The gain of its total attenuation: initialAttenuation, the held
-    // controllers and its velocity, clamped.
+    // The gain of its total attenuation (initialAttenuation, the held
+    // controllers and its velocity, clamped), times the filter's at DC.
     double gain = 1;
     // Cents: initialFilterFc plus the velocity modulator, before the
     // modulation envelope.
@@ -184,7 +199,6 @@ private:
   static bool sounds(Voice& voice, const PreparedZone& plan);
   static double volume(const Voice& voice, const PreparedZone& plan);
   static double modulation(const Voice& voice, const PreparedZone& plan);
-  static std::int64_t cutoff(const Voice& voice, const PreparedZone& plan);
 
   PortId midi_ = kNoPort, out_ = kNoPort;
   std::optional<SoundFont> sound_font_;

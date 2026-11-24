@@ -38,6 +38,9 @@ std::uint64_t frames(std::int32_t timecents, double rate) {
   return static_cast<std::uint64_t>(std::llround(seconds(timecents) * rate));
 }
 
+// Absolute cents, in which 6900 is 440 Hz, as hertz.
+double hertz(double cents) { return 440 * maths::exp2((cents - 6900) / 1200); }
+
 // The attenuation, in centibels, of a default modulator taking a 7-bit source
 // to attenuation: 960 cB on the concave curve, falling from 127. It comes to
 // -400 log10(value / 127): a gain of 40 log10(value / 127) dB.
@@ -143,6 +146,13 @@ void SoundFontNode::prepare(const PrepareInfo& info) {
     plan.panRight = maths::sin((500 + pan) / 1000 * kPi / 2);
     plan.attenuation =
         g[SoundFont::kInitialAttenuation] + concaveAttenuation(kPowerOnVolume);
+    // initialFilterQ, in centibels, raises the gain at the cutoff above a
+    // Butterworth response's -3 dB there, which Q 0 cB gives, as FluidSynth
+    // reads "not resonant": Q is 10^(dB / 20) / sqrt(2). The gain at DC falls
+    // by half as many decibels, as the specification says.
+    const double resonanceDb = g[SoundFont::kInitialFilterQ] / 10.0;
+    plan.damping = std::numbers::sqrt2 * maths::exp10(-resonanceDb / 20);
+    plan.filterGain = maths::exp10(-resonanceDb / 40);
     plan.points = zone.sampleEnd - zone.sampleStart;
     // sampleModes 1 loops for the voice's whole life, 3 while it is held; 0,
     // 2 and any other value play to the sample's end, as does a zone whose
@@ -171,6 +181,13 @@ void SoundFontNode::prepare(const PrepareInfo& info) {
     plan.modulation.attack = frames(g[SoundFont::kAttackModEnv], rate);
     plan.modulation.sustain = 1 - g[SoundFont::kSustainModEnv] / 1000.0;
     plan.modReleaseFrames = seconds(g[SoundFont::kReleaseModEnv]) * rate;
+
+    plan.modLfo.delay = frames(g[SoundFont::kDelayModLfo], rate);
+    plan.modLfoStep = hertz(g[SoundFont::kFreqModLfo]) / rate;
+    plan.vibLfo.delay = frames(g[SoundFont::kDelayVibLfo], rate);
+    plan.vibLfoStep = hertz(g[SoundFont::kFreqVibLfo]) / rate;
+    plan.pitchMoves = g[SoundFont::kModEnvToPitch] != 0 || g[SoundFont::kModLfoToPitch] != 0 ||
+                      g[SoundFont::kVibLfoToPitch] != 0;
     plans_.push_back(plan);
   }
   slots_.assign(voice_limit_, Slot{});
@@ -243,13 +260,15 @@ void SoundFontNode::noteOn(std::uint8_t channel, std::uint8_t key, std::uint8_t 
     // The default velocity-to-attenuation modulator adds to the zone's.
     const double attenuation = std::clamp(
         plan.attenuation + concaveAttenuation(zoneVelocity), 0.0, kMostAttenuation);
-    voice.gain = maths::exp10(-attenuation / 200);
+    voice.gain = maths::exp10(-attenuation / 200) * plan.filterGain;
     // And the velocity-to-cutoff one to initialFilterFc.
     voice.baseCutoff = g[SoundFont::kInitialFilterFc] +
                        kVelocityToCutoff * (128 - zoneVelocity) / 128;
     voice.volume.timeline = plan.volume;
     voice.modulation.timeline = plan.modulation;
     scaleToKey(voice, plan, zoneKey);
+    voice.modLfo = plan.modLfo;
+    voice.vibLfo = plan.vibLfo;
     voice.modulation.settle();
     voice.active = sounds(voice, plan);
   }
@@ -434,29 +453,33 @@ double SoundFontNode::modulation(const Voice& voice, const PreparedZone& plan) {
   }
 }
 
-// The cutoff for the voice's next frame, in whole cents: its base, plus the
-// modulation envelope's.
-std::int64_t SoundFontNode::cutoff(const Voice& voice, const PreparedZone& plan) {
-  return std::llround(voice.baseCutoff +
-                      plan.zone.generators[SoundFont::kModEnvToFilterFc] *
-                          modulation(voice, plan));
+// The specification's triangle, rising from 0 when its delay is over.
+double SoundFontNode::Lfo::value() const {
+  if (delay > 0) return 0;
+  if (phase < 0.25) return 4 * phase;
+  if (phase < 0.75) return 2 - 4 * phase;
+  return 4 * phase - 4;
+}
+
+void SoundFontNode::Lfo::advance(double step) {
+  if (delay > 0) {
+    --delay;
+    return;
+  }
+  phase += step;
+  if (phase >= 1) phase -= 1;
 }
 
 // The specification's two-pole low-pass, as a state-variable filter whose
 // response is the bilinear transform's: its cutoff is exact, it passes a
 // steady signal unchanged, and its coefficients change smoothly with the
-// cutoff. At Q 0 cB it is a Butterworth response, 3 dB down at the cutoff
-// (ticket 04 reads initialFilterQ). The cutoff is kept below 0.45 of the graph's
+// cutoff. `damping` is 1 / Q. The cutoff is kept below 0.45 of the graph's
 // rate, as FluidSynth keeps it, so a high one cannot reach Nyquist.
-void SoundFontNode::Filter::tune(std::int64_t cutoff, double rate) {
+void SoundFontNode::Filter::tune(std::int64_t cutoff, double rate, double damping) {
   cents = cutoff;
-  // Absolute cents: 6900 is 440 Hz.
-  const double hertz =
-      std::min(440 * maths::exp2(static_cast<double>(cutoff - 6900) / 1200), 0.45 * rate);
-  const double angle = kPi * hertz / rate;
+  const double angle = kPi * std::min(hertz(static_cast<double>(cutoff)), 0.45 * rate) / rate;
   const double g = maths::sin(angle) / maths::cos(angle);
-  constexpr double kDamping = std::numbers::sqrt2; // 1 / Q, for Q = 1 / sqrt(2)
-  a1 = 1 / (1 + g * (g + kDamping));
+  a1 = 1 / (1 + g * (g + damping));
   a2 = g * a1;
   a3 = g * a2;
 }
@@ -482,11 +505,18 @@ void SoundFontNode::render(Voice& voice, float* left, float* right, std::uint32_
   const auto& plan = plans_[voice.plan];
   const auto start = plan.zone.sampleStart;
   const auto loopLength = static_cast<double>(plan.loopEnd - plan.loopStart);
+  const auto& g = plan.zone.generators;
   for (std::uint32_t i = from; i < to; ++i) {
     auto& envelope = voice.volume;
     if (envelope.stage != Stage::kDelay) { // in the delay, silent, and the sample waits
-      if (const auto cents = cutoff(voice, plan); cents != voice.filter.cents)
-        voice.filter.tune(cents, rate_);
+      const double modEnv = modulation(voice, plan);
+      const double modLfo = voice.modLfo.value();
+      // The cutoff in whole cents: the voice's base, plus the modulation
+      // envelope's and the modulation LFO's terms.
+      if (const auto cents = std::llround(voice.baseCutoff + g[SoundFont::kModEnvToFilterFc] * modEnv +
+                                          g[SoundFont::kModLfoToFilterFc] * modLfo);
+          cents != voice.filter.cents)
+        voice.filter.tune(cents, rate_, plan.damping);
       // Linear interpolation. While looping, the loop's last point is followed
       // by its first, so no point past the loop is read; past the sample's
       // last point the sample is silent.
@@ -500,12 +530,25 @@ void SoundFontNode::render(Voice& voice, float* left, float* right, std::uint32_
       double sample =
           voice.filter.step((a + (b - a) * (voice.position - index)) / 32768.0) *
           volume(voice, plan) * voice.gain;
+      // The modulation LFO's volume term, in centibels: a positive depth
+      // makes the LFO's rise louder.
+      if (const auto depth = g[SoundFont::kModLfoToVolume]; depth != 0)
+        sample *= maths::exp10(depth * modLfo / 200);
       // A taken voice falls in equal steps to zero, from full on the new
       // note's frame.
       if (voice.fadeLeft > 0)
         sample *= voice.fadeLeft / static_cast<double>(fade_frames_);
       left[i] += static_cast<float>(sample * plan.panLeft);
       right[i] += static_cast<float>(sample * plan.panRight);
+      // The pitch's modulation, in cents: the modulation envelope's and both
+      // LFOs' terms.
+      if (plan.pitchMoves)
+        voice.increment =
+            maths::exp2((voice.pitch + g[SoundFont::kModEnvToPitch] * modEnv +
+                         g[SoundFont::kModLfoToPitch] * modLfo +
+                         g[SoundFont::kVibLfoToPitch] * voice.vibLfo.value()) /
+                        1200) *
+            plan.rateRatio;
       voice.position += voice.increment;
       if (voice.looping && voice.position >= plan.loopEnd)
         voice.position =
@@ -516,6 +559,8 @@ void SoundFontNode::render(Voice& voice, float* left, float* right, std::uint32_
     ++envelope.frame;
     ++voice.modulation.frame;
     voice.modulation.settle();
+    voice.modLfo.advance(plan.modLfoStep);
+    voice.vibLfo.advance(plan.vibLfoStep);
     // A taken voice ends with its fade, unless it ends by itself first.
     if ((voice.fadeLeft > 0 && --voice.fadeLeft == 0) || !sounds(voice, plan)) {
       voice.active = false;

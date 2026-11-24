@@ -566,6 +566,45 @@ TEST_CASE("the filter is a two-pole low-pass 3 dB down at its derived cutoff") {
   }
 }
 
+namespace {
+
+// The design with a resonance of `qCb` centibels: the two-pole low-pass whose
+// Q is 10^(qCb / 200) / sqrt(2), so its gain at the cutoff stands qCb above
+// the Butterworth response's -3 dB there, read against its gain at DC.
+double lowpassDb(double hertz, double cutoff, double qCb) {
+  const double x = hertz / cutoff;
+  const double q = std::pow(10, qCb / 200) / std::sqrt(2.0);
+  return -10 * std::log10((1 - x * x) * (1 - x * x) + x * x / (q * q));
+}
+
+} // namespace
+
+TEST_CASE("initialFilterQ raises the gain at the cutoff by its centibels as designed") {
+  // The cutoff at velocity 127 is 1000 Hz, as above. At Q 300 cB the gain
+  // there is 27 dB above DC's.
+  for (const int q : {0, 100, 200, 300}) {
+    for (const double hertz : {1000.0, 500.0, 2000.0}) {
+      CAPTURE(q);
+      CAPTURE(hertz);
+      const auto font = toneFont({set(gen::kInitialFilterFc, 8340), set(gen::kInitialFilterQ, q)},
+                                 hertz, 48000, 48000);
+      const auto out = play(font, {{13, noteOn(0, 60, 127)}}, {48000, 128, 12000});
+      CHECK(std::abs(toneGainDb(out, 4000, 8800) - lowpassDb(hertz, 999.966, q)) <= 1);
+    }
+  }
+}
+
+TEST_CASE("initialFilterQ lowers the gain at DC by half its centibels") {
+  // A steady sample through the default cutoff: 100 cB of resonance takes
+  // 5 dB off it, once the onset's ringing at the cutoff has died away.
+  for (const int q : {100, 250, 480}) {
+    CAPTURE(q);
+    const auto out = play(envelopeFont({set(gen::kInitialFilterQ, q)}),
+                          {{13, noteOn(0, 60, 100)}}, {48000, 128, 6000});
+    CHECK(db(level(out, 5500)) == doctest::Approx(-q / 20.0).epsilon(1e-4));
+  }
+}
+
 TEST_CASE("velocity lowers the cutoff linearly so a softer note is quieter and never brighter") {
   // The default velocity-to-cutoff modulator: -2400 cents times (128 - v) /
   // 128 at every velocity, with no switch at 64. From the default piano's
@@ -755,6 +794,130 @@ TEST_CASE("key scaling gives a modulation envelope's hold and decay their timece
     // And the scaling changed something.
     CHECK(scaled.left != play(zone(c.hold, 0, c.decay, 0), note, run).left);
   }
+}
+
+namespace {
+
+// A 1 kHz sine recorded at the graph's rate, rooted at key 60 and looping over
+// 1000 whole cycles, under `generators`, with a volume release of 100 s.
+Bytes loopingKilohertz(std::vector<Generator> generators, double rate) {
+  generators.insert(generators.end(),
+                    {set(gen::kSampleModes, 1), set(gen::kReleaseVolEnv, 8000)});
+  const auto points = static_cast<std::size_t>(rate);
+  return build(oneZone(sine(1000 / rate, points), generators,
+                       static_cast<std::uint32_t>(rate)));
+}
+
+// The frequency over the `width` seconds centred on second `at`.
+double hertzAround(const Stereo& out, double at, double rate, double width = 0.04) {
+  return frequency(out.left, static_cast<std::size_t>((at - width / 2) * rate),
+                   static_cast<std::size_t>((at + width / 2) * rate), rate);
+}
+
+} // namespace
+
+TEST_CASE("modEnvToPitch moves the pitch by its cents times the modulation envelope") {
+  // Held at 1 for 0.5 s, the envelope then falls over 0.125 s to a sustain 50 %
+  // down; released at 1 s, it falls to 0 over 0.125 s. 1200 cents takes 1 kHz
+  // to 2 kHz in the hold and to 1414 Hz in the sustain.
+  for (const double rate : {44100.0, 48000.0}) {
+    CAPTURE(rate);
+    const auto font = loopingKilohertz(
+        {set(gen::kModEnvToPitch, 1200), set(gen::kHoldModEnv, -1200),
+         set(gen::kDecayModEnv, -2400), set(gen::kSustainModEnv, 500),
+         set(gen::kReleaseModEnv, -2400)},
+        rate);
+    const auto off = static_cast<std::uint64_t>(rate);
+    const auto out = play(font, {{3, noteOn(0, 60, 100)}, {off, noteOff(0, 60)}},
+                          {rate, 128, static_cast<std::uint64_t>(1.4 * rate)});
+    CHECK(std::abs(cents(hertzAround(out, 0.25, rate, 0.4), 2000)) < 1);
+    CHECK(std::abs(cents(hertzAround(out, 0.82, rate, 0.3), above1k(600))) < 1);
+    CHECK(std::abs(cents(hertzAround(out, 1.25, rate, 0.2), 1000)) < 1);
+  }
+}
+
+namespace {
+
+// One of the two LFOs, by its generators.
+struct LfoGenerators {
+  std::uint16_t delay, frequency, toPitch;
+};
+
+// An LFO whose delay is -1200 timecents, 0.5 s, and whose frequency is -4800
+// absolute cents: 440 * 2^((-4800 - 6900) / 1200) Hz, a period of 1.957 s.
+constexpr double kLfoDelay = 0.5;
+const double kLfoPeriod = 1 / (440 * std::exp2((-4800 - 6900) / 1200.0));
+
+std::vector<Generator> slowLfo(const LfoGenerators& lfo) {
+  return {set(lfo.delay, -1200), set(lfo.frequency, -4800)};
+}
+
+} // namespace
+
+TEST_CASE("each LFO is a triangle rising from 0 after its delay that moves the pitch by its depth") {
+  // 100 cents of depth. Averaged over 40 ms, a triangle's peak is (1 - 0.04 /
+  // period) of its height; its zero crossing averages to 0.
+  const double peak = 100 * (1 - 0.04 / kLfoPeriod);
+  for (const auto& lfo :
+       {LfoGenerators{gen::kDelayModLfo, gen::kFreqModLfo, gen::kModLfoToPitch},
+        LfoGenerators{gen::kDelayVibLfo, gen::kFreqVibLfo, gen::kVibLfoToPitch}}) {
+    CAPTURE(lfo.toPitch);
+    const double rate = 48000;
+    auto generators = slowLfo(lfo);
+    generators.push_back(set(lfo.toPitch, 100));
+    const auto out = play(loopingKilohertz(generators, rate), {{3, noteOn(0, 60, 100)}},
+                          {rate, 128, static_cast<std::uint64_t>(2.6 * rate)});
+    struct At {
+      double phase, cents;
+    };
+    CHECK(std::abs(cents(hertzAround(out, 0.25, rate), 1000)) < 1); // in the delay
+    for (const auto& at : {At{0.25, peak}, At{0.5, 0}, At{0.75, -peak}, At{1, 0}}) {
+      CAPTURE(at.phase);
+      CHECK(std::abs(cents(hertzAround(out, kLfoDelay + at.phase * kLfoPeriod, rate),
+                           above1k(at.cents))) < 1);
+    }
+  }
+}
+
+TEST_CASE("the modulation LFO moves the cutoff by modLfoToFilterFc") {
+  // The 2 kHz tone font's cutoff sits on its tone. 1200 cents of depth takes
+  // the cutoff an octave either way, less what 40 ms averages away.
+  const double rate = 48000;
+  auto generators = slowLfo({gen::kDelayModLfo, gen::kFreqModLfo, gen::kModLfoToPitch});
+  generators.push_back(set(gen::kModLfoToFilterFc, 1200));
+  const auto font =
+      toneFont(modulatedTone(generators), 2000, rate, static_cast<std::size_t>(2.6 * rate));
+  const auto out = play(font, {{13, noteOn(0, 60, 127)}},
+                        {rate, 128, static_cast<std::uint64_t>(2.5 * rate)});
+  const double octave = 1 - 0.04 / kLfoPeriod;
+  struct At {
+    double second, cutoff;
+  };
+  for (const auto& at : {At{0.25, 2000}, At{kLfoDelay + kLfoPeriod / 4, 2000 * std::exp2(octave)},
+                         At{kLfoDelay + kLfoPeriod * 3 / 4, 2000 * std::exp2(-octave)}}) {
+    CAPTURE(at.second);
+    const auto from = static_cast<std::size_t>((at.second - 0.02) * rate);
+    CHECK(std::abs(toneGainDb(out, from, from + static_cast<std::size_t>(0.04 * rate)) -
+                   butterworthDb(2000, at.cutoff)) <= 1);
+  }
+}
+
+TEST_CASE("the modulation LFO moves the volume by modLfoToVolume") {
+  // 60 cB of depth: the level rises 6 dB at the LFO's peak, a quarter period
+  // after its delay, and falls 6 dB at its trough, within a frame of each.
+  const double rate = 48000;
+  auto generators = slowLfo({gen::kDelayModLfo, gen::kFreqModLfo, gen::kModLfoToPitch});
+  generators.push_back(set(gen::kModLfoToVolume, 60));
+  const auto out = play(envelopeFont(generators, 120000), {{3, noteOn(0, 60, 100)}},
+                        {rate, 128, static_cast<std::uint64_t>(2.5 * rate)});
+  CHECK(level(out, 3 + 23000) == doctest::Approx(1));
+  const auto loudest = std::max_element(out.left.begin(), out.left.end()) - out.left.begin();
+  const auto softest =
+      std::min_element(out.left.begin() + 24000, out.left.end()) - out.left.begin();
+  CHECK(std::abs(loudest - (3 + (kLfoDelay + kLfoPeriod / 4) * rate)) <= 1);
+  CHECK(std::abs(softest - (3 + (kLfoDelay + kLfoPeriod * 3 / 4) * rate)) <= 1);
+  CHECK(db(level(out, loudest)) == doctest::Approx(6).epsilon(1e-4));
+  CHECK(db(level(out, softest)) == doctest::Approx(-6).epsilon(1e-4));
 }
 
 namespace {
