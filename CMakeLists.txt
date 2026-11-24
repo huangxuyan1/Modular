@@ -95,6 +95,7 @@ if(EMSCRIPTEN)
   # they change, so an unchanged tree relinks nothing.
   find_package(Git REQUIRED)
   set(MODULAR_WEB_VERSION_DIR "${CMAKE_CURRENT_BINARY_DIR}/web-version")
+  set(MODULAR_WEB_VERSION_FILE "${MODULAR_WEB_VERSION_DIR}/WebVersion.cmake")
   add_custom_target(modular_web_version
     COMMAND "${CMAKE_COMMAND}"
       "-DGIT=${GIT_EXECUTABLE}"
@@ -102,8 +103,7 @@ if(EMSCRIPTEN)
       "-DEMSCRIPTEN_VERSION=${EMSCRIPTEN_VERSION}"
       "-DOUTPUT_DIR=${MODULAR_WEB_VERSION_DIR}"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/apps/web/stamp_version.cmake"
-    BYPRODUCTS "${MODULAR_WEB_VERSION_DIR}/WebVersion.h"
-      "${MODULAR_WEB_VERSION_DIR}/WebVersion.cmake"
+    BYPRODUCTS "${MODULAR_WEB_VERSION_DIR}/WebVersion.h" "${MODULAR_WEB_VERSION_FILE}"
     COMMENT "Reading the commit the web module is built from"
     VERBATIM)
   add_executable(modular_web apps/web/Exports.cpp apps/web/Version.cpp)
@@ -121,15 +121,13 @@ if(EMSCRIPTEN)
   configure_file(apps/web/modular.d.mts "${MODULAR_WEB_DIST}/modular.d.mts" COPYONLY)
 
   # The manifest beside them, written by the build so a local build and CI's artifact carry
-  # the same one. Its flags are those CMake passes: every source in the module compiles
-  # with the first, and the module links with the second.
+  # the same one. Its flags are those CMake passes, composed in the order CMake puts them on
+  # the command line: every source in the module compiles with the first, and the module
+  # links with the second. The project leaves C++ extensions on, CMake's default, so the
+  # standard is the extension form, -std=gnu++20.
   string(TOUPPER "${CMAKE_BUILD_TYPE}" web_config)
   set(web_flags "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${web_config}}")
-  if(DEFINED CMAKE_CXX_EXTENSIONS AND NOT CMAKE_CXX_EXTENSIONS)
-    set(web_standard "${CMAKE_CXX${CMAKE_CXX_STANDARD}_STANDARD_COMPILE_OPTION}")
-  else()
-    set(web_standard "${CMAKE_CXX${CMAKE_CXX_STANDARD}_EXTENSION_COMPILE_OPTION}")
-  endif()
+  set(web_standard "${CMAKE_CXX${CMAKE_CXX_STANDARD}_EXTENSION_COMPILE_OPTION}")
   set(web_compile_options "$<JOIN:$<TARGET_PROPERTY:modular_web,COMPILE_OPTIONS>, >")
   set(web_linker_flags
     "${CMAKE_EXE_LINKER_FLAGS} ${CMAKE_EXE_LINKER_FLAGS_${web_config}}")
@@ -138,13 +136,12 @@ if(EMSCRIPTEN)
   add_custom_command(OUTPUT "${MODULAR_WEB_MANIFEST}"
     COMMAND "${CMAKE_COMMAND}"
       "-DDIST=${MODULAR_WEB_DIST}"
-      "-DVERSION_FILE=${MODULAR_WEB_VERSION_DIR}/WebVersion.cmake"
+      "-DVERSION_FILE=${MODULAR_WEB_VERSION_FILE}"
       "-DCOMPILE_FLAGS=${web_flags} ${web_standard} ${web_compile_options}"
       "-DLINK_FLAGS=${web_flags} ${web_linker_flags} ${web_link_options}"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/apps/web/write_manifest.cmake"
     DEPENDS modular_web "${MODULAR_WEB_DIST}/modular.mjs" "${MODULAR_WEB_DIST}/modular.d.mts"
-      "${MODULAR_WEB_VERSION_DIR}/WebVersion.cmake"
-      "${CMAKE_CURRENT_SOURCE_DIR}/apps/web/write_manifest.cmake"
+      "${MODULAR_WEB_VERSION_FILE}" "${CMAKE_CURRENT_SOURCE_DIR}/apps/web/write_manifest.cmake"
     COMMENT "Writing the web module's manifest"
     VERBATIM)
   add_custom_target(modular_web_manifest ALL DEPENDS "${MODULAR_WEB_MANIFEST}")
@@ -179,7 +176,7 @@ enable_testing()
 
 # Sets `out` to the arguments that leave the named doctest cases out under Node, where the
 # web build cannot run them; natively it is empty. docs/web.md gives each case's reason.
-function(modular_web_excluded_cases out)
+function(modular_web_exclusion_arguments out)
   set(arguments "")
   if(EMSCRIPTEN AND ARGN)
     list(JOIN ARGN "," names)
@@ -196,16 +193,16 @@ add_test(NAME kernel_tests COMMAND kernel_tests)
 add_executable(node_tests tests/test_nodes.cpp)
 target_include_directories(node_tests PRIVATE third_party/doctest)
 target_link_libraries(node_tests PRIVATE modular_nodes modular_recorder)
-set(node_web_cases "")
+set(node_excluded_cases "")
 if(CMAKE_HOST_WIN32)
   # Node on a Windows host cannot remove a directory through the C library's remove().
   # CI runs these on Linux, where they pass.
-  set(node_web_cases
+  set(node_excluded_cases
     "duplicate triggers and Stop ties preserve distinct numbered takes across blocks"
     "a partial external write is cleaned and Retry preserves existing output")
 endif()
-modular_web_excluded_cases(node_excluded ${node_web_cases})
-add_test(NAME node_tests COMMAND node_tests ${node_excluded})
+modular_web_exclusion_arguments(node_arguments ${node_excluded_cases})
+add_test(NAME node_tests COMMAND node_tests ${node_arguments})
 
 add_executable(authoring_tests tests/test_authoring.cpp)
 target_include_directories(authoring_tests PRIVATE third_party/doctest)
@@ -217,17 +214,17 @@ if(WIN32)
   target_link_libraries(authoring_tests PRIVATE modular_windows_audio)
 endif()
 # The web build has no threads, so a graph cannot run on a worker.
-set(authoring_web_cases
+set(authoring_excluded_cases
   "a client can run and release a graph on a worker before editing and running again"
   "a worker reports a processing boundary failure and releases execution")
 if(CMAKE_HOST_WIN32)
   # As for node_tests: no directory removal under Node on a Windows host.
-  list(APPEND authoring_web_cases
+  list(APPEND authoring_excluded_cases
     "shared file save replaces complete graphs at Unicode paths and retains files on failure"
     "recording graphs reopen with owned MIDI and settings but no transient take")
 endif()
-modular_web_excluded_cases(authoring_excluded ${authoring_web_cases})
-add_test(NAME authoring_tests COMMAND authoring_tests ${authoring_excluded})
+modular_web_exclusion_arguments(authoring_arguments ${authoring_excluded_cases})
+add_test(NAME authoring_tests COMMAND authoring_tests ${authoring_arguments})
 
 if(WIN32)
   add_executable(graph_editor_ui_tests tests/test_graph_editor_app.cpp)
@@ -308,12 +305,12 @@ endif()
 # soundfont tests need more than the default 16 MiB. Those that read or write files also
 # link Node's raw file system, so they see the host's files as the native tests do.
 if(EMSCRIPTEN)
-  foreach(tests kernel_tests node_tests authoring_tests midi_file_tests soundfont_tests
-                web_core_tests)
-    target_link_options(${tests} PRIVATE -sALLOW_MEMORY_GROWTH=1)
+  foreach(target kernel_tests node_tests authoring_tests midi_file_tests soundfont_tests
+                 web_core_tests)
+    target_link_options(${target} PRIVATE -sALLOW_MEMORY_GROWTH=1)
   endforeach()
-  foreach(tests node_tests authoring_tests midi_file_tests soundfont_tests)
-    target_link_options(${tests} PRIVATE -sNODERAWFS=1)
+  foreach(target node_tests authoring_tests midi_file_tests soundfont_tests)
+    target_link_options(${target} PRIVATE -sNODERAWFS=1)
   endforeach()
 endif()
 

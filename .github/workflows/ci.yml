@@ -143,17 +143,13 @@ jobs:
             cat build/web/dist/modular.manifest.json
             echo '```'
           } | tee -a "$GITHUB_STEP_SUMMARY"
-      # A PR's run builds GitHub's merge of the branch into main, so its commit is that
-      # merge; a client takes the artifact of a push to main.
+      # dist/ holds exactly the files the manifest lists and the manifest, as the smoke test
+      # checks. A PR's run builds GitHub's merge of the branch into main, so its commit is
+      # that merge; a client takes the artifact of a push to main.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: modular-web-${{ github.sha }}
-          path: |
-            build/web/dist/modular.mjs
-            build/web/dist/modular.d.mts
-            build/web/dist/modular_web.mjs
-            build/web/dist/modular_web.wasm
-            build/web/dist/modular.manifest.json
+          path: build/web/dist/
           if-no-files-found: error
 
   gate:

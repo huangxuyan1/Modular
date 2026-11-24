@@ -8,7 +8,7 @@
 // channel and leaves the right one silent.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
@@ -167,9 +167,12 @@ test('the module reports the commit and Emscripten version that built it, as the
   assert.equal(manifest.emscripten, version.emscripten);
   assert.match(manifest.flags.compile, /-fwasm-exceptions/);
   assert.match(manifest.flags.link, /-fwasm-exceptions/);
-  // Every shipped file, as it is on disk.
-  assert.deepEqual(manifest.files.map((file) => file.name),
-                   ['modular.d.mts', 'modular.mjs', 'modular_web.mjs', 'modular_web.wasm']);
+  // Every shipped file, as it is on disk. The files and the manifest are all the folder
+  // holds, so CI uploads the folder as it is.
+  const names = ['modular.d.mts', 'modular.mjs', 'modular_web.mjs', 'modular_web.wasm'];
+  assert.deepEqual(manifest.files.map((file) => file.name), names);
+  assert.deepEqual(readdirSync(dirname(loaderPath)).sort(),
+                   [...names, 'modular.manifest.json'].sort());
   for (const file of manifest.files) {
     const bytes = shipped(file.name);
     assert.equal(file.size, bytes.length, file.name);

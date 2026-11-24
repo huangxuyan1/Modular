@@ -10,8 +10,9 @@ words, defined below. The decisions behind it are in the
 
 ## What the web build covers
 
-The `web` CMake presets configure with Emscripten's toolchain and build every target. The
-test preset then runs every test the web build registers, under emsdk's own Node, which the
+The `web` CMake presets configure with Emscripten's toolchain and build every target the
+web build defines, which leaves out the Windows-only and native-only ones below. The test
+preset then runs every test the web build registers, under emsdk's own Node, which the
 configure preset names as CMake's emulator:
 
 - the kernel, node, authoring, MIDI-file and soundfont tests, graph persistence included;
@@ -229,13 +230,14 @@ build path fails the gate. On `ubuntu-24.04`, the job:
 3. configures, builds and runs CTest with the `web` presets, each step in emsdk's
    environment (`emsdk_env.sh`), which sets the `EMSDK` and `EMSDK_NODE` the presets read;
 4. shows the manifest in the run's summary;
-5. uploads the four files and the manifest as one workflow artifact,
-   `modular-web-<commit>`, kept for GitHub's default retention.
+5. uploads `build/web/dist/`, which holds only the four files and the manifest, as one
+   workflow artifact, `modular-web-<commit>`, kept for GitHub's default retention.
 
 **The pin.** Emscripten 6.0.13 is pinned in one place in the workflow, the `web` job's
 `EMSCRIPTEN_VERSION`, beside `EMSDK_COMMIT`, the commit its emsdk tag must resolve to, and
-on this page. Moving to another version changes both values and this page in one pull
-request.
+on this page. Moving to another version is one pull request that changes both values and
+this page, and rechecks what the root `CMakeLists.txt` says of 6.0.13: that its default
+exception encoding is the legacy one, which the browser floor above depends on.
 
 **Which artifact a client takes.** A pull request's run builds GitHub's merge of the branch
 into `main`, so its artifact, its manifest and its `version` name that merge commit, which no

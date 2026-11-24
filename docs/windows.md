@@ -77,7 +77,7 @@ makes it fail rather than pass.
   MIDI-file, soundfont and web render core tests, the CLI smoke test, the soundfont
   extract tool's test and kernel purity.
 - **Build path, web:** on `ubuntu-24.04`, a `web` job installs the pinned Emscripten,
-  builds every target with the `web` presets, runs the web build's tests under Node and
+  builds with the `web` presets, runs the web build's tests under Node and
   uploads the built module as an artifact. [web.md](web.md#continuous-integration)
   describes it, and [what the web build covers](web.md#what-the-web-build-covers).
 
