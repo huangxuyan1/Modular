@@ -106,6 +106,12 @@ build, as roadmap ticket 04's did. Research findings live under `research/` here
   −80 dBFS). Preview is a one-note clip through the same call; errors reject with Modular's
   message, and the abcjs fallback stays in the page until a clip census or a patched writer
   clears the MIDI writer's defects. No kernel or workspace change.
+- [How does a released voice keep sounding until its release ends?](issues/06-release-survives-voice-allocation.md)
+  — a note-off never frees a voice; a voice ends when its envelope has fallen 96 dB or its
+  sample runs out. The pool counts sounding samples, 256 by default (FluidSynth's). When it is
+  full, the node takes whole notes, released before held and oldest first, with a 6 ms fade. A
+  key struck again gets a voice beside the old one, and note-offs end a key's held notes oldest
+  first, so unisons and abcjs's overlapping slurs play right.
 
 ## Not yet specified
 
