@@ -3,15 +3,16 @@
 The web is a supported Modular platform. Emscripten 6.0.13 builds a WebAssembly module from
 `apps/web/`, and a hand-written loader gives a web page, or Node, one surface: hand in a
 soundfont's bytes once, then render Standard MIDI File bytes to stereo samples, clip after
-clip. The surface knows nothing of the page that calls it: no ABC, no player and no Web
-Audio. The page is a *client*; *instrument*, *render* and *rendering* are this surface's
+clip. The surface knows nothing of the page that calls it: no notation, no player and no
+Web Audio. The page is a *client*; *instrument*, *render* and *rendering* are this surface's
 words, defined below. The decisions behind it are in the
 [web build spec](../.scratch/web-build/spec.md).
 
 ## What the web build covers
 
 The `web` CMake presets configure with Emscripten's toolchain, build every target and run
-tests under Node, Emscripten's emulator for CMake. Today they cover:
+tests under emsdk's own Node, which the configure preset names as CMake's emulator. Today
+they cover:
 
 - the render core, `modular_web_core`: the C++ behind the module, which also builds and is
   tested natively on Windows ([windows.md](windows.md));

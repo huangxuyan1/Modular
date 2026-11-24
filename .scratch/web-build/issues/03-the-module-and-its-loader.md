@@ -86,7 +86,8 @@ natively.
 ## Comments
 
 **2026-11-24 — implemented.** Branch `claude/web-build-03-module-and-loader`, cut from a
-freshly fetched `origin/main` at `5952479`.
+freshly fetched `origin/main` at `5952479`. Before its first push it was rebased onto
+`df4d78d`, where soundfont node 03 had landed; no file overlapped.
 
 - *What was built.*
   - `apps/web/Exports.cpp`, the module's C functions, built only under Emscripten:
@@ -98,8 +99,9 @@ freshly fetched `origin/main` at `5952479`.
       anything else as `unknown error`, and returns 0.
     - The message is copied into module memory. When that copy itself runs out of memory,
       the message becomes `out of memory`.
-    - An instrument's handle is its index plus one, so 0 means a failure. A render first
-      releases the last rendering, so the module holds at most one.
+    - An instrument's handle is an `std::int32_t`, its index plus one, so 0 means a failure.
+      A render first releases the last rendering, so the module holds at most one. A frame
+      count crosses the boundary as an `std::uint32_t`.
   - `CMakeLists.txt`, under `if(EMSCRIPTEN)`:
     - every target compiles and links with `-fwasm-exceptions`;
     - Release's `-O3` becomes `-O2` for every target, so the libraries in the module compile
@@ -108,7 +110,8 @@ freshly fetched `origin/main` at `5952479`.
       with `-sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,node -sALLOW_MEMORY_GROWTH=1`,
       exporting `_malloc` and `_free`, and the runtime's `HEAPU8`, `HEAPF32` and
       `UTF8ToString`;
-    - the loader and its declarations are copied into `dist/` beside it.
+    - the loader and its declarations are copied into `dist/` beside it;
+    - configuring stops with a message when no Node is set to run the tests.
     - The native build is unchanged: the new lines are all under `if(EMSCRIPTEN)`.
   - `apps/web/modular.mjs`, the hand-written loader.
     - `loadModular` passes `locateFile` to the factory only when given.
@@ -120,7 +123,8 @@ freshly fetched `origin/main` at `5952479`.
     - A render copies each channel with `HEAPF32.slice`, then releases the rendering in a
       `finally`.
   - `apps/web/modular.d.mts`. `.d.mts` is the declaration file TypeScript resolves for an
-    import of `modular.mjs`.
+    import of `modular.mjs`. It states the spec's surface, with one refinement below: the
+    channels are `Float32Array<ArrayBuffer>`.
   - `CMakePresets.json`, still version 2:
     - the `web` configure preset: Ninja, `build/web`, Release, the toolchain file from
       `$env{EMSDK}`, as a cache variable;
@@ -148,6 +152,19 @@ freshly fetched `origin/main` at `5952479`.
     WebAssembly error. `docs/web.md` says so and tells a page to load a new module.
   - **Build output.** `build/web/dist/` holds the four files a client takes. The CTest
     fixture writes `build/web/web-smoke.sf2`.
+  - **The channels are declared `Float32Array<ArrayBuffer>`**, where the spec writes
+    `Float32Array`.
+    - Since TypeScript 5.7 a bare `Float32Array` means `Float32Array<ArrayBufferLike>`, which
+      may be shared memory. TypeScript 6.0's `lib.dom.d.ts` declares
+      `AudioBuffer.copyToChannel(source: Float32Array<ArrayBuffer>, ...)`. So the spec's form
+      fails a strict page's type check at exactly the call map ticket 04 sketches. That is
+      user story 21.
+    - The check used the TypeScript 6.0.3 already bundled with the local VS Code install, so
+      nothing was downloaded. A strict page, under both `NodeNext` and `Bundler` resolution,
+      gave two errors with the spec's form and none with the refined one.
+    - The arrays really are `Float32Array<ArrayBuffer>`, since `HEAPF32.slice` makes a fresh,
+      unshared buffer. The generic form needs TypeScript 5.7 or later; the declaration file
+      and `docs/web.md` say so.
 - *Tests.*
   - `web_core_tests` (seam S1) runs unchanged under Node: 14 cases, 85 assertions.
   - `web_smoke` (seam S2), `tests/test_web_smoke.mjs`, uses `node:test` with 6 cases. It
@@ -177,31 +194,76 @@ freshly fetched `origin/main` at `5952479`.
     - swapped channels fail the first case;
     - a failed render that resolves, and an `Error` without Modular's message, each fail the
       bad-MIDI case;
-    - dropping `locateFile` fails its case.
+    - dropping `locateFile` fails its case;
+    - in the module, an export that rethrows instead of catching fails the bad-MIDI case:
+      the page then receives a `WebAssembly.Exception`, not an `Error`.
 
     The call-order case could not be made to fail. Every call runs synchronously inside the
     queue, so no plausible mutation reorders them; the case guards the contract for when a
-    render moves into a Worker.
+    render moves into a Worker. Ticket 06's call-order work can make the queue observable,
+    since re-instantiating after a trap is asynchronous.
 - *Not linked.* The glue has no `getExceptionMessage`, and the module exports nothing beyond
   the seven functions, `_malloc`, `_free` and the three runtime helpers. The `.wasm` holds
   none of the demangler's strings (`(anonymous namespace)`, `decltype(`, `typeinfo for`,
   `vtable for`).
-- *Sizes* (bytes, raw / gzip -9 / Brotli 11), `-O2`, measured on the final tree:
-  - `modular_web.wasm`: 107,728 / 49,783 / 42,241;
+- *Sizes* (bytes, raw / gzip -9 / Brotli 11), `-O2`, measured on the final tree, with
+  soundfont node 03 in it:
+  - `modular_web.wasm`: 109,013 / 50,325 / 42,712;
   - `modular_web.mjs` (the glue): 7,698 / 2,710 / 2,461;
-  - `modular.mjs` (the loader): 3,486 / 1,406 / 1,171;
-  - `modular.d.mts`: 1,593 / 756 / 622, never loaded by a page;
-  - loaded by a page, `.wasm`, glue and loader: 118,912 / 53,899 / 45,873.
+  - `modular.mjs` (the loader): 3,489 / 1,408 / 1,173;
+  - `modular.d.mts`: 1,847 / 866 / 701, never loaded by a page;
+  - loaded by a page, `.wasm`, glue and loader: 120,200 / 54,443 / 46,346.
 
-  The module and glue are 44.7 KB with Brotli, 7 KB more than the probe's sine-voice module
-  (37.7 KB), and the loader adds 1.2 KB.
+  The module and glue are 45.2 KB with Brotli, 7.5 KB more than the probe's sine-voice
+  module (37.7 KB), and the loader adds 1.2 KB.
+
+  The loader and declarations are copied byte for byte from the checkout. With Git's
+  `core.autocrlf` on Windows they get CRLF line endings, and a Linux checkout gets LF, so
+  their hashes differ between hosts. Ticket 05's manifest and reproducibility work should
+  pin their line endings, for example in `.gitattributes`.
 - *Checks, on the final tree.*
   - Native, through the script: Debug 11/11 and Release 11/11 CTest entries, both `desktop`
     tests, the extract tool's test and kernel purity included. doctest cases, the same in
-    both: kernel 44, node 17, authoring 29, MIDI-file 18, soundfont 59, render core 14.
+    both: kernel 44, node 17, authoring 29, MIDI-file 18, soundfont 66 (with soundfont node
+    03), render core 14.
   - `web`, under Emscripten 6.0.13 and emsdk's Node 24.19.0:
     - `cmake --preset web` and `cmake --build --preset web` build all 40 steps, every target
       included. The only warnings are two existing `u8path` deprecations in
       `nodes/src/WavRecorderNode.cpp` and `nodes/src/PrimitivePersistence.cpp`.
     - `ctest --preset web`: 3/3.
   - `python scripts/check_docs.py`: 0 problems. `git diff --check`: clean.
+- *Review.* `/code-review` ran on both axes over `git diff origin/main...HEAD` at `424056b`,
+  after the rebase, with a clean working tree. The fixes were re-checked on the final tree.
+  - Standards. Fixed:
+    - **Fixed-width integers at the boundary** (`docs/project-foundations.md`: fixed-width
+      integers for contractual ids and frames). The handle is an `std::int32_t`, and the
+      frame count an `std::uint32_t`.
+    - a 92-column accessor, now wrapped like its twin;
+    - `<utility>` included for `std::move`;
+    - names: the loader's `made` became `state`, `modular_render`'s parameter is `handle` as
+      in its neighbour, and the test's `variable` became `variableLength` and its `piano`
+      became `instrument`;
+    - `docs/web.md` no longer says every message starts with its context, since
+      `out of memory` does not.
+  - Both axes: **an unset `EMSDK_NODE`** leaves the emulator defined but empty. The
+    toolchain then skips its own search, and CTest would run the `.mjs` directly.
+    Configuring now stops with a message instead.
+  - Spec, fixed: **the channels' type**, above. The reviewer suspected the defect; the
+    TypeScript check confirmed it.
+  - Kept as judgement calls:
+    - **Possible Duplicated Code.** The fixture's looping sine repeats the shape of
+      `sine()` in `tests/test_web_core.cpp` and in the soundfont tests. Helpers stay in
+      their test files, as `docs/project-foundations.md` asks. Moving one into
+      `tests/SoundFontTestFiles.h` would edit the soundfont suite's shared builder, which
+      another session works on.
+    - **Possible Duplicated Code**, weaker: `createInstrument` and `render` both copy,
+      queue, call and check. They are two calls of six lines, and a shared helper would
+      hide which export each makes.
+    - **`-O2` for every Release target**, not only the module. The libraries compile into
+      the module, so this is the level the probe measured.
+    - **The kept, unread soundfont copy** is ruling G5's.
+  - Left to ticket 06, which owns argument checks:
+    - **an `ArrayBuffer` argument**, outside the declared `Uint8Array`, makes
+      `new Uint8Array(...)` a view, not a copy. Ticket 06 rejects any argument that is not
+      a `Uint8Array`.
+    - **The call-order case cannot fail today** (above).
