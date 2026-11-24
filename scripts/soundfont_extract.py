@@ -228,16 +228,12 @@ class SoundFont:
         return index
     refuse(f"no preset at bank {bank} program {program}")
 
-  def preset_runs(self, index):
-    """A preset's bags, generators and modulators, as ranges of their lists."""
-    first, last = self.phdr[index][3], self.phdr[index + 1][3]
-    return (range(first, last), range(self.pbag[first][0], self.pbag[last][0]),
-            range(self.pbag[first][1], self.pbag[last][1]))
+  def preset_bags(self, index):
+    """A preset's zones, as a range of the preset bag list."""
+    return range(self.phdr[index][3], self.phdr[index + 1][3])
 
-  def instrument_runs(self, index):
-    first, last = self.inst[index][1], self.inst[index + 1][1]
-    return (range(first, last), range(self.ibag[first][0], self.ibag[last][0]),
-            range(self.ibag[first][1], self.ibag[last][1]))
+  def instrument_bags(self, index):
+    return range(self.inst[index][1], self.inst[index + 1][1])
 
   def sample_points(self, index):
     _, start, end = self.shdr[index][:3]
@@ -245,15 +241,20 @@ class SoundFont:
 
   def preset_instruments(self, index):
     """The instruments the preset's zones name, in order of first mention."""
-    _, gens, _ = self.preset_runs(index)
-    return list(dict.fromkeys(a for o, a in (self.pgen[g] for g in gens) if o == INSTRUMENT))
+    gens = run(self.pbag, self.pgen, self.preset_bags(index), 0)
+    return list(dict.fromkeys(a for o, a in gens if o == INSTRUMENT))
 
   def instrument_samples(self, instruments):
     result = []
     for i in instruments:
-      _, gens, _ = self.instrument_runs(i)
-      result += [a for o, a in (self.igen[g] for g in gens) if o == SAMPLE_ID]
+      result += [a for o, a in run(self.ibag, self.igen, self.instrument_bags(i), 0)
+                 if o == SAMPLE_ID]
     return list(dict.fromkeys(result))
+
+
+def run(bags, records, zones, field):
+  """The generators (field 0) or modulators (field 1) of a run of zones."""
+  return records[bags[zones.start][field]:bags[zones.stop][field]]
 
 
 def read(path):
@@ -280,27 +281,37 @@ def zstr(value):
   return data + b"\0" if len(data) % 2 else data
 
 
-def relink(bags, gens, mods, font_bags, font_gens, font_mods, oper, mapping):
-  """One run of zones, its indexes moved to start at 0 and `oper`'s amounts
-  mapped; returns bag, generator and modulator bytes without terminals."""
-  g0, m0 = font_bags[bags.start][0], font_bags[bags.start][1]
-  bag_bytes = b"".join(struct.pack("<HH", font_bags[b][0] - g0, font_bags[b][1] - m0)
-                       for b in bags)
-  gen_bytes = b"".join(
-      struct.pack("<HH", o, mapping[a] if o == oper else a)
-      for o, a in (font_gens[g] for g in gens))
-  return bag_bytes, gen_bytes, b"".join(font_mods[m] for m in mods)
+class ZoneLists:
+  """One level's bag, generator and modulator lists, written a run of zones at a
+  time. The runs are parts of the source's lists, so every count fits its field."""
 
+  def __init__(self, bags, gens, mods, terminal):
+    self.source = (bags, gens, mods)
+    self.terminal = terminal  # the generator whose amount indexes the next level
+    self.bags, self.gens, self.mods = bytearray(), bytearray(), bytearray()
 
-def append_zones(lists, zones):
-  """Appends a run of zones to (bags, gens, mods, gen count, mod count)."""
-  bags, gens, mods, gen_count, mod_count = lists
-  bag_bytes, gen_bytes, mod_bytes = zones
-  for i in range(0, len(bag_bytes), 4):
-    g, m = struct.unpack_from("<HH", bag_bytes, i)
-    bags += struct.pack("<HH", g + gen_count, m + mod_count)
-  return (bags, gens + gen_bytes, mods + mod_bytes,
-          gen_count + len(gen_bytes) // 4, mod_count + len(mod_bytes) // 10)
+  def add(self, zones, mapping):
+    """Copies a run of zones verbatim but for their indexes; returns where it starts."""
+    bags, gens, mods = self.source
+    first = self.zone_count()
+    gen_shift = len(self.gens) // 4 - bags[zones.start][0]
+    mod_shift = len(self.mods) // 10 - bags[zones.start][1]
+    for g, m in bags[zones.start:zones.stop]:
+      self.bags += struct.pack("<HH", g + gen_shift, m + mod_shift)
+    for oper, amount in run(bags, gens, zones, 0):
+      self.gens += struct.pack("<HH", oper, mapping[amount] if oper == self.terminal else amount)
+    self.mods += b"".join(run(bags, mods, zones, 1))
+    return first
+
+  def zone_count(self):
+    return len(self.bags) // 4
+
+  def chunks(self, level):
+    """The bag, modulator and generator chunks, each closed by its terminal record."""
+    terminal_bag = struct.pack("<HH", len(self.gens) // 4, len(self.mods) // 10)
+    return [chunk(level + b"bag", bytes(self.bags) + terminal_bag),
+            chunk(level + b"mod", bytes(self.mods) + bytes(10)),
+            chunk(level + b"gen", bytes(self.gens) + bytes(4))]
 
 
 def extract_bytes(font, preset, info):
@@ -329,34 +340,23 @@ def extract_bytes(font, preset, info):
   headers.append(b"EOS".ljust(46, b"\0"))
 
   # The preset: its header, then its zones with instrument indexes relinked.
-  bags, gens, mods = font.preset_runs(preset)
-  preset_lists = append_zones(
-      (b"", b"", b"", 0, 0),
-      relink(bags, gens, mods, font.pbag, font.pgen, font.pmod, INSTRUMENT, instrument_map))
+  preset_zones = ZoneLists(font.pbag, font.pgen, font.pmod, INSTRUMENT)
+  preset_zones.add(font.preset_bags(preset), instrument_map)
   name, program, bank, _, library, genre, morphology = font.phdr[preset]
   phdr = (name + struct.pack("<HHHIII", program, bank, 0, library, genre, morphology)
-          + b"EOP".ljust(20, b"\0") + struct.pack("<HHHIII", 0, 0, len(bags), 0, 0, 0))
+          + b"EOP".ljust(20, b"\0")
+          + struct.pack("<HHHIII", 0, 0, preset_zones.zone_count(), 0, 0, 0))
 
   # The instruments, in their source order, with sample indexes relinked.
-  instrument_lists, inst = (b"", b"", b"", 0, 0), b""
+  instrument_zones = ZoneLists(font.ibag, font.igen, font.imod, SAMPLE_ID)
+  inst = b""
   for i in instruments:
-    bags, gens, mods = font.instrument_runs(i)
-    inst += font.inst[i][0] + struct.pack("<H", len(instrument_lists[0]) // 4)
-    instrument_lists = append_zones(
-        instrument_lists,
-        relink(bags, gens, mods, font.ibag, font.igen, font.imod, SAMPLE_ID, sample_map))
-  inst += b"EOI".ljust(20, b"\0") + struct.pack("<H", len(instrument_lists[0]) // 4)
+    first = instrument_zones.add(font.instrument_bags(i), sample_map)
+    inst += font.inst[i][0] + struct.pack("<H", first)
+  inst += b"EOI".ljust(20, b"\0") + struct.pack("<H", instrument_zones.zone_count())
 
-  # The runs are parts of the source's lists, so every count fits its field.
-  def hydra_lists(lists):
-    bags, gens, mods, gen_count, mod_count = lists
-    return (bags + struct.pack("<HH", gen_count, mod_count), mods + bytes(10), gens + bytes(4))
-
-  pbag, pmod, pgen = hydra_lists(preset_lists)
-  ibag, imod, igen = hydra_lists(instrument_lists)
-  pdta = [chunk(b"phdr", phdr), chunk(b"pbag", pbag), chunk(b"pmod", pmod),
-          chunk(b"pgen", pgen), chunk(b"inst", inst), chunk(b"ibag", ibag),
-          chunk(b"imod", imod), chunk(b"igen", igen), chunk(b"shdr", b"".join(headers))]
+  pdta = ([chunk(b"phdr", phdr)] + preset_zones.chunks(b"p") + [chunk(b"inst", inst)]
+          + instrument_zones.chunks(b"i") + [chunk(b"shdr", b"".join(headers))])
   form = (b"sfbk" + riff_list(b"INFO", [chunk(tag, data) for tag, data in info])
           + riff_list(b"sdta", [chunk(b"smpl", b"".join(points))])
           + riff_list(b"pdta", pdta))
@@ -472,20 +472,20 @@ def preset_command(args):
 
   def zones(bags, font_bags, font_gens, font_mods, oper, names, label):
     for z, b in enumerate(bags):
-      (g0, m0), (g1, m1) = font_bags[b], font_bags[b + 1]
+      zone = range(b, b + 1)
       gens = " ".join(f"{o}={label}[{names[a]}]" if o == oper else f"{o}=0x{a:04x}"
-                      for o, a in font_gens[g0:g1])
-      mods = " ".join(m.hex() for m in font_mods[m0:m1])
+                      for o, a in run(font_bags, font_gens, zone, 0))
+      mods = " ".join(m.hex() for m in run(font_bags, font_mods, zone, 1))
       print(f"  zone {z}: generators {gens or '-'}; modulators {mods or '-'}")
 
   name, program, bank, _, library, genre, morphology = font.phdr[index]
   print(f"preset {bank}:{program} \"{text(name).decode('latin-1')}\" library={library} "
         f"genre={genre} morphology={morphology}")
-  zones(font.preset_runs(index)[0], font.pbag, font.pgen, font.pmod, INSTRUMENT, inst_no,
+  zones(font.preset_bags(index), font.pbag, font.pgen, font.pmod, INSTRUMENT, inst_no,
         "instrument")
   for i in instruments:
     print(f"instrument[{inst_no[i]}] \"{text(font.inst[i][0]).decode('latin-1')}\"")
-    zones(font.instrument_runs(i)[0], font.ibag, font.igen, font.imod, SAMPLE_ID, sample_no,
+    zones(font.instrument_bags(i), font.ibag, font.igen, font.imod, SAMPLE_ID, sample_no,
           "sample")
   for s in samples:
     name, start, end, loop_start, loop_end, rate, pitch, correction, _, kind = font.shdr[s]
