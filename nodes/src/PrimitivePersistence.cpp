@@ -24,7 +24,7 @@ namespace modular::nodes {
 namespace {
 
 // Node-owned text inside the container's opaque bytes. Decimal timestamps use
-// max_digits10 for the authored long double, never prepared sample frames.
+// max_digits10 (17) for the authored double, never prepared sample frames.
 class ContentReader {
 public:
   explicit ContentReader(const NodeContent& content) : size_(content.stored.size()) {
@@ -311,7 +311,7 @@ std::span<const NodeCodec> primitiveCodecs() {
        const auto& file = node.file();
        std::ostringstream text;
        text.imbue(std::locale::classic());
-       text << std::setprecision(std::numeric_limits<long double>::max_digits10)
+       text << std::setprecision(std::numeric_limits<double>::max_digits10)
             << file.durationSeconds() << ' ' << file.skippedSysExEvents()
             << ' ' << file.entries().size() << '\n';
        for (const auto& entry : file.entries()) {
@@ -326,12 +326,12 @@ std::span<const NodeCodec> primitiveCodecs() {
        if (content.settings != "loaded")
          throw std::invalid_argument("open: invalid midi file content state");
        ContentReader input(content);
-       const auto duration = input.number<long double>();
+       const auto duration = input.number<double>();
        const auto skipped = input.number<std::uint32_t>();
        const auto count = input.count();
        std::vector<MidiFile::Entry> entries;
        for (std::size_t i = 0; i < count; ++i) {
-         const auto seconds = input.number<long double>();
+         const auto seconds = input.number<double>();
          entries.push_back({seconds, input.message()});
        }
        input.end();

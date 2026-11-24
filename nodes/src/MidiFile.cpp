@@ -112,11 +112,11 @@ MidiFile MidiFile::read(const std::filesystem::path& path) {
   return parse(bytes);
 }
 
-MidiFile MidiFile::fromEntries(std::vector<Entry> entries, long double durationSeconds,
+MidiFile MidiFile::fromEntries(std::vector<Entry> entries, double durationSeconds,
                               std::uint32_t skippedSysEx) {
   if (!std::isfinite(durationSeconds) || durationSeconds < 0)
     invalid("invalid stored duration");
-  long double previous = 0;
+  double previous = 0;
   for (const auto& entry : entries) {
     if (!std::isfinite(entry.seconds) || entry.seconds < previous ||
         entry.seconds > durationSeconds)
@@ -167,16 +167,16 @@ MidiFile MidiFile::parse(std::span<const std::uint8_t> bytes) {
                    [](const Timed& a, const Timed& b) { return a.tick < b.tick; });
   std::uint64_t previous = 0;
   std::uint32_t tempo = 500000;
-  long double seconds = 0;
+  double seconds = 0;
   for (const auto& event : events) {
-    seconds += static_cast<long double>(event.tick - previous) * tempo /
-               (static_cast<long double>(division) * 1000000);
+    seconds += static_cast<double>(event.tick - previous) * tempo /
+               (static_cast<double>(division) * 1000000);
     previous = event.tick;
     if (event.tempo != 0) tempo = event.tempo;
     else result.entries_.push_back({seconds, event.message});
   }
-  result.duration_seconds_ = seconds + static_cast<long double>(endTick - previous) *
-      tempo / (static_cast<long double>(division) * 1000000);
+  result.duration_seconds_ = seconds + static_cast<double>(endTick - previous) *
+      tempo / (static_cast<double>(division) * 1000000);
   return result;
 }
 

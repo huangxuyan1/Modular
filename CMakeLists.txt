@@ -9,6 +9,18 @@ if(MSVC)
   add_compile_options(/utf-8)
 endif()
 
+# No compiler fuses floating-point operations, so arithmetic gives the same bits in
+# every build (docs/project-foundations.md). MSVC's default /fp:precise never contracts;
+# GCC and every Clang, Emscripten's included, are told not to. clang-cl, which defaults
+# to contracting, takes the option through /clang:.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  if(MSVC)
+    add_compile_options(/clang:-ffp-contract=off)
+  else()
+    add_compile_options(-ffp-contract=off)
+  endif()
+endif()
+
 # --- kernel: pure graph runtime, no framework dependencies ---
 add_library(modular_kernel
   kernel/src/Node.cpp

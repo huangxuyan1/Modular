@@ -148,8 +148,10 @@ the opaque CONTENT bytes:
 | `sine-synth/1`, `voice-allocator/1` | Empty | Empty; allocator arity comes from its surviving output declarations |
 | `windows-audio-output/1` | Channel count, 1 or 2 | Empty |
 
-Kind names above have the `modular.` prefix. Timestamps use enough decimal
-digits to recover the authored `long double` value. Simultaneous message order,
+Kind names above have the `modular.` prefix. Timestamps are stored with
+`double`'s `max_digits10`, 17 significant digits, enough to recover the authored
+`double` exactly. Graphs saved while times were MSVC's `long double`, which is the
+same 64-bit type, open unchanged and save the same bytes. Simultaneous message order,
 channel bytes and end-of-track duration survive. This preserves the parsed
 meaning: source-file packaging and skipped SysEx payloads are not reconstructed.
 Frames are computed again at preparation for the new sample rate.
@@ -225,7 +227,8 @@ graph. The normal Debug/Release CTest suites include identity/supernode regressi
 and kernel purity.
 
 Owned-content coverage adds source-file removal, parsed tempo/channel-message
-round trips, fresh deterministic MIDI/audio comparison at several block sizes,
+round trips, MIDI times that need all 17 digits checked against the bytes an
+earlier Save wrote, fresh deterministic MIDI/audio comparison at several block sizes,
 idle reload after an active/pending-control Save, stored PCM through a test codec,
 allocator identity gaps, malformed content and import repair. The app smoke path
 also closes and reopens in a fresh process after removing the import source.
