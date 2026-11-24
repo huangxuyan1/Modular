@@ -428,14 +428,17 @@ Bytes toneFont(std::vector<Generator> generators, double hertz, double rate,
   return build(file);
 }
 
-// The tone's gain over frames [from, to), in dB: its amplitude, from its RMS,
-// against the steady sample's level in the middle of the window.
-double toneGainDb(const Stereo& out, std::size_t from, std::size_t to) {
+// A steady tone's amplitude over frames [from, to), from its RMS.
+double amplitude(const std::vector<float>& s, std::size_t from, std::size_t to) {
   double sum = 0;
-  for (std::size_t i = from; i < to; ++i)
-    sum += double(out.right.at(i)) * out.right.at(i);
-  return db(std::sqrt(2 * sum / static_cast<double>(to - from)) /
-            out.left.at((from + to) / 2));
+  for (std::size_t i = from; i < to; ++i) sum += double(s.at(i)) * s.at(i);
+  return std::sqrt(2 * sum / static_cast<double>(to - from));
+}
+
+// The tone's gain over frames [from, to), in dB: its amplitude against the
+// steady sample's level in the middle of the window.
+double toneGainDb(const Stereo& out, std::size_t from, std::size_t to) {
+  return db(amplitude(out.right, from, to) / out.left.at((from + to) / 2));
 }
 
 // A Butterworth low-pass's gain at `hertz` with its cutoff at `cutoff`: the
@@ -501,9 +504,9 @@ std::vector<Generator> modulatedTone(std::vector<Generator> modulation) {
 
 // The first frame on which renders of the 2 kHz tone font with generators
 // `a` and with `b` differ, for one note at velocity 127.
-std::size_t firstDifferentFrame(const std::vector<Generator>& a,
-                                const std::vector<Generator>& b,
-                                const std::vector<Timed>& midi) {
+std::size_t firstDifferentToneFrame(const std::vector<Generator>& a,
+                                    const std::vector<Generator>& b,
+                                    const std::vector<Timed>& midi) {
   const Run run{48000, 128, 4000};
   const auto first = play(toneFont(modulatedTone(a), 2000, 48000, 8000), midi, run);
   const auto second = play(toneFont(modulatedTone(b), 2000, 48000, 8000), midi, run);
@@ -533,7 +536,7 @@ TEST_CASE("the modulation envelope moves the cutoff by modEnvToFilterFc times it
   const auto out = play(font, {{13, noteOn(0, 60, 127)}, {13 + 15000, noteOff(0, 60)}},
                         {48000, 128, 22000});
   // Windows well inside the delay, the hold, the sustain and after the
-  // release, which ends 3000 frames after the note-off.
+  // release, which falls linearly and ends 3000 frames after the note-off.
   for (const auto& [from, cutoff] :
        {std::pair{613, 2000.0}, std::pair{6613, 500.0}, std::pair{12613, 1000.0},
         std::pair{18613, 2000.0}}) {
@@ -541,6 +544,8 @@ TEST_CASE("the modulation envelope moves the cutoff by modEnvToFilterFc times it
     const double gain = toneGainDb(out, from, from + 2400);
     CHECK(std::abs(gain - butterworthDb(2000, cutoff)) <= 1);
   }
+  // Halfway through the release the level is 0.25: 1414 Hz.
+  CHECK(std::abs(toneGainDb(out, 15913, 17113) - butterworthDb(2000, 1414.2)) <= 1);
 }
 
 TEST_CASE("the modulation envelope's stages begin and end within one frame of their derived times") {
@@ -558,12 +563,19 @@ TEST_CASE("the modulation envelope's stages begin and end within one frame of th
   // The delay ends when the attack starts to move the cutoff, which a zone
   // with no depth never does. (A repeated generator keeps its last value.)
   CHECK(withinAFrame(
-      firstDifferentFrame(with({}), with({set(gen::kModEnvToFilterFc, 0)}), note),
+      firstDifferentToneFrame(with({}), with({set(gen::kModEnvToFilterFc, 0)}), note),
       13 + 375));
+  // An attack twice as long with twice the depth moves the cutoff at the same
+  // rate, as a linear attack does, until the shorter attack ends.
+  CHECK(withinAFrame(firstDifferentToneFrame(with({}),
+                                             with({set(gen::kAttackModEnv, -7200),
+                                                   set(gen::kModEnvToFilterFc, -4800)}),
+                                             note),
+                     13 + 2 * 375));
   // The attack and hold end when the decay starts: here falling to a sustain
   // of 0 over 375 frames, or over 750 (-7200).
   CHECK(withinAFrame(
-      firstDifferentFrame(
+      firstDifferentToneFrame(
           with({set(gen::kDecayModEnv, -8400), set(gen::kSustainModEnv, 1000)}),
           with({set(gen::kDecayModEnv, -7200), set(gen::kSustainModEnv, 1000)}), note),
       13 + 3 * 375));
@@ -573,14 +585,14 @@ TEST_CASE("the modulation envelope's stages begin and end within one frame of th
                                       set(gen::kSustainModEnv, 500)};
   const std::vector<Generator> toQuarter{set(gen::kDecayModEnv, -8400),
                                          set(gen::kSustainModEnv, 750)};
-  CHECK(withinAFrame(firstDifferentFrame(with(toHalf), with(toQuarter), note),
+  CHECK(withinAFrame(firstDifferentToneFrame(with(toHalf), with(toQuarter), note),
                      13 + 3 * 375 + 187.5));
   // The release starts on the note-off's frame.
   const std::vector<Timed> released{{13, noteOn(0, 60, 127)}, {3011, noteOff(0, 60)}};
   auto quick = toHalf, slow = toHalf;
   quick.push_back(set(gen::kReleaseModEnv, -8400));
   slow.push_back(set(gen::kReleaseModEnv, -7200));
-  CHECK(withinAFrame(firstDifferentFrame(with(quick), with(slow), released), 3011));
+  CHECK(withinAFrame(firstDifferentToneFrame(with(quick), with(slow), released), 3011));
 }
 
 namespace {
@@ -627,13 +639,6 @@ File miniaturePiano(bool open = false) {
         Zone{{range(gen::kVelRange, 101, 127), set(gen::kReleaseVolEnv, 316),
               set(gen::kInstrument, 0)}}}});
   return file;
-}
-
-// A steady tone's amplitude over frames [from, to), from its RMS.
-double amplitude(const std::vector<float>& s, std::size_t from, std::size_t to) {
-  double sum = 0;
-  for (std::size_t i = from; i < to; ++i) sum += double(s.at(i)) * s.at(i);
-  return std::sqrt(2 * sum / static_cast<double>(to - from));
 }
 
 } // namespace
@@ -1166,9 +1171,9 @@ TEST_CASE("a looping voice interpolates across its loop's seam and never reads b
   std::fill(samplePoints.begin() + loop.end, samplePoints.end(), std::int16_t{30000});
   const std::vector<Generator> octaveDown{set(gen::kOverridingRootKey, 72),
                                           set(gen::kPan, -500)};
-  auto looped = oneZone(samplePoints, octaveDown);
-  looped.instruments[0].zones[0].generators.insert(
-      looped.instruments[0].zones[0].generators.begin(), set(gen::kSampleModes, 1));
+  auto loopingDown = octaveDown;
+  loopingDown.push_back(set(gen::kSampleModes, 1));
+  auto looped = oneZone(samplePoints, loopingDown);
   looped.samples[0].loop = loop;
   // Written out to at least 1400 points, which take 2800 frames.
   const auto times = static_cast<int>(1400 / (loop.end - loop.start));
@@ -1204,14 +1209,17 @@ TEST_CASE("address offsets move the start end and loop points by fine plus 32768
       set(gen::kStartloopAddrsCoarseOffset, 1), set(gen::kStartloopAddrsOffset, -32746),
       set(gen::kEndloopAddrsCoarseOffset, 1),   set(gen::kEndloopAddrsOffset, -32752),
       set(gen::kPan, -500)};
-  auto file = oneZone(samplePoints, offsets);
-  file.samples[0].loop = Loop{100, 400};
-  const auto once = play(build(file), kOneNote, {48000, 128, 3000});
+  const auto withOffsets = [&](int mode) {
+    auto generators = offsets;
+    generators.push_back(set(gen::kSampleModes, mode));
+    auto file = oneZone(samplePoints, generators);
+    file.samples[0].loop = Loop{100, 400};
+    return build(file);
+  };
+  const auto once = play(withOffsets(0), kOneNote, {48000, 128, 3000});
   CHECK(soundingFrames(once) == 572 - 18);
 
-  file.instruments[0].zones[0].generators.insert(
-      file.instruments[0].zones[0].generators.begin(), set(gen::kSampleModes, 1));
-  const auto looped = play(build(file), kOneNote, {48000, 128, 3000});
+  const auto looped = play(withOffsets(1), kOneNote, {48000, 128, 3000});
   const auto expected = play(
       build(oneZone(unrolled(samplePoints, 18, {122, 416}, 10), {set(gen::kPan, -500)})),
       kOneNote, {48000, 128, 3000});

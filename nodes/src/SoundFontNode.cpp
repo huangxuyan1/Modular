@@ -13,7 +13,7 @@ namespace {
 
 namespace maths = soundfont_maths;
 
-constexpr double kPi = 3.14159265358979323846;
+constexpr double kPi = std::numbers::pi;
 // A voice has ended once its envelope has fallen this far below its peak.
 constexpr double kFloorDb = 96;
 
@@ -222,8 +222,8 @@ void SoundFontNode::noteOn(std::uint8_t channel, std::uint8_t key, std::uint8_t 
         plan.attenuation + concaveAttenuation(velocity), 0.0, kMostAttenuation);
     voice.gain = maths::exp10(-attenuation / 200);
     // And the velocity-to-cutoff one to initialFilterFc.
-    voice.cutoff = plan.zone.generators[SoundFont::kInitialFilterFc] +
-                   kVelocityToCutoff * (128 - velocity) / 128;
+    voice.baseCutoff = plan.zone.generators[SoundFont::kInitialFilterFc] +
+                       kVelocityToCutoff * (128 - velocity) / 128;
     voice.modulation.settle(plan.modulation);
     voice.active = sounds(voice, plan);
   }
@@ -343,11 +343,12 @@ double SoundFontNode::modulation(const Voice& voice, const PreparedZone& plan) {
   }
 }
 
-// The cutoff for the voice's next frame, in whole cents: its own, which holds
-// the velocity modulator's, plus the modulation envelope's.
+// The cutoff for the voice's next frame, in whole cents: its base, plus the
+// modulation envelope's.
 std::int64_t SoundFontNode::cutoff(const Voice& voice, const PreparedZone& plan) {
-  return std::llround(voice.cutoff + plan.zone.generators[SoundFont::kModEnvToFilterFc] *
-                                         modulation(voice, plan));
+  return std::llround(voice.baseCutoff +
+                      plan.zone.generators[SoundFont::kModEnvToFilterFc] *
+                          modulation(voice, plan));
 }
 
 // The specification's two-pole low-pass, as a state-variable filter whose

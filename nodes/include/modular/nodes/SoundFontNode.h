@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -105,7 +106,7 @@ private:
     double panLeft = 0, panRight = 0;
     double attenuation = 0; // centibels: initialAttenuation plus held controllers
     // Points from the zone's start: those it plays, and its loop.
-    std::uint64_t points = 0, loopStart = 0, loopEnd = 0;
+    std::size_t points = 0, loopStart = 0, loopEnd = 0;
     bool loops = false;          // loops while held
     bool loopsInRelease = false; // and through its release
     Timeline volume, modulation;
@@ -122,8 +123,12 @@ private:
     std::uint8_t channel = 0, key = 0;
     Envelope volume, modulation;
     double position = 0, increment = 0;
-    double gain = 1;   // the attenuation's, from its velocity
-    double cutoff = 0; // cents, before the modulation envelope
+    // The gain of its total attenuation: initialAttenuation, the held
+    // controllers and its velocity, clamped.
+    double gain = 1;
+    // Cents: initialFilterFc plus the velocity modulator, before the
+    // modulation envelope.
+    double baseCutoff = 0;
     Filter filter;
   };
 
