@@ -168,6 +168,13 @@ std::size_t lastSounding(const std::vector<float>& samples) {
   return samples.size();
 }
 
+// The gain the default modulators give a note: velocity to attenuation, and
+// the channel volume held at 100. Each is 40 log10(value / 127) dB, which is
+// (value / 127)^2 in amplitude.
+double noteGain(int velocity) {
+  return velocity / 127.0 * (velocity / 127.0) * (100 / 127.0) * (100 / 127.0);
+}
+
 } // namespace
 
 TEST_CASE("a loaded soundfont plays a note in both channels until its sample ends") {
@@ -182,8 +189,8 @@ TEST_CASE("a loaded soundfont plays a note in both channels until its sample end
   // The 600 points play from the onset, then the voice ends: exact zeros.
   CHECK(lastSounding(out.left) == onset + 599);
   // After the default attack and hold (1 ms each), a centred zone is 3 dB
-  // down: 4000 / 32768 times 1/sqrt(2).
-  CHECK(out.left[onset + 300] == doctest::Approx(0.0863167).epsilon(1e-5));
+  // down: 4000 / 32768 times 1/sqrt(2), times the default modulators' gain.
+  CHECK(out.left[onset + 300] == doctest::Approx(0.0863167 * noteGain(100)).epsilon(1e-5));
 }
 
 TEST_CASE("a note sounds at its pitch from the root key and the sample's rate at two graph rates") {
@@ -226,27 +233,34 @@ TEST_CASE("a sample played between its points is interpolated") {
   // Past the attack and hold, frame k of the voice reads point k / 2.
   for (std::size_t k = 200; k < 600; ++k) {
     CAPTURE(k);
-    CHECK(out.left[onset + k] == doctest::Approx((32.0 * k + 64) / 32768).epsilon(1e-6));
+    CHECK(out.left[onset + k] ==
+          doctest::Approx((32.0 * k + 64) / 32768 * noteGain(100)).epsilon(1e-6));
   }
 }
 
 namespace {
 
 // A full-left zone playing a steady half-scale sample at the graph's rate, so
-// its left channel divided by 0.5 is the volume envelope's level.
+// at velocity 100 its left channel divided by 0.5 and the note's gain is the
+// volume envelope's level.
 Bytes envelopeFont(std::vector<Generator> generators, std::size_t points = 60000) {
   generators.push_back(set(gen::kPan, -500));
   return build(oneZone(steady(16384, points), generators));
 }
 
-double level(const Stereo& out, std::size_t frame) { return out.left.at(frame) / 0.5; }
+double level(const Stereo& out, std::size_t frame) {
+  return out.left.at(frame) / (0.5 * noteGain(100));
+}
+
+// Full level, to the output's float precision.
+constexpr double kFull = 1 - 1e-5;
 
 double db(double level) { return 20 * std::log10(level); }
 
 std::size_t lastAtFullLevel(const Stereo& out) {
   std::size_t last = 0;
   for (std::size_t i = 0; i < out.left.size(); ++i)
-    if (level(out, i) == 1) last = i;
+    if (level(out, i) > kFull) last = i;
   return last;
 }
 
@@ -266,7 +280,7 @@ TEST_CASE("the volume envelope's delay attack hold decay and sustain take their 
   // The attack rises linearly in amplitude.
   CHECK(level(out, attack + 750) == doctest::Approx(0.5).epsilon(0.002));
   std::size_t peak = attack;
-  while (level(out, peak) < 1) ++peak;
+  while (level(out, peak) < kFull) ++peak;
   CHECK(std::abs(static_cast<double>(peak) - (7 + 3000 + 1500)) <= 1);
   // Hold is flat; the decay starts after it.
   const auto decay = lastAtFullLevel(out);
@@ -318,12 +332,12 @@ TEST_CASE("equal-power pan puts a centred zone 3 dB down on each side and +-500 
     CAPTURE(pan);
     const auto out = play(build(oneZone(steady(16384, 2000), {set(gen::kPan, pan)})),
                           {{13, noteOn(0, 60, 100)}}, {48000, 128, 1000});
-    const double left = out.left[500] / 0.5, right = out.right[500] / 0.5;
+    const double left = level(out, 500), right = out.right[500] / (0.5 * noteGain(100));
     if (pan == 0) {
       CHECK(db(left) == doctest::Approx(-3.0103).epsilon(1e-4));
       CHECK(right == left);
     } else {
-      CHECK((pan < 0 ? left : right) == 1);
+      CHECK((pan < 0 ? left : right) == doctest::Approx(1));
       CHECK((pan < 0 ? right : left) == 0);
     }
   }
@@ -336,6 +350,51 @@ TEST_CASE("initialAttenuation lowers a voice by its centibels") {
   CHECK(db(level(out, 500)) == doctest::Approx(-6).epsilon(1e-5));
 }
 
+TEST_CASE("velocity attenuates a note by 40 log10(v / 127) dB") {
+  // The default velocity-to-attenuation modulator: 960 cB on a concave curve.
+  const auto font = envelopeFont({});
+  const auto heard = [&](int velocity) {
+    return db(play(font, {{13, noteOn(0, 60, velocity)}}, {48000, 128, 1000}).left.at(500));
+  };
+  const double loudest = heard(127);
+  for (const auto& [velocity, gainDb] :
+       {std::pair{105, -3.3}, std::pair{85, -7.0}, std::pair{64, -11.9}}) {
+    CAPTURE(velocity);
+    CHECK(std::abs(heard(velocity) - loudest - gainDb) <= 0.1);
+  }
+}
+
+TEST_CASE("controllers are held at power-on values so only CC7's 4.2 dB applies") {
+  // At velocity 127 a full-left zone plays its half-scale sample 4.2 dB down:
+  // the default CC7-to-attenuation modulator at General MIDI's power-on 100.
+  const auto font = envelopeFont({set(gen::kReleaseVolEnv, -1200)});
+  const auto reference = play(font, {{13, noteOn(0, 60, 127)}, {1511, noteOff(0, 60)}},
+                              {48000, 128, 30000});
+  CHECK(std::abs(db(reference.left.at(500) / 0.5) + 4.2) <= 0.1);
+  // Volume, expression, pan and modulation wheel moved, the sustain pedal
+  // held down through the note-off, pitch bend and pressure: nothing changes.
+  const auto moved = play(font, {{3, MidiMsg{0xb0, 7, 0}},
+                                 {3, MidiMsg{0xb0, 11, 0}},
+                                 {3, MidiMsg{0xb0, 10, 0}},
+                                 {3, MidiMsg{0xb0, 1, 127}},
+                                 {13, noteOn(0, 60, 127)},
+                                 {101, MidiMsg{0xb0, 64, 127}},
+                                 {307, MidiMsg{0xe0, 0, 0}},
+                                 {509, MidiMsg{0xd0, 127, 0}},
+                                 {1511, noteOff(0, 60)}},
+                          {48000, 128, 30000});
+  CHECK(moved.left == reference.left);
+  CHECK(moved.right == reference.right);
+}
+
+TEST_CASE("initialAttenuation and the modulators together attenuate by at most 1440 cB") {
+  // 1000 cB, velocity 1's 842 cB and CC7's 42 cB would make 188 dB. Clamped,
+  // the voice is 144 dB down, never louder than its sample.
+  const auto out = play(envelopeFont({set(gen::kInitialAttenuation, 1000)}),
+                        {{13, noteOn(0, 60, 1)}}, {48000, 128, 1000});
+  CHECK(std::abs(db(out.left.at(500) / 0.5) + 144) <= 0.1);
+}
+
 TEST_CASE("a stereo pair plays as two voices and keeps its image") {
   File file;
   file.samples = {{"left", steady(8000, 2000)}, {"right", steady(-4000, 2000)}};
@@ -344,17 +403,18 @@ TEST_CASE("a stereo pair plays as two voices and keeps its image") {
   file.presets.push_back({"preset", 0, 0, {{{set(gen::kInstrument, 0)}}}});
   const auto out = play(build(file), {{13, noteOn(0, 60, 100)}}, {48000, 128, 1000});
   for (std::size_t i = 300; i < 1000; ++i) {
-    CHECK(out.left[i] == doctest::Approx(8000.0 / 32768));
-    CHECK(out.right[i] == doctest::Approx(-4000.0 / 32768));
+    CHECK(out.left[i] == doctest::Approx(8000.0 / 32768 * noteGain(100)));
+    CHECK(out.right[i] == doctest::Approx(-4000.0 / 32768 * noteGain(100)));
   }
 }
 
 namespace {
 
-// The left level once a note's envelope is flat, in sample-data units.
+// The left level once a note's envelope is flat, in sample-data units,
+// without the note's gain.
 double plays(const Bytes& font, int key, int velocity) {
   const auto out = play(font, {{13, noteOn(0, key, velocity)}}, {48000, 128, 400});
-  return out.left[300] * 32768.0;
+  return out.left[300] * 32768.0 / noteGain(velocity);
 }
 
 } // namespace
@@ -429,13 +489,13 @@ TEST_CASE("generator values outside the specification's ranges are clamped once 
                                              set(gen::kPan, 300));
   auto out = play(build(file), {{13, noteOn(0, 60, 100)}}, {48000, 128, 1000});
   CHECK(out.left[500] == 0);
-  CHECK(out.right[500] == 0.5f);
+  CHECK(out.right[500] == doctest::Approx(0.5 * noteGain(100)));
   // FluidR3's attack of -32768 timecents is clamped to -12000: 46.875 frames.
   out = play(envelopeFont({set(gen::kAttackVolEnv, -32768)}), {{13, noteOn(0, 60, 100)}},
              {48000, 128, 1000});
   const auto onset = firstSounding(out.left);
   std::size_t peak = onset;
-  while (level(out, peak) < 1) ++peak;
+  while (level(out, peak) < kFull) ++peak;
   CHECK(std::abs(static_cast<double>(peak - onset + 1) - 46.875) <= 1);
 }
 
@@ -457,7 +517,9 @@ Bytes threePresets() {
 
 const std::vector<Timed> kOneNote{{13, noteOn(0, 60, 100)}};
 
-double steadyLevel(const Stereo& out) { return out.left.at(300) * 32768.0; }
+double steadyLevel(const Stereo& out) {
+  return out.left.at(300) * 32768.0 / noteGain(100);
+}
 
 // A file written for one test and removed with it.
 struct TemporaryFile {
@@ -622,7 +684,7 @@ TEST_CASE("every channel plays the preset and other channel messages change noth
                                  {1201, MidiMsg{0xa9, 60, 90}},
                                  {1511, noteOff(9, 60)}},
                           {48000, 128, 30000});
-  CHECK(levelAt(reference, 1000) == doctest::Approx(2000));
+  CHECK(levelAt(reference, 1000) == doctest::Approx(2000 * noteGain(100)));
   CHECK(drums.left == reference.left);
   CHECK(drums.right == reference.right);
 }
@@ -632,11 +694,12 @@ TEST_CASE("a key struck again sounds beside its earlier note and note-offs end t
                         {{13, noteOn(0, 60, 100)}, {1009, noteOn(0, 60, 30)},
                          {2003, noteOff(0, 60)}, {30011, noteOff(0, 60)}},
                         {48000, 128, 54000});
-  CHECK(levelAt(out, 1500) == doctest::Approx(3000));
+  const double loud = 2000 * noteGain(100), soft = 1000 * noteGain(30);
+  CHECK(levelAt(out, 1500) == doctest::Approx(loud + soft));
   // The loud note, struck first, is released first: 0.1 s later it is 20 dB
   // down, while the soft one still holds.
-  CHECK(levelAt(out, 2003 + 4800) == doctest::Approx(1000 + 200).epsilon(1e-4));
-  CHECK(levelAt(out, 29000) == doctest::Approx(1000));
+  CHECK(levelAt(out, 2003 + 4800) == doctest::Approx(soft + loud / 10).epsilon(1e-4));
+  CHECK(levelAt(out, 29000) == doctest::Approx(soft));
   CHECK(std::abs(static_cast<double>(lastSounding(out.left) + 1) - (30011 + 23040)) <= 1);
 }
 
@@ -656,9 +719,10 @@ TEST_CASE("two parts in unison on two channels both sound and end separately") {
                         {{13, noteOn(0, 60, 100)}, {13, noteOn(1, 60, 100)},
                          {1009, noteOff(1, 60)}},
                         {48000, 128, 30000});
-  CHECK(levelAt(out, 900) == doctest::Approx(4000));
-  CHECK(levelAt(out, 1009 + 4800) == doctest::Approx(2000 + 200).epsilon(1e-4));
-  CHECK(levelAt(out, 29000) == doctest::Approx(2000));
+  const double one = 2000 * noteGain(100);
+  CHECK(levelAt(out, 900) == doctest::Approx(2 * one));
+  CHECK(levelAt(out, 1009 + 4800) == doctest::Approx(one + one / 10).epsilon(1e-4));
+  CHECK(levelAt(out, 29000) == doctest::Approx(one));
 }
 
 TEST_CASE("for now a note-on that finds too few free voices is not started") {

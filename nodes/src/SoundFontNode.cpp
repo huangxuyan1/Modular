@@ -16,7 +16,23 @@ constexpr double kPi = 3.14159265358979323846;
 // A voice has ended once its envelope has fallen this far below its peak.
 constexpr double kFloorDb = 96;
 
+// The specification's ceiling on a voice's total attenuation, so with the
+// floor of 0 no voice is louder than its sample.
+constexpr double kMostAttenuation = 1440;
+// General MIDI's power-on channel volume (CC7). The node follows no
+// controller, so the default modulators read every controller at its
+// power-on value. Only the volume's adds anything: expression (CC11) is at
+// 127, pan (CC10) centred, the pitch wheel centred, and the rest at 0.
+constexpr int kPowerOnVolume = 100;
+
 double seconds(std::int32_t timecents) { return maths::exp2(timecents / 1200.0); }
+
+// The attenuation, in centibels, of a default modulator taking a 7-bit source
+// to attenuation: 960 cB on the concave curve, falling from 127. It comes to
+// -400 log10(value / 127): a gain of 40 log10(value / 127) dB.
+double concaveAttenuation(int value) {
+  return value > 0 ? -400 * maths::log10(value / 127.0) : 960;
+}
 
 bool matches(const SoundFont::Zone& zone, std::uint8_t key, std::uint8_t velocity) {
   return key >= zone.keyLow && key <= zone.keyHigh && velocity >= zone.velocityLow &&
@@ -103,7 +119,8 @@ void SoundFontNode::prepare(const PrepareInfo& info) {
     const double pan = g[SoundFont::kPan];
     plan.panLeft = maths::sin((500 - pan) / 1000 * kPi / 2);
     plan.panRight = maths::sin((500 + pan) / 1000 * kPi / 2);
-    plan.attenuation = g[SoundFont::kInitialAttenuation];
+    plan.attenuation =
+        g[SoundFont::kInitialAttenuation] + concaveAttenuation(kPowerOnVolume);
     plan.points = zone.sampleEnd - zone.sampleStart;
     // sampleModes 1 loops for the voice's whole life, 3 while it is held; 0,
     // 2 and any other value play to the sample's end, as does a zone whose
@@ -182,7 +199,10 @@ void SoundFontNode::noteOn(std::uint8_t channel, std::uint8_t key, std::uint8_t 
     voice.channel = channel;
     voice.key = key;
     voice.increment = maths::exp2((key - plan.root) / 12.0) * plan.rateRatio;
-    voice.gain = maths::exp10(-plan.attenuation / 200);
+    // The default velocity-to-attenuation modulator adds to the zone's.
+    const double attenuation =
+        std::clamp(plan.attenuation + concaveAttenuation(velocity), 0.0, kMostAttenuation);
+    voice.gain = maths::exp10(-attenuation / 200);
     voice.active = sounds(voice, plan);
   }
 }
