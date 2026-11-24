@@ -394,3 +394,25 @@ of sources it did not re-read:
    release, kept outside both repositories.
 3. **Sound parity (D10).** With the default piano and the node's reading both decided, the map's
    Sound parity item may be sharp enough to become a ticket.
+
+### Planning hub decisions (2026-11-24)
+
+Decided by the planning hub under the judgment the user delegated for this map ("All, on your
+best judgment").
+
+1. **Drum clips are page policy.** Whether midishare's engine file sends a `%%MIDI drum` clip
+   to the abcjs fallback is midishare's choice. The planning hub passes the recommendation on
+   ("yes, like its writer-defect clips"). Nothing on Modular's side changes.
+2. **The FluidSynth comparison waits for the user's approval.** The node's own tests rest on
+   the spec's equations, so building the node does not wait for FluidSynth. The comparison
+   against FluidSynth is an acceptance step of the soundfont node's spec. It needs one
+   download, an official FluidSynth 2.x release kept outside both repositories, which the user
+   approves when that step is reached.
+3. **Sound parity is not a map ticket.** Whether the new piano is close enough to today's for
+   the abcjs fallback to go is the user's call, by ear, on the live site, after the FluidSynth
+   comparison. The spec carries it as the last acceptance item. The map's "Not yet specified"
+   item says so.
+4. **The spec slices the piano first.** D11's size is accepted, because the node is meant to
+   serve other soundfonts later. The tickets put what the default piano needs (D10's list) in
+   the first vertical slice, so midishare's path does not wait on the LFOs, filter Q, tuning or
+   exclusive class, which follow in later tickets.

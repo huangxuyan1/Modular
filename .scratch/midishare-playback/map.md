@@ -142,8 +142,11 @@ In scope, not yet sharp enough to ticket. Graduates as the frontier advances.
   parses its soundfont when it is loaded, never in `prepare()`, so a new `Engine` does not read
   it again (the node-shape decision above). Sharp once the contract ticket says what the graph
   holds.
-- **Sound parity.** How the new piano is judged against today's before the abcjs fallback goes,
-  and by whom. Sharp once the default soundfont is chosen.
+- **Sound parity.** Not a map ticket (planning hub, 2026-11-24, on
+  [Which part of the SoundFont format does the node read?](issues/09-soundfont-format-subset.md)).
+  The user judges by ear on the live site, after the node passes its FluidSynth comparison,
+  whether the abcjs fallback can go; the spec carries this as its last acceptance item. Expect a
+  dry output and a wider velocity spread than abcjs's synth.
 
 ## Out of scope
 
