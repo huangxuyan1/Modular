@@ -9,11 +9,11 @@
 - [x] Document the planning maturity boundary: short-lived planning branches and draft PRs hold provisional ideas; no permanent planning branch or incidental roadmap edit in a ticket implementation PR.
 - [ ] Demonstrate that rejecting an exploration closes its draft PR with a preserved explanation but does not promote its proposed direction to `main`. Do not invent a product decision solely for this demonstration.
   - The handling is documented (`docs/agents/planning-delivery.md`, "The user decides", **Rejected**). Only the real occurrence is pending: a planning PR the user rejects (D6). Nothing is staged. A later records PR records it.
-- [ ] Demonstrate that an independently accepted planning update can be reviewed and run through the consistently reported required check, then enters `main` only when the user chooses to merge.
-  - Map ticket 04 (the rate probe) is going up as the first draft planning PR, in another session. Its `CI gate` result, review and the user's merge close this item, recorded by a later records PR.
+- [x] Demonstrate that an independently accepted planning update can be reviewed and run through the consistently reported required check, then enters `main` only when the user chooses to merge.
+  - Shown by map ticket 04's planning PR (PR 11). See "Records (2026-11-24)" below.
 - [x] Keep the versioned local specs, tickets and durable domain docs as the accepted project records; GitHub PRs provide review and exploratory history rather than replacing the local issue tracker.
 - [ ] Delete integrated short-lived planning branches and report where rejected exploration and accepted direction can be found.
-  - The handling is documented (`docs/agents/planning-delivery.md`, **Cleanup** and "Finding past planning"). Only the real occurrence is pending: after items 2 and 3, observe both planning branches deleted and report the merged and the closed PR. A later records PR records it.
+  - The handling is documented (`docs/agents/planning-delivery.md`, **Cleanup** and "Finding past planning"). The merged half is shown: PR 11's planning branch is deleted and its accepted direction is on `main` (see "Records (2026-11-24)" below). The closed half waits on item 2. A later records PR records it.
 
 ## Decisions (2026-11-15)
 
@@ -77,3 +77,18 @@ Raised with the user and since decided (see Decisions, 2026-11-24):
 - Research branches, named in the wayfinder notes of `matt-skills-catalog.md`, which the spec did not place (Standards). Settled by D14.
 - Whether planning PRs run `/code-review`, which the spec did not say (both axes). Settled by D13.
 - Whether an open planning PR counts as a claim on its decision ticket (Spec). Settled by D12.
+
+## Records (2026-11-24)
+
+This was recorded by a records PR from the planning session, at the user's request to finish this ticket and ticket 04.
+
+- **Accepted planning update (item 3).** Map ticket 04, the rate probe, became the first planning PR, as D6 set.
+  - **The request.** The user chose that ticket, and choosing it was their request for its planning branch, push and draft PR.
+  - **Claim and branch.** The probe session claimed the ticket after finding no open PR that named it (D12). It worked on `claude/planning-rate-probe-e720d8` in its own worktree, and pushed only after this ticket's procedure reached `main` in PR 10.
+  - **CI.** `CI gate` ran on draft PR 11 and passed on `1fc2010`. That run included both Windows builds, because the probe adds a `.cpp` file. It was the branch's only run; marking the PR ready started no other.
+  - **Merge.** The user reviewed the PR and accepted it ("Accept and merge"; no `/code-review` was required, per D13). The planning session marked it ready and squash-merged it as `5eb6428`, whose single parent is `40dc180`.
+  - **Direction.** Its direction reached `main` only through that merge: rate needs no claim, and the kernel contract now has one global sample rate.
+- **Integrated planning branch deleted (item 5, merged half).** GitHub deleted PR 11's remote branch three seconds after the merge. The planning session then removed its worktree and local branch; `git branch -D` reported "was 1fc2010", PR 11's head.
+  - **Where accepted direction lives.** It is on `main`, in the resolved `.scratch/roadmap/issues/04-rate-probe-oversampling.md`, `.scratch/roadmap/map.md`, `docs/roadmap.md` and `docs/project-foundations.md`. PR 11 keeps its review history.
+  - **Rejected exploration.** No planning PR has been rejected yet. The procedure's "Finding past planning" query is where the first one will appear.
+- **Still open.** Item 2 waits for a real rejection, and item 5's closed half follows it. The status stays `ready-for-agent`. A later records PR, made when the user asks, records them and sets `done`.
