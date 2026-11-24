@@ -1,7 +1,7 @@
 # Where does the web build live, and how does a built module reach the site?
 
 Type: grilling
-Status: claimed
+Status: resolved
 Blocked by: 02
 
 ## Question
@@ -28,6 +28,85 @@ a module built somewhere else. Decide where, and what Modular takes on by it.
 
 The probe supplies the facts this rests on: which libraries build, what had to change, and
 how large the module is.
+
+## Answer
+
+Resolved 2026-11-24. **The web is a supported Modular platform, scoped as `if(WIN32)` scopes
+Windows. The glue is a general `apps/web/` target. The `web` CI job builds the module and
+hands it over as a workflow artifact, which midishare commits beside a manifest naming the
+Modular commit.** Nothing changes under `kernel/` or `workspace/`. The evidence and the
+options weighed are under **Comments**; J numbers refer to its judgment calls.
+
+Every decision below was **decided by the planning hub under the judgment the user delegated
+for this map ("All, on your best judgment"), 2026-11-24**, from the recommendations under
+Comments. Like every planning record, it is provisional until its planning PR merges. The
+tags are those defined under Comments. Spec B is the map's web build and render surface spec.
+
+1. **The web is a supported platform** (J1 (a)). [Modular] A `web` configure preset; a `web`
+   CI job under `CI gate` on every PR that takes the build path; and `docs/web.md`, with a
+   pointer from the CI section of `docs/windows.md`. The web build covers the web surface and
+   the tests that pass under Node, and `docs/web.md` lists each excluded target with its
+   reason. The persistence break (decision 2) is the evidence: only a second compiler found it.
+2. **Persistence stays out of the web build** (J2 (a)). [Modular]
+   `modular_primitive_persistence` and `authoring_tests` are excluded and recorded as a known
+   gap. The `std::from_chars` call on a `long double` in `nodes/src/PrimitivePersistence.cpp`
+   fails on any libc++ build, macOS included, so it is a **pre-existing defect on `main`**. It
+   needs its own fix ticket, a `nodes/` change (J2 (b)), outside this map's route. This ticket
+   names it and does not fix it.
+3. **The glue is an `apps/web/` target** (J3). [Modular] It builds the module and ships a
+   hand-written ES module loader and a TypeScript declaration file. The surface is general:
+   Standard MIDI File bytes and a SoundFont in, stereo samples out. No midishare name, path or
+   limit appears in Modular, and options such as a preset or a voice limit are added only when
+   a client needs one.
+4. **The module reaches the site as a CI artifact that midishare commits** (J4, option 1
+   (1b)). [Modular] [midishare] The `web` job uploads the module and its manifest as a workflow
+   artifact on every run. A midishare session takes the artifact of a merged `main` commit and
+   commits it on a midishare branch. Until the job exists, the stopgap is a local build from a
+   clean `main` checkout (1a). Release assets and npm packages (option 2) are deferred; they
+   need the user's approvals.
+5. **The site states which Modular commit it plays** (J5). [Modular] [midishare] The build bakes
+   the Modular commit and the Emscripten version into the module, and `loadModular()` exposes
+   them. The artifact's manifest records the commit, the toolchain, the build flags and each
+   file's SHA-256. midishare commits the manifest beside the files and chooses where to show
+   the version.
+6. **The extract tool is a standard-library Python script under `scripts/`, in spec B** (J6
+   (a)). [Modular] It goes in the existing `scripts/` folder, not a new top-level `tools/`,
+   unless spec B finds a concrete reason; spec A is merged and excludes it. Its CTest test uses
+   a self-made SF2 with several presets: one preset, extracted, must render through the node
+   identically to the same preset in the source file. Comparing the real extract with the full
+   `FluidR3_GM.sf2` is an acceptance check, as
+   [spec A's FluidSynth acceptance](../../soundfont-node/issues/07-acceptance-the-default-piano-against-fluidsynth.md)
+   is, because that file never enters `tests/`.
+7. **The extract lives only in midishare, with its licence and its provenance** (J7).
+   [midishare] [Modular] It is committed in midishare under a content-hashed name. The full MIT
+   notice goes both into the extract's INFO list and into a file beside it. The provenance
+   (source URL, Debian version, source SHA-256, preset, the tool's Modular commit and the
+   extract's SHA-256) is kept in three places: inside the extract, beside it in midishare, and
+   in spec B. **[user approval needed]** Downloading the `COPYING` text of Debian's
+   `fluid-soundfont` 3.1-6 is a user approval for spec B's implementation; it is not approved
+   now.
+8. **No cross-origin isolation** (J8). [midishare] midishare's headers do not change. One
+   condition: if its CSP ever adds `script-src` or `default-src`, it must allow
+   `'wasm-unsafe-eval'`.
+9. **Content type and caching** (J9). [Modular] [midishare] Modular ships files that are safe
+   to cache forever under a hashed name, and a `locateFile` option in the loader. The `.wasm`
+   content type and any long caching are midishare's to check on its first branch preview.
+10. **The `web` CI job** (J10). [Modular] It `needs: classify`, is skipped on the docs-only
+    path, and joins `CI gate`'s `needs`, checked as `windows` is. It runs on a pinned
+    `ubuntu-24.04`, clones emsdk at tag 6.0.13, verifies the tag's commit, then installs and
+    activates it. No cache at first. No ruleset change.
+
+**Left to
+[How is a browser render checked against a native one?](08-browser-render-checked-against-native.md):**
+where its native reference comes from (Comments, "For ticket 08"). Not decided here.
+
+**User approvals still needed later:**
+
+- the `COPYING` download (decision 7), at spec B's implementation;
+- on midishare's side, the go-ahead for its branch after the submission deadline, and the
+  artifact download in that session (decision 4);
+- only if option 2 is taken up: a tag and a release per version and a `contents: write` job,
+  and for npm also an account and a repository secret.
 
 ## Comments
 
