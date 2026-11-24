@@ -3,6 +3,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <tuple>
 
@@ -426,4 +428,71 @@ TEST_CASE("an empty MIDI node can be repaired by import and keeps content after 
   CHECK_FALSE(file.importError().empty());
   CHECK(file.file().entries().size() == 2);
   CHECK_NOTHROW(Engine(graph, 48000, 127));
+}
+
+namespace {
+
+Bytes fileBytes(const std::filesystem::path& path) {
+  std::ifstream in(path, std::ios::binary);
+  return Bytes(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+struct Played {
+  std::uint64_t durationFrames = 0;
+  std::vector<EventLog::Record> records;
+};
+
+// An empty file node, loaded by `load`, triggered at frame 101 and logged
+// through its end.
+template <class Load>
+Played playLoaded(Load load, double rate) {
+  Graph graph;
+  const auto startId = graph.addNode<TriggerAtNode>(101);
+  const auto fileId = graph.addNode<MidiFileNode>();
+  const auto logId = graph.addNode<EventLog>();
+  auto& file = static_cast<MidiFileNode&>(graph.node(fileId));
+  auto& log = static_cast<EventLog&>(graph.node(logId));
+  load(file);
+  graph.connect(startId, static_cast<TriggerAtNode&>(graph.node(startId)).trigger(),
+                fileId, file.trigger());
+  graph.connect(fileId, file.midi(), logId, log.in);
+  Engine engine(graph, rate, 127);
+  while (engine.streamTime() <= 101 + file.durationFrames()) engine.process(127);
+  return {file.durationFrames(), log.records};
+}
+
+} // namespace
+
+TEST_CASE("a node imported from bytes plays the same frames as one imported from the file's path") {
+  const auto path = std::filesystem::path(MODULAR_TEST_FIXTURES) / "one-note.mid";
+  const auto bytes = fileBytes(path);
+  REQUIRE_FALSE(bytes.empty());
+  for (const double rate : {44100.0, 48000.0}) {
+    CAPTURE(rate);
+    const auto fromPath = playLoaded([&](MidiFileNode& node) { node.import(path); }, rate);
+    const auto fromBytes = playLoaded([&](MidiFileNode& node) { node.import(bytes); }, rate);
+    CHECK(fromPath.records.size() == 2);
+    CHECK(fromBytes.durationFrames == fromPath.durationFrames);
+    CHECK(fromBytes.records == fromPath.records);
+  }
+}
+
+TEST_CASE("a failed import from bytes throws the parser's message and keeps the previous content") {
+  Graph graph;
+  const auto id = graph.addNode<MidiFileNode>();
+  auto& file = static_cast<MidiFileNode&>(graph.node(id));
+  file.import(oneNote());
+  CHECK(file.ready());
+  CHECK(file.importError().empty());
+  const Bytes notMidi{'R', 'I', 'F', 'F', 0, 0, 0, 0};
+  CHECK_THROWS_WITH_AS(file.import(notMidi), "midi file: missing MThd header",
+                       std::invalid_argument);
+  CHECK(file.importError() == "midi file: missing MThd header");
+  CHECK(file.file().entries().size() == 2);
+  CHECK(file.file().durationSeconds() == doctest::Approx(1));
+  CHECK_NOTHROW(Engine(graph, 48000, 127));
+  // A later import replaces the content and clears the recorded failure.
+  file.import(tempoChange());
+  CHECK(file.importError().empty());
+  CHECK(file.file().durationSeconds() == doctest::Approx(1.5));
 }

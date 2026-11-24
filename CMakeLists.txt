@@ -61,6 +61,14 @@ target_link_libraries(modular_soundfont PUBLIC modular_nodes)
 # codec too, behind soundFontCodecs() rather than primitiveCodecs().
 target_link_libraries(modular_primitive_persistence PUBLIC modular_soundfont)
 
+# --- web: the render surface's C++ core ---
+# A client hands it a soundfont's bytes once and MIDI bytes per render. It builds
+# on every platform, so the native suite tests the code the web module exports;
+# the module itself, which needs Emscripten, is not built here.
+add_library(modular_web_core apps/web/Instrument.cpp)
+target_include_directories(modular_web_core PUBLIC apps/web)
+target_link_libraries(modular_web_core PUBLIC modular_kernel modular_midi modular_soundfont)
+
 if(WIN32)
   add_library(modular_windows_audio nodes/src/AudioOutputNode.cpp)
   target_link_libraries(modular_windows_audio PUBLIC modular_nodes PRIVATE winmm)
@@ -151,6 +159,11 @@ if(NOT CMAKE_CROSSCOMPILING)
     "-DWORK_ROOT=${CMAKE_CURRENT_BINARY_DIR}/soundfont-extract-tests"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_soundfont_extract.cmake")
 endif()
+
+add_executable(web_core_tests tests/test_web_core.cpp)
+target_include_directories(web_core_tests PRIVATE third_party/doctest)
+target_link_libraries(web_core_tests PRIVATE modular_web_core)
+add_test(NAME web_core_tests COMMAND web_core_tests)
 
 add_test(NAME midi_cli_smoke COMMAND "${CMAKE_COMMAND}"
   "-DCLI=$<TARGET_FILE:midi_cli>"

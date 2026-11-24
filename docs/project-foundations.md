@@ -23,9 +23,11 @@ does the capability arise from the graph model, or is it inherited from DAW trad
 - `workspace/`: GUI-independent authored Graph ownership, NodeId layout and reusable
   explicit deletion. Policy and media-specific content remain with clients.
 - `apps/render_cli/`, `apps/midi_cli/`, `apps/graph_editor/`: offline render, MIDI-file
-  render/playback and the Windows editor respectively.
-- `tests/`: doctest suites for kernel, nodes, authoring, MIDI files, soundfonts and the
-  real editor app. `scripts/check_kernel_purity.cmake` enforces media-free kernel code.
+  render/playback and the Windows editor respectively. `apps/web/` (`modular_web_core`)
+  holds the web render surface's C++ core, which builds and is tested on every platform.
+- `tests/`: doctest suites for kernel, nodes, authoring, MIDI files, soundfonts, the web
+  render core and the real editor app. `scripts/check_kernel_purity.cmake` enforces
+  media-free kernel code.
 
 Everything commonly called a DAW feature—tracks, mixers, buses, clips, transport,
 playhead and arrangements—is user-space node wiring or a view of the authored graph,
