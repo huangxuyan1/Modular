@@ -3,7 +3,9 @@
 
 /**
  * Loads and instantiates one Modular module. Each loaded module runs its calls one at a
- * time, in call order, whichever instrument they name.
+ * time, in call order, whichever instrument they name; a failed call rejects in its own
+ * turn. After a WebAssembly trap, that call rejects with `module stopped: ...` and the next
+ * call instantiates a fresh module, on which every instrument makes itself again.
  */
 export function loadModular(options?: {
   /**
@@ -23,7 +25,8 @@ export interface Modular {
   /**
    * Parses a soundfont's bytes once into an instrument that plays the file's lowest
    * preset. The bytes are copied when the call is made; the instrument keeps its own copy.
-   * Rejects with an `Error` carrying Modular's message, such as `soundfont: ...`.
+   * Rejects with an `Error` carrying Modular's message, such as `soundfont: ...`, including
+   * when `soundfont` is not a `Uint8Array`.
    */
   createInstrument(soundfont: Uint8Array): Promise<Instrument>;
 }
@@ -31,9 +34,10 @@ export interface Modular {
 export interface Instrument {
   /**
    * Renders Standard MIDI File bytes at `sampleRate`: the file's own frames, then its
-   * release for at most two seconds, with the silent tail trimmed. The bytes are copied
-   * when the call is made. Rejects with an `Error` carrying Modular's message, such as
-   * `midi file: ...` or `render: ...`.
+   * release for at most two seconds, with the silent tail trimmed. A file longer than ten
+   * minutes is refused. The bytes are copied when the call is made. Rejects with an
+   * `Error` carrying Modular's message, such as `midi file: ...` or `render: ...`,
+   * including when `midi` is not a `Uint8Array` or `sampleRate` not a number.
    */
   render(midi: Uint8Array, sampleRate: number): Promise<Rendering>;
 }

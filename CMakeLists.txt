@@ -90,6 +90,12 @@ target_link_libraries(modular_web_core PUBLIC modular_kernel modular_midi modula
 # manifest the build writes beside them.
 if(EMSCRIPTEN)
   set(MODULAR_WEB_DIST "${CMAKE_CURRENT_BINARY_DIR}/dist")
+  # How the module links: an ES6 factory for pages and Node, whose memory grows as a render
+  # needs. The test module below links the same way.
+  set(MODULAR_WEB_LINK_OPTIONS
+    -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,node -sALLOW_MEMORY_GROWTH=1
+    -sEXPORTED_FUNCTIONS=_malloc,_free
+    -sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPF32,UTF8ToString)
   # The module's version: the commit, read each time the module is built, not only when
   # CMake configures, and the Emscripten version. The stamp rewrites its files only when
   # they change, so an unchanged tree relinks nothing.
@@ -106,17 +112,15 @@ if(EMSCRIPTEN)
     BYPRODUCTS "${MODULAR_WEB_VERSION_DIR}/WebVersion.h" "${MODULAR_WEB_VERSION_FILE}"
     COMMENT "Reading the commit the web module is built from"
     VERBATIM)
-  add_executable(modular_web apps/web/Exports.cpp apps/web/Version.cpp)
+  set(MODULAR_WEB_SOURCES apps/web/Exports.cpp apps/web/Version.cpp)
+  add_executable(modular_web ${MODULAR_WEB_SOURCES})
   add_dependencies(modular_web modular_web_version)
   target_include_directories(modular_web PRIVATE "${MODULAR_WEB_VERSION_DIR}")
   target_link_libraries(modular_web PRIVATE modular_web_core)
   set_target_properties(modular_web PROPERTIES
     SUFFIX ".mjs"
     RUNTIME_OUTPUT_DIRECTORY "${MODULAR_WEB_DIST}")
-  target_link_options(modular_web PRIVATE
-    -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,node -sALLOW_MEMORY_GROWTH=1
-    -sEXPORTED_FUNCTIONS=_malloc,_free
-    -sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPF32,UTF8ToString)
+  target_link_options(modular_web PRIVATE ${MODULAR_WEB_LINK_OPTIONS})
   configure_file(apps/web/modular.mjs "${MODULAR_WEB_DIST}/modular.mjs" COPYONLY)
   configure_file(apps/web/modular.d.mts "${MODULAR_WEB_DIST}/modular.d.mts" COPYONLY)
 
@@ -145,6 +149,24 @@ if(EMSCRIPTEN)
     COMMENT "Writing the web module's manifest"
     VERBATIM)
   add_custom_target(modular_web_manifest ALL DEPENDS "${MODULAR_WEB_MANIFEST}")
+
+  # The test module: the module's sources, version and link options, and its loader, built
+  # for the smoke test only into its own folder, never into dist/, whose files the manifest
+  # lists. tests/web_test_module.cpp traps on a huge allocation and reports the heap in use,
+  # and tests/web_test_module.js hands each instance to the test.
+  set(MODULAR_WEB_TEST_MODULE "${CMAKE_CURRENT_BINARY_DIR}/web-test-module")
+  add_executable(modular_web_test ${MODULAR_WEB_SOURCES} tests/web_test_module.cpp)
+  add_dependencies(modular_web_test modular_web_version)
+  target_include_directories(modular_web_test PRIVATE "${MODULAR_WEB_VERSION_DIR}")
+  target_link_libraries(modular_web_test PRIVATE modular_web_core)
+  set_target_properties(modular_web_test PROPERTIES
+    OUTPUT_NAME modular_web
+    SUFFIX ".mjs"
+    RUNTIME_OUTPUT_DIRECTORY "${MODULAR_WEB_TEST_MODULE}"
+    LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/web_test_module.js")
+  target_link_options(modular_web_test PRIVATE ${MODULAR_WEB_LINK_OPTIONS}
+    "SHELL:--post-js \"${CMAKE_CURRENT_SOURCE_DIR}/tests/web_test_module.js\"")
+  configure_file(apps/web/modular.mjs "${MODULAR_WEB_TEST_MODULE}/modular.mjs" COPYONLY)
 endif()
 
 if(WIN32)
@@ -286,7 +308,8 @@ if(EMSCRIPTEN)
     COMMAND web_smoke_fixture "${MODULAR_WEB_SMOKE_SOUNDFONT}")
   add_test(NAME web_smoke COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR}
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_web_smoke.mjs"
-    "${MODULAR_WEB_DIST}/modular.mjs" "${MODULAR_WEB_SMOKE_SOUNDFONT}")
+    "${MODULAR_WEB_DIST}/modular.mjs" "${MODULAR_WEB_SMOKE_SOUNDFONT}"
+    "${MODULAR_WEB_TEST_MODULE}/modular.mjs")
   set_tests_properties(web_smoke_fixture PROPERTIES FIXTURES_SETUP web_smoke_soundfont)
   set_tests_properties(web_smoke PROPERTIES FIXTURES_REQUIRED web_smoke_soundfont)
 endif()

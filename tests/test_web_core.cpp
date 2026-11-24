@@ -354,6 +354,8 @@ TEST_CASE("malformed bytes fail with the nodes' own messages") {
   }
   REQUIRE(readerMessage.starts_with("soundfont: "));
   CHECK_THROWS_WITH_AS(Instrument{chord()}, readerMessage.c_str(), std::invalid_argument);
+  CHECK_THROWS_WITH_AS(Instrument{Bytes{}}, "soundfont: truncated chunk",
+                       std::invalid_argument);
   sf2test::File compressed;
   compressed.major = 3;
   CHECK_THROWS_WITH_AS(Instrument(sf2test::build(compressed)),
@@ -415,14 +417,17 @@ TEST_CASE("a voice limit below what one note of the preset starts fails with the
                        std::invalid_argument);
 }
 
-// Counts the global allocations made while `counting` is set.
+// Counts the global allocations made while `counting` is set, and fails any
+// larger than `allocationLimit` while it is set, as if memory had run out.
 namespace {
 bool counting = false;
 std::size_t allocations = 0;
+std::size_t allocationLimit = 0;
 } // namespace
 
 void* operator new(std::size_t size) {
   if (counting) ++allocations;
+  if (allocationLimit != 0 && size > allocationLimit) throw std::bad_alloc();
   if (void* memory = std::malloc(size == 0 ? 1 : size)) return memory;
   throw std::bad_alloc();
 }
@@ -517,4 +522,75 @@ TEST_CASE("the stereo sink starts again from its first frame in each fresh Engin
   const auto emptied = rig.sink().take();
   CHECK(emptied.left.empty());
   CHECK(emptied.right.empty());
+}
+
+namespace {
+
+// While it lives, no allocation larger than `bytes` succeeds.
+class MemoryCap {
+public:
+  explicit MemoryCap(std::size_t bytes) { allocationLimit = bytes; }
+  ~MemoryCap() { allocationLimit = 0; }
+  MemoryCap(const MemoryCap&) = delete;
+  MemoryCap& operator=(const MemoryCap&) = delete;
+};
+
+// 960 ticks make a second (see midiFile), so ten minutes are 576,000 ticks.
+constexpr std::uint32_t kTenMinutes = 600 * 960;
+
+} // namespace
+
+TEST_CASE("a file longer than ten minutes is refused before its rendering is sized") {
+  // One tick past ten minutes. At 48 kHz its rendering would take 230 MB, but
+  // here no allocation over a mebibyte succeeds, so the refusal comes first.
+  // At 1e19 Hz its frames could not even be counted.
+  Instrument instrument(toneFont());
+  const auto tooLong = midiFile({on(0, 60), off(kTenMinutes, 60)}, kTenMinutes + 1);
+  {
+    const MemoryCap cap(1 << 20);
+    for (const double rate : {48000.0, 1e19}) {
+      CAPTURE(rate);
+      CHECK_THROWS_WITH_AS(instrument.render(tooLong, rate),
+                           "render: file is longer than 10 minutes", std::invalid_argument);
+    }
+  }
+  CHECK(instrument.render(chord(), 48000).left ==
+        Instrument(toneFont()).render(chord(), 48000).left);
+}
+
+TEST_CASE("a file of exactly ten minutes renders and ends at most two seconds after the file") {
+  // At 997 Hz the file's 598,200 frames and the cap's 1,994 end off any block
+  // boundary. The note sounds through the file's last second and is still above
+  // -80 dBFS when the cap ends, so the rendering runs to the cap.
+  const auto font = steadyFont(16000, {set(gen::kReleaseVolEnv, 2400)});
+  const auto rendering =
+      Instrument(font).render(midiFile({on(kTenMinutes - 960, 60)}, kTenMinutes), 997);
+  CHECK(rendering.sampleRate == 997);
+  CHECK(rendering.left.size() == 598200 + 1994);
+  CHECK(rendering.right.size() == rendering.left.size());
+  CHECK(audibleAt(rendering.left, rendering.right, rendering.left.size() - 1));
+}
+
+TEST_CASE("a render that runs out of memory throws std::bad_alloc and the instrument renders on") {
+  // A minute at 48 kHz takes 11.5 MB a channel, more than the memory allows.
+  Instrument instrument(toneFont());
+  const auto minute = midiFile({on(0, 60), off(60 * 960, 60)}, 60 * 960);
+  {
+    const MemoryCap cap(1 << 20);
+    CHECK_THROWS_AS(instrument.render(minute, 48000), std::bad_alloc);
+  }
+  CHECK(instrument.render(chord(), 48000).left ==
+        Instrument(toneFont()).render(chord(), 48000).left);
+}
+
+TEST_CASE("a rate whose two-second tail cannot be counted is refused before any node prepares") {
+  // A file of zero duration renders nothing, but at these rates the soundfont
+  // node would round its fades from numbers no integer holds.
+  Instrument instrument(shortFont());
+  for (const double rate : {1e300, std::numeric_limits<double>::max()}) {
+    CAPTURE(rate);
+    CHECK_THROWS_WITH_AS(instrument.render(midiFile({}, 0), rate), "render: too many frames",
+                         std::invalid_argument);
+  }
+  CHECK(instrument.render(midiFile({}, 0), 48000).left.empty());
 }
