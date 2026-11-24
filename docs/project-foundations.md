@@ -18,13 +18,14 @@ does the capability arise from the graph model, or is it inherited from DAW trad
   `kernel/src/Flatten.h` and `.cpp` erase it at compile.
 - `nodes/`: user-space primitive nodes, outside the kernel. `Payloads.h` declares media
   payloads. `BasicNodes.h` stays medium-neutral; `MidiNodes.h` knows about notes.
-  Compiled adapters include MIDI-file parsing and Windows audio output.
+  Compiled adapters include MIDI-file parsing, the SoundFont 2 instrument
+  (`modular_soundfont`) and Windows audio output.
 - `workspace/`: GUI-independent authored Graph ownership, NodeId layout and reusable
   explicit deletion. Policy and media-specific content remain with clients.
 - `apps/render_cli/`, `apps/midi_cli/`, `apps/graph_editor/`: offline render, MIDI-file
   render/playback and the Windows editor respectively.
-- `tests/`: doctest suites for kernel, nodes, authoring, MIDI files and the real editor
-  app. `scripts/check_kernel_purity.cmake` enforces media-free kernel code.
+- `tests/`: doctest suites for kernel, nodes, authoring, MIDI files, soundfonts and the
+  real editor app. `scripts/check_kernel_purity.cmake` enforces media-free kernel code.
 
 Everything commonly called a DAW feature—tracks, mixers, buses, clips, transport,
 playhead and arrangements—is user-space node wiring or a view of the authored graph,

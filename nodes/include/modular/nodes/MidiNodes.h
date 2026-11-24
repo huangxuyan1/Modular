@@ -248,8 +248,9 @@ private:
 };
 
 // Monophonic sine synth, sample-accurate note starts. Last-note priority,
-// no envelope (a hard on/off keeps timing observable for tests). Polyphony is
-// a VoiceAllocatorNode, several of these, and a MixNode — not a bigger synth.
+// no envelope (a hard on/off keeps timing observable for tests). This synth
+// stays monophonic: a VoiceAllocatorNode, several of these and a MixNode play
+// chords. Other instruments may keep their own voices, as SoundFontNode does.
 class SineSynthNode : public Node {
 public:
   explicit SineSynthNode(Graph& graph) : Node(graph) {

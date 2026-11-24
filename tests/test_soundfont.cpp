@@ -202,7 +202,7 @@ TEST_CASE("a note sounds at its pitch from the root key and the sample's rate at
   }
 }
 
-TEST_CASE("without overridingRootKey the header's pitch is the root, and 255 or an illegal one means 60") {
+TEST_CASE("without overridingRootKey the root is the header's pitch, 255 or illegal meaning 60") {
   for (const auto& [headerPitch, key] : {std::pair{69, 69}, std::pair{255, 60},
                                          std::pair{128, 60}}) {
     CAPTURE(headerPitch);

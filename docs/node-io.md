@@ -82,6 +82,109 @@ bare MIDI blocks complete at their last entry. Seek and loop remain deferred.
 
 The file rules follow the [Standard MIDI Files specification](https://midi.org/standard-midi-files-specification).
 
+## SoundFontNode
+
+Status: soundfont-node ticket 01, the tracer. Tickets 02 to 05 add loops, the voice
+policy, the ignored list and persistence. The rules marked *interim* below change
+then. See `.scratch/soundfont-node/spec.md` for the end state.
+
+Include `modular/nodes/SoundFontNode.h` and link `modular_soundfont`. That library
+holds the SoundFont 2 reader (`SoundFont`) and the node, and links only the
+header-only node library. The node is one polyphonic primitive with its own voices.
+
+**Words.** A *soundfont* is a SoundFont 2 file. A *preset* is what a player selects,
+numbered by a *bank* and a program. A preset's *zones* point to instruments, and an
+instrument's zones point to samples. Each zone has key and velocity ranges and
+*generators*, the settings a sample plays with. *Modulators* adjust generators from
+the note or controllers; the node does not read them yet. A *voice* is one sounding
+sample. The *voice limit* sizes the node's fixed pool of voices. A note-off starts a
+voice's *release*.
+
+| Surface | Behavior |
+| --- | --- |
+| Construction | Empty and not ready, or holding an already parsed `SoundFont` |
+| `load(bytes)` / `load(path)` | Edit-only; parses and checks the whole file |
+| `ready()` | Whether the node holds a soundfont |
+| `midiIn()` input | `midi`, `event<midi>`: notes on every channel |
+| `out()` output | `out`, `audio<2>`: the voices' sum, dry |
+| `setPreset(bank, program)` | Edit-only; throws for a preset the file lacks |
+| `bank()` / `program()` | The selected preset; zero while empty |
+| `setVoiceLimit(n)` / `voiceLimit()` | 1 to 65535, default 256; throws otherwise |
+| `prepare()` | Derives rate-dependent values and resets the pool |
+
+A load reads the file into the node, which keeps it whole as its content. A failed
+load throws and keeps the previous content. A successful load selects the lowest
+bank, then the lowest program in it, and keeps the voice limit. A path is read once:
+the node renders after the file is deleted. `prepare()` never reads the soundfont
+again, so a fresh `Engine` on the same graph renders from a clean start. It throws
+`soundfont: load a soundfont first` while empty, and when the voice limit is below
+the most voices one note of the preset can start.
+
+**Errors.** Authoring errors throw `std::invalid_argument` with a short
+`soundfont: ...` message. A load refuses:
+
+- a malformed RIFF structure, a truncated chunk, data after the RIFF chunk, a
+  missing or duplicate list, and a missing or wrong-size `ifil` version;
+- a hydra list of the wrong size, including one with records no index reaches;
+- an index or a sample pointing outside its list or the sample data;
+- a file with no preset;
+- `ifil` major version 3, or a sample with the compressed bit:
+  `soundfont: compressed samples (sf3) are not supported`. Other versions than 2
+  are refused too;
+- *interim (ticket 04 skips and lists them):* a zone whose sample is in ROM, empty,
+  or has a sample rate of 0. A ROM sample no zone plays does not stop a load.
+
+The reader reads 16-bit sample data. An `sm24` chunk is skipped, so a 24-bit file
+plays at 16 bits.
+
+**Zones.** The first zone at either level without a terminal generator is that
+level's global zone. A note plays every instrument zone whose key and velocity
+ranges, at both levels, contain it. Preset-level values add to instrument-level
+ones, and instrument-only generators at the preset level are ignored. Each final
+value is clamped to the specification's range. Generators after a zone's terminal
+generator are ignored, and a repeated generator keeps its last value.
+
+**The voice honours so far:**
+
+- pitch from the root key (`overridingRootKey`, else the header's original pitch,
+  where 255 or an illegal value means 60) and the sample's rate against the graph's:
+  `2^((key - root) / 12) * sample rate / graph rate` points per frame;
+- linear interpolation, with the sample silent past its last point;
+- `initialAttenuation` in centibels, and equal-power `pan`: a centred zone is 3 dB
+  down on each side, and +-500 is fully one-sided. A stereo pair is two voices;
+- the volume envelope: delay is silent and holds the sample back, the attack rises
+  linearly in amplitude, hold is flat, and decay and release fall at a constant rate
+  in decibels, a stage's time being a full 100 dB fall. Sustain is an attenuation in
+  centibels. A release starts from the current level, so it ends sooner the lower it
+  starts.
+
+A voice ends once its envelope has fallen 96 dB below its peak after its attack,
+held or released, or when it passes its sample's end. After the last voice the
+output is exact zeros. Key scaling, tuning generators, the modulation envelope,
+the LFOs, the filter and modulators come in ticket 02.
+
+**Notes.** Every channel, channel 10 included, plays the one preset. Velocity is the
+note-on's byte, and velocity 0 is a note-off. Program changes, controllers, pitch
+bend and note-off velocity do nothing. A key is a channel and a key number. A key
+struck again starts a new note beside the old one. A note-off releases every voice of
+its key's oldest held note; with none held, it does nothing.
+
+**Interim rules**, replaced by the tickets named:
+
+- *Loops (02):* every zone plays its sample once, to its end, whatever its
+  `sampleModes`.
+- *Pool full (03):* a note-on that finds too few free voices for all its zones is
+  not started.
+- *Unplayable zones (04):* refused at load, as listed under Errors.
+- *Silent ignoring (04):* generators and modulators the node does not read are
+  ignored silently, effects sends included. There is no ignored list yet.
+
+`process()` allocates nothing. Voices render in slot order between events, so the
+output is bit-identical at every block size. Every transcendental function whose
+result reaches the output goes through one internal header,
+`nodes/src/SoundFontMaths.h`, which wraps the standard library for now, so a later
+portable implementation can replace it for browser-against-native identity.
+
 ## AudioOutputNode
 
 Include `modular/nodes/AudioOutputNode.h` and link `modular_windows_audio` on Windows.
