@@ -34,6 +34,10 @@ constexpr double kVelocityToCutoff = -2400;
 
 double seconds(std::int32_t timecents) { return maths::exp2(timecents / 1200.0); }
 
+std::uint64_t frames(std::int32_t timecents, double rate) {
+  return static_cast<std::uint64_t>(std::llround(seconds(timecents) * rate));
+}
+
 // The attenuation, in centibels, of a default modulator taking a 7-bit source
 // to attenuation: 960 cB on the concave curve, falling from 127. It comes to
 // -400 log10(value / 127): a gain of 40 log10(value / 127) dB.
@@ -119,9 +123,6 @@ void SoundFontNode::prepare(const PrepareInfo& info) {
   if (voice_limit_ < voices_per_note_)
     throw std::invalid_argument(
         "soundfont: voice limit is below the voices one note starts");
-  const auto frames = [&](std::int32_t timecents) {
-    return static_cast<std::uint64_t>(std::llround(seconds(timecents) * rate));
-  };
   rate_ = rate;
   fade_frames_ = static_cast<std::uint32_t>(
       std::max<long long>(1, std::llround(kFadeSeconds * rate)));
@@ -134,6 +135,8 @@ void SoundFontNode::prepare(const PrepareInfo& info) {
     plan.root = g[SoundFont::kOverridingRootKey] >= 0 ? g[SoundFont::kOverridingRootKey]
               : zone.originalPitch <= 127 ? zone.originalPitch : 60;
     plan.rateRatio = zone.sampleRate / rate;
+    plan.tuning = 100 * g[SoundFont::kCoarseTune] + g[SoundFont::kFineTune] +
+                  zone.pitchCorrection;
     // Equal-power pan: sin on both sides keeps +-500 exactly one-sided.
     const double pan = g[SoundFont::kPan];
     plan.panLeft = maths::sin((500 - pan) / 1000 * kPi / 2);
@@ -152,31 +155,21 @@ void SoundFontNode::prepare(const PrepareInfo& info) {
       plan.loopEnd = zone.loopEnd - zone.sampleStart;
     }
 
-    plan.volume.delay = frames(g[SoundFont::kDelayVolEnv]);
-    plan.volume.attack = frames(g[SoundFont::kAttackVolEnv]);
-    plan.volume.hold = frames(g[SoundFont::kHoldVolEnv]);
     // Decay and release fall at a constant rate in dB: 100 dB over the time.
-    const double decayFramesPerDb = seconds(g[SoundFont::kDecayVolEnv]) * rate / 100;
-    plan.decayFactor = maths::exp10(-1 / (20 * decayFramesPerDb));
+    plan.volume.delay = frames(g[SoundFont::kDelayVolEnv], rate);
+    plan.volume.attack = frames(g[SoundFont::kAttackVolEnv], rate);
     const double sustainDb = g[SoundFont::kSustainVolEnv] / 10.0;
     plan.volume.sustain = maths::exp10(-sustainDb / 20);
     plan.volume.decayEnds = sustainDb >= kFloorDb;
-    plan.volume.decay = static_cast<std::uint64_t>(
-        std::ceil(std::min(sustainDb, kFloorDb) * decayFramesPerDb));
     plan.releaseFramesPerDb = seconds(g[SoundFont::kReleaseVolEnv]) * rate / 100;
     plan.releaseFactor = maths::exp10(-1 / (20 * plan.releaseFramesPerDb));
 
     // The modulation envelope's decay and release move linearly, a stage's
     // time being a full change between 1 and 0. Its sustain is a decrease in
     // 0.1 % steps.
-    plan.modulation.delay = frames(g[SoundFont::kDelayModEnv]);
-    plan.modulation.attack = frames(g[SoundFont::kAttackModEnv]);
-    plan.modulation.hold = frames(g[SoundFont::kHoldModEnv]);
-    plan.modDecayFrames = seconds(g[SoundFont::kDecayModEnv]) * rate;
-    const double sustainFall = g[SoundFont::kSustainModEnv] / 1000.0;
-    plan.modulation.sustain = 1 - sustainFall;
-    plan.modulation.decay =
-        static_cast<std::uint64_t>(std::ceil(sustainFall * plan.modDecayFrames));
+    plan.modulation.delay = frames(g[SoundFont::kDelayModEnv], rate);
+    plan.modulation.attack = frames(g[SoundFont::kAttackModEnv], rate);
+    plan.modulation.sustain = 1 - g[SoundFont::kSustainModEnv] / 1000.0;
     plan.modReleaseFrames = seconds(g[SoundFont::kReleaseModEnv]) * rate;
     plans_.push_back(plan);
   }
@@ -241,17 +234,56 @@ void SoundFontNode::noteOn(std::uint8_t channel, std::uint8_t key, std::uint8_t 
     voice.ordinal = ordinal;
     voice.channel = channel;
     voice.key = key;
-    voice.increment = maths::exp2((key - plan.root) / 12.0) * plan.rateRatio;
+    // Within the zone, keynum and velocity, when set, replace the note's own.
+    const auto& g = plan.zone.generators;
+    const int zoneKey = g[SoundFont::kKeynum] >= 0 ? g[SoundFont::kKeynum] : key;
+    const int zoneVelocity = g[SoundFont::kVelocity] >= 0 ? g[SoundFont::kVelocity] : velocity;
+    voice.pitch = g[SoundFont::kScaleTuning] * (zoneKey - plan.root) + plan.tuning;
+    voice.increment = maths::exp2(voice.pitch / 1200) * plan.rateRatio;
     // The default velocity-to-attenuation modulator adds to the zone's.
     const double attenuation = std::clamp(
-        plan.attenuation + concaveAttenuation(velocity), 0.0, kMostAttenuation);
+        plan.attenuation + concaveAttenuation(zoneVelocity), 0.0, kMostAttenuation);
     voice.gain = maths::exp10(-attenuation / 200);
     // And the velocity-to-cutoff one to initialFilterFc.
-    voice.baseCutoff = plan.zone.generators[SoundFont::kInitialFilterFc] +
-                       kVelocityToCutoff * (128 - velocity) / 128;
-    voice.modulation.settle(plan.modulation);
+    voice.baseCutoff = g[SoundFont::kInitialFilterFc] +
+                       kVelocityToCutoff * (128 - zoneVelocity) / 128;
+    voice.volume.timeline = plan.volume;
+    voice.modulation.timeline = plan.modulation;
+    scaleToKey(voice, plan, zoneKey);
+    voice.modulation.settle();
     voice.active = sounds(voice, plan);
   }
+}
+
+// Each envelope's hold and decay at a key: keynumTo...Hold and keynumTo...Decay
+// take their timecents off the stage for every key above 60 and add them for
+// every key below, so 100 halves the stage an octave up. The result stays
+// within the stage's own range.
+void SoundFontNode::scaleToKey(Voice& voice, const PreparedZone& plan, int key) const {
+  const auto& g = plan.zone.generators;
+  const auto atKey = [&](SoundFont::Generator stage, SoundFont::Generator perKey,
+                         std::int32_t longest) {
+    return std::clamp(g[stage] + g[perKey] * (60 - key), std::int32_t{-12000}, longest);
+  };
+  auto& volume = voice.volume.timeline;
+  volume.hold = frames(atKey(SoundFont::kHoldVolEnv, SoundFont::kKeynumToVolEnvHold, 5000),
+                       rate_);
+  const double decayFramesPerDb =
+      seconds(atKey(SoundFont::kDecayVolEnv, SoundFont::kKeynumToVolEnvDecay, 8000)) *
+      rate_ / 100;
+  voice.decayFactor = maths::exp10(-1 / (20 * decayFramesPerDb));
+  const double sustainDb = g[SoundFont::kSustainVolEnv] / 10.0;
+  volume.decay = static_cast<std::uint64_t>(
+      std::ceil(std::min(sustainDb, kFloorDb) * decayFramesPerDb));
+
+  auto& modulation = voice.modulation.timeline;
+  modulation.hold = frames(
+      atKey(SoundFont::kHoldModEnv, SoundFont::kKeynumToModEnvHold, 5000), rate_);
+  voice.modDecayFrames =
+      seconds(atKey(SoundFont::kDecayModEnv, SoundFont::kKeynumToModEnvDecay, 8000)) *
+      rate_;
+  const double sustainFall = g[SoundFont::kSustainModEnv] / 1000.0;
+  modulation.decay = static_cast<std::uint64_t>(std::ceil(sustainFall * voice.modDecayFrames));
 }
 
 // Ends the key's oldest held note: it releases every voice of that note still
@@ -305,12 +337,12 @@ void SoundFontNode::startRelease(Voice& voice) {
   voice.held = false;
   const auto& plan = plans_[voice.plan];
   voice.looping = voice.looping && plan.loopsInRelease;
-  if (voice.modulation.settle(plan.modulation)) {
+  if (voice.modulation.settle()) {
     const double from = modulation(voice, plan);
     voice.modulation.release(
         from, static_cast<std::uint64_t>(std::ceil(from * plan.modReleaseFrames)));
   }
-  if (!voice.volume.settle(plan.volume)) {
+  if (!voice.volume.settle()) {
     voice.active = false;
     return;
   }
@@ -323,7 +355,7 @@ void SoundFontNode::startRelease(Voice& voice) {
   if (voice.volume.stage == Stage::kOff) voice.active = false;
 }
 
-bool SoundFontNode::Envelope::settle(const Timeline& timeline) {
+bool SoundFontNode::Envelope::settle() {
   for (;;) {
     switch (stage) {
     case Stage::kDelay:
@@ -373,7 +405,7 @@ double SoundFontNode::volume(const Voice& voice, const PreparedZone& plan) {
     return 0;
   case Stage::kAttack: // a linear rise in amplitude, reaching the peak on its last frame
     return static_cast<double>(envelope.frame + 1) /
-           static_cast<double>(plan.volume.attack);
+           static_cast<double>(envelope.timeline.attack);
   case Stage::kHold:
     return 1;
   default:
@@ -388,13 +420,13 @@ double SoundFontNode::modulation(const Voice& voice, const PreparedZone& plan) {
   const auto frame = static_cast<double>(envelope.frame);
   switch (envelope.stage) {
   case Stage::kAttack: // a linear rise, reaching 1 on its last frame
-    return (frame + 1) / static_cast<double>(plan.modulation.attack);
+    return (frame + 1) / static_cast<double>(envelope.timeline.attack);
   case Stage::kHold:
     return 1;
   case Stage::kDecay:
-    return 1 - frame / plan.modDecayFrames;
+    return 1 - frame / voice.modDecayFrames;
   case Stage::kSustain:
-    return plan.modulation.sustain;
+    return envelope.timeline.sustain;
   case Stage::kRelease:
     return envelope.level - frame / plan.modReleaseFrames;
   default:
@@ -441,7 +473,7 @@ double SoundFontNode::Filter::step(double in) {
 // Settles a voice for its next frame. False once it has ended: a voice ends
 // on the frame after its last sound, so a note-on there finds its slot free.
 bool SoundFontNode::sounds(Voice& voice, const PreparedZone& plan) {
-  if (!voice.volume.settle(plan.volume)) return false;
+  if (!voice.volume.settle()) return false;
   return static_cast<std::uint64_t>(voice.position) < plan.points;
 }
 
@@ -478,12 +510,12 @@ void SoundFontNode::render(Voice& voice, float* left, float* right, std::uint32_
       if (voice.looping && voice.position >= plan.loopEnd)
         voice.position =
             plan.loopStart + std::fmod(voice.position - plan.loopStart, loopLength);
-      if (envelope.stage == Stage::kDecay) envelope.level *= plan.decayFactor;
+      if (envelope.stage == Stage::kDecay) envelope.level *= voice.decayFactor;
       else if (envelope.stage == Stage::kRelease) envelope.level *= plan.releaseFactor;
     }
     ++envelope.frame;
     ++voice.modulation.frame;
-    voice.modulation.settle(plan.modulation);
+    voice.modulation.settle();
     // A taken voice ends with its fade, unless it ends by itself first.
     if ((voice.fadeLeft > 0 && --voice.fadeLeft == 0) || !sounds(voice, plan)) {
       voice.active = false;

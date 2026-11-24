@@ -6,6 +6,7 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "modular/Graph.h"
@@ -51,6 +52,12 @@ public:
   // selects the file's lowest preset and keeps the voice limit.
   void load(std::span<const std::uint8_t> bytes);
   void load(const std::filesystem::path& path);
+  // What the loaded file uses that the node ignores or skips, built at load,
+  // each kind once; empty while the node is empty. process() never reads it.
+  std::span<const std::string> ignored() const {
+    if (!ready()) return {};
+    return sound_font_->ignored();
+  }
 
   // The selected preset; zero while the node is empty.
   std::uint16_t bank() const { return preset_.bank; }
@@ -70,7 +77,9 @@ private:
     kDelay, kAttack, kHold, kDecay, kSustain, kRelease, kOff
   };
 
-  // How many frames an envelope's timed stages last, derived by prepare().
+  // How many frames an envelope's timed stages last. prepare() derives the
+  // delay, the attack and the sustain; a note-on, the hold and the decay,
+  // which key scaling makes depend on the key.
   struct Timeline {
     std::uint64_t delay = 0, attack = 0, hold = 0;
     std::uint64_t decay = 0; // frames from the peak to the sustain or the end
@@ -81,6 +90,7 @@ private:
   // Where an envelope is. Both envelopes share their stages' timing; they
   // differ in how their decay and release move the level.
   struct Envelope {
+    Timeline timeline;
     Stage stage = Stage::kDelay;
     std::uint64_t frame = 0;         // frames into the stage
     std::uint64_t releaseFrames = 0; // the release's length, from its start
@@ -88,7 +98,7 @@ private:
                       // the next frame, or the modulation's at the release start
     // Passes over finished stages, so the stage holds the next frame. False
     // once the envelope is off.
-    bool settle(const Timeline& timeline);
+    bool settle();
     void release(double from, std::uint64_t frames);
   };
 
@@ -107,15 +117,16 @@ private:
     SoundFont::Zone zone;
     int root = 60;
     double rateRatio = 1; // sample rate over graph rate
+    int tuning = 0;       // cents: coarseTune, fineTune and the header's correction
     double panLeft = 0, panRight = 0;
     double attenuation = 0; // centibels: initialAttenuation plus held controllers
     // Points from the zone's start: those it plays, and its loop.
     std::size_t points = 0, loopStart = 0, loopEnd = 0;
     bool loops = false;          // loops while held
     bool loopsInRelease = false; // and through its release
-    Timeline volume, modulation;
-    double decayFactor = 1, releaseFramesPerDb = 0, releaseFactor = 1;
-    double modDecayFrames = 0, modReleaseFrames = 0; // for a full change
+    Timeline volume, modulation; // all but the hold and the decay
+    double releaseFramesPerDb = 0, releaseFactor = 1;
+    double modReleaseFrames = 0; // for a full change
   };
 
   struct Voice {
@@ -131,6 +142,10 @@ private:
     // fadeLeft over the fade's length; 0 for a voice that is not fading.
     std::uint32_t fadeLeft = 0;
     Envelope volume, modulation;
+    double decayFactor = 1;    // the volume's fall per frame in its decay
+    double modDecayFrames = 0; // the modulation decay's frames for a full change
+    // Cents from the zone's root, scaled and tuned, before modulation.
+    double pitch = 0;
     double position = 0, increment = 0;
     // The gain of its total attenuation: initialAttenuation, the held
     // controllers and its velocity, clamped.
@@ -162,6 +177,7 @@ private:
   void noteOn(std::uint8_t channel, std::uint8_t key, std::uint8_t velocity);
   void noteOff(std::uint8_t channel, std::uint8_t key);
   std::size_t takeNote();
+  void scaleToKey(Voice& voice, const PreparedZone& plan, int key) const;
   void startRelease(Voice& voice);
   void render(Voice& voice, float* left, float* right, std::uint32_t from,
               std::uint32_t to);

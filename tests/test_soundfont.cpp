@@ -186,6 +186,26 @@ double noteGain(int velocity) {
   return velocity / 127.0 * (velocity / 127.0) * (100 / 127.0) * (100 / 127.0);
 }
 
+using Listed = std::vector<std::string>;
+
+// What a load of `bytes` lists as ignored or skipped.
+Listed listedBy(const Bytes& bytes) {
+  Graph graph;
+  auto& node = static_cast<SoundFontNode&>(graph.node(graph.addNode<SoundFontNode>()));
+  node.load(bytes);
+  return {node.ignored().begin(), node.ignored().end()};
+}
+
+// The ignored list's entries, in the order a load lists them.
+const std::string kSends = "soundfont: reverb and chorus sends are ignored";
+const std::string kLinks = "soundfont: link modulators are ignored";
+const std::string kRomZones = "soundfont: zones playing a sample in rom are skipped";
+const std::string kEmptyZones = "soundfont: zones playing an empty sample are skipped";
+const std::string kRatelessZones =
+    "soundfont: zones playing a sample with no sample rate are skipped";
+const std::string kLoopsOutside = "soundfont: loops outside their sample play unlooped";
+const std::string kEmptyLoops = "soundfont: empty loops play unlooped";
+
 } // namespace
 
 TEST_CASE("a loaded soundfont plays a note in both channels until its sample ends") {
@@ -233,6 +253,52 @@ TEST_CASE("without overridingRootKey the root is the header's pitch, 255 or ille
     CHECK(std::abs(cents(frequency(out.left, 960, out.left.size(), 48000), 1000)) < 1);
   }
 }
+
+namespace {
+
+// A 1 kHz sine recorded at 48 kHz and rooted at key 60, which `generators`
+// tune: the frequency a note of `key` plays, from 20 ms to 250 ms.
+double tunedHertz(std::vector<Generator> generators, int key, std::int8_t correction = 0) {
+  auto file = oneZone(sine(1000.0 / 48000, 24000), std::move(generators));
+  file.samples[0].correction = correction;
+  const auto out = play(build(file), {{3, noteOn(0, key, 100)}}, {48000, 128, 12000});
+  return frequency(out.left, 960, out.left.size(), 48000);
+}
+
+// The frequency `cents` above 1 kHz.
+double above1k(double cents) { return 1000 * std::exp2(cents / 1200); }
+
+} // namespace
+
+TEST_CASE("coarseTune fineTune scaleTuning and the header's correction tune a note within 1 cent") {
+  // The pitch in cents is scaleTuning (key - root) + 100 coarseTune + fineTune
+  // + the header's correction.
+  struct Tuning {
+    std::vector<Generator> generators;
+    int key;
+    std::int8_t correction;
+    double cents;
+  };
+  for (const auto& tuning :
+       {Tuning{{set(gen::kCoarseTune, 3), set(gen::kFineTune, -41)}, 64, 17, 676},
+        Tuning{{set(gen::kCoarseTune, -12)}, 60, -50, -1250},
+        Tuning{{set(gen::kScaleTuning, 50)}, 72, 0, 600},
+        Tuning{{set(gen::kScaleTuning, 0), set(gen::kFineTune, 99)}, 40, 0, 99},
+        Tuning{{set(gen::kScaleTuning, 150), set(gen::kFineTune, -99)}, 55, 9, -840}}) {
+    CAPTURE(tuning.cents);
+    CHECK(std::abs(cents(tunedHertz(tuning.generators, tuning.key, tuning.correction),
+                         above1k(tuning.cents))) < 1);
+  }
+}
+
+TEST_CASE("the keynum generator replaces the key a zone plays at") {
+  // Whatever key is struck, the zone plays as key 67: seven semitones up.
+  for (const int key : {40, 60, 67, 90}) {
+    CAPTURE(key);
+    CHECK(std::abs(cents(tunedHertz({set(gen::kKeynum, 67)}, key), above1k(700))) < 1);
+  }
+}
+
 
 TEST_CASE("a sample played between its points is interpolated") {
   // A ramp an octave down plays every point and every midpoint between them.
@@ -306,6 +372,35 @@ TEST_CASE("the volume envelope's delay attack hold decay and sustain take their 
   CHECK(std::abs(static_cast<double>(sustain) - (decay + 4800)) <= 1);
   for (std::size_t i = sustain; i < out.left.size(); ++i)
     CHECK(level(out, i) == doctest::Approx(0.1).epsilon(1e-5));
+}
+
+TEST_CASE("key scaling shortens a volume envelope's hold and decay for higher keys within one frame") {
+  // At key 60, a hold of -2400 timecents is 0.25 s, and a decay of -2400
+  // falls 100 dB in 0.25 s, so it reaches a 20 dB sustain in 0.05 s. Per key
+  // above 60, keynumToVolEnvHold 100 takes 100 timecents off the hold, so an
+  // octave halves it, and keynumToVolEnvDecay 50 takes 50 off the decay.
+  const auto font = envelopeFont({set(gen::kDelayVolEnv, -4800),
+                                  set(gen::kAttackVolEnv, -6000),
+                                  set(gen::kHoldVolEnv, -2400), set(gen::kDecayVolEnv, -2400),
+                                  set(gen::kSustainVolEnv, 200),
+                                  set(gen::kKeynumToVolEnvHold, 100),
+                                  set(gen::kKeynumToVolEnvDecay, 50)},
+                                 200000);
+  struct Expected {
+    int key;
+    double holdSeconds, decaySeconds;
+  };
+  for (const auto& expected : {Expected{48, 0.5, 0.05 * std::sqrt(2.0)}, Expected{60, 0.25, 0.05},
+                               Expected{72, 0.125, 0.05 / std::sqrt(2.0)}}) {
+    CAPTURE(expected.key);
+    const auto out = play(font, {{7, noteOn(0, expected.key, 100)}}, {48000, 128, 40000});
+    const auto decay = lastAtFullLevel(out);
+    CHECK(std::abs(static_cast<double>(decay) -
+                   (7 + 3000 + 1500 + expected.holdSeconds * 48000)) <= 1);
+    std::size_t sustain = decay;
+    while (level(out, sustain) > 0.1 + 1e-6) ++sustain;
+    CHECK(std::abs(static_cast<double>(sustain - decay) - expected.decaySeconds * 48000) <= 1);
+  }
 }
 
 TEST_CASE("a note-off releases from the current level so a release below full level ends sooner") {
@@ -493,6 +588,34 @@ TEST_CASE("velocity lowers the cutoff linearly so a softer note is quieter and n
   }
 }
 
+TEST_CASE("the velocity generator replaces a note's velocity within its zone but not in choosing zones") {
+  // A zone forcing velocity 40 plays a note of any velocity as a note of 40
+  // plays without it: as loud and as dark.
+  const auto font = toneFont({set(gen::kInitialFilterFc, 9000)}, 4000, 48000, 12000);
+  const auto forced = toneFont({set(gen::kInitialFilterFc, 9000), set(gen::kVelocity, 40)},
+                               4000, 48000, 12000);
+  const Run run{48000, 128, 6000};
+  const auto reference = play(font, {{13, noteOn(0, 60, 40)}}, run);
+  for (const int velocity : {1, 40, 100, 127}) {
+    CAPTURE(velocity);
+    const auto out = play(forced, {{13, noteOn(0, 60, velocity)}}, run);
+    CHECK(out.left == reference.left);
+    CHECK(out.right == reference.right);
+  }
+  // Zones are still chosen by the note's own velocity: a loud note plays the
+  // loud zone, which forces velocity 30, at velocity 30's gain.
+  File file;
+  file.samples = {{"soft", steady(1000, 4000)}, {"loud", steady(2000, 4000)}};
+  file.instruments.push_back(
+      {"i", {{{set(gen::kPan, -500)}},
+             {{range(gen::kVelRange, 0, 63), set(gen::kSampleId, 0)}},
+             {{range(gen::kVelRange, 64, 127), set(gen::kVelocity, 30),
+               set(gen::kSampleId, 1)}}}});
+  file.presets.push_back({"p", 0, 0, {{{set(gen::kInstrument, 0)}}}});
+  const auto out = play(build(file), {{13, noteOn(0, 60, 100)}}, {48000, 128, 1000});
+  CHECK(out.left.at(900) * 32768.0 == doctest::Approx(2000 * noteGain(30)));
+}
+
 namespace {
 
 // Generators for a 2 kHz tone whose cutoff sits on it at velocity 127:
@@ -597,6 +720,43 @@ TEST_CASE("the modulation envelope's stages begin and end within one frame of th
   CHECK(withinAFrame(firstDifferentToneFrame(with(quick), with(slow), released), 3011));
 }
 
+TEST_CASE("key scaling gives a modulation envelope's hold and decay their timecents at each key") {
+  // At key k, keynumToModEnvHold s plays as a hold s (60 - k) timecents
+  // longer, and likewise for the decay, each kept within its range: the same
+  // bits as a zone written with those times. keynum, when set, is the key.
+  struct Case {
+    int key, hold, keyToHold, decay, keyToDecay, scaledHold, scaledDecay;
+    std::vector<Generator> more;
+  };
+  for (const auto& c : {Case{36, -3600, 100, -3600, -40, -1200, -4560, {}},
+                        Case{72, -3600, 100, -3600, -40, -4800, -3120, {}},
+                        Case{127, -11000, 100, -3600, 0, -12000, -3600, {}},
+                        Case{0, -3600, 0, 7000, 100, -3600, 8000, {}},
+                        Case{30, -3600, 100, -3600, -40, -4800, -3120,
+                             {set(gen::kKeynum, 72)}}}) {
+    CAPTURE(c.key);
+    const auto zone = [&](int hold, int keyToHold, int decay, int keyToDecay) {
+      auto generators = c.more;
+      generators.insert(generators.end(),
+                        {set(gen::kDelayModEnv, -8400), set(gen::kAttackModEnv, -8400),
+                         set(gen::kHoldModEnv, hold), set(gen::kDecayModEnv, decay),
+                         set(gen::kSustainModEnv, 500), set(gen::kModEnvToFilterFc, -2400),
+                         set(gen::kKeynumToModEnvHold, keyToHold),
+                         set(gen::kKeynumToModEnvDecay, keyToDecay),
+                         set(gen::kSampleModes, 1)});
+      // A 2 kHz tone looping over 2000 whole cycles, so far keys still sound.
+      return build(oneZone(sine(2000.0 / 48000, 48000), modulatedTone(generators)));
+    };
+    const std::vector<Timed> note{{13, noteOn(0, c.key, 127)}};
+    const Run run{48000, 128, 12000};
+    const auto scaled = play(zone(c.hold, c.keyToHold, c.decay, c.keyToDecay), note, run);
+    const auto written = play(zone(c.scaledHold, 0, c.scaledDecay, 0), note, run);
+    CHECK(scaled.left == written.left);
+    // And the scaling changed something.
+    CHECK(scaled.left != play(zone(c.hold, 0, c.decay, 0), note, run).left);
+  }
+}
+
 namespace {
 
 // A miniature of the default piano's layout, from ticket 10's measurements:
@@ -699,6 +859,10 @@ TEST_CASE("a miniature of the default piano plays each note as derived at two gr
       CHECK(lastSounding(out.right) == lastSounding(out.left));
     }
   }
+}
+
+TEST_CASE("a miniature of the default piano lists its reverb send and nothing else") {
+  CHECK(listedBy(build(miniaturePiano())) == Listed{kSends});
 }
 
 TEST_CASE("a stereo pair plays as two voices and keeps its image") {
@@ -1367,17 +1531,34 @@ TEST_CASE("a looping voice interpolates across its loop's seam and never reads b
   CHECK(firstDifference(out.left, expected.left, onset + 2700) == onset + 2700);
 }
 
-TEST_CASE("a loop outside its sample or an empty loop plays unlooped") {
+TEST_CASE("a loop outside its sample or an empty loop plays unlooped and is listed with its reason") {
   Loop loop;
-  SUBCASE("starting before the sample") { loop = {-10, 500}; }
-  SUBCASE("ending past the sample") { loop = {100, 601}; }
-  SUBCASE("empty") { loop = {300, 300}; }
-  SUBCASE("ending before it starts") { loop = {400, 300}; }
+  std::string reason;
+  SUBCASE("starting before the sample") {
+    loop = {-10, 500};
+    reason = kLoopsOutside;
+  }
+  SUBCASE("ending past the sample") {
+    loop = {100, 601};
+    reason = kLoopsOutside;
+  }
+  SUBCASE("empty") {
+    loop = {300, 300};
+    reason = kEmptyLoops;
+  }
+  SUBCASE("ending before it starts") {
+    loop = {400, 300};
+    reason = kEmptyLoops;
+  }
   for (const int mode : {1, 3}) {
     CAPTURE(mode);
-    const auto out = play(loopedFont({set(gen::kSampleModes, mode)}, loop), kOneNote);
-    CHECK(soundingFrames(out) == 600);
+    const auto font = loopedFont({set(gen::kSampleModes, mode)}, loop);
+    CHECK(soundingFrames(play(font, kOneNote)) == 600);
+    CHECK(listedBy(font) == Listed{reason});
   }
+  // A zone that does not loop plays to its sample's end whatever its loop says,
+  // so its loop is not listed.
+  CHECK(listedBy(loopedFont({set(gen::kSampleModes, 0)}, loop)).empty());
 }
 
 TEST_CASE("address offsets move the start end and loop points by fine plus 32768 times coarse") {
@@ -1524,17 +1705,22 @@ TEST_CASE("an index or a sample pointing outside its list or the sample data is 
 }
 
 TEST_CASE("a load checks every preset, not only the one it selects") {
-  // The rich file's one preset, bank 0 program 0, is the one a load selects.
+  // The rich file's one preset, bank 0 program 0, is the one a load selects. A
+  // later preset's instrument index lies past the instruments.
   auto file = richFile();
-  SUBCASE("a later preset's instrument index past the instruments") {
-    file.presets.push_back({"later", 7, 3, {{{set(gen::kInstrument, 2)}}}});
-  }
-  SUBCASE("a later preset's instrument playing a ROM sample") {
-    file.samples.push_back({"rom", {}, 48000, 60, kRomSample});
-    file.instruments.push_back({"rom", {{{set(gen::kSampleId, 3)}}}});
-    file.presets.push_back({"later", 7, 3, {{{set(gen::kInstrument, 2)}}}});
-  }
+  file.presets.push_back({"later", 7, 3, {{{set(gen::kInstrument, 2)}}}});
   CHECK(refused(build(file)));
+}
+
+TEST_CASE("a load lists what every preset uses, not only the one it selects") {
+  // A later preset sends to reverb and plays an instrument whose one zone
+  // plays a ROM sample.
+  auto file = richFile();
+  file.samples.push_back({"rom", {}, 48000, 60, kRomSample});
+  file.instruments.push_back({"rom", {{{set(gen::kSampleId, 3)}}}});
+  file.presets.push_back(
+      {"later", 7, 3, {{{set(gen::kReverbEffectsSend, 200), set(gen::kInstrument, 2)}}}});
+  CHECK(listedBy(build(file)) == Listed{kSends, kRomZones});
 }
 
 TEST_CASE("a file with no preset is refused") {
@@ -1563,21 +1749,47 @@ TEST_CASE("sf3 files and versions other than 2 are refused") {
   }
 }
 
-TEST_CASE("for now a zone whose sample is in ROM, empty or rateless is refused") {
-  // Interim rule until ticket 04 skips and lists such zones.
+TEST_CASE("a zone whose sample is in ROM, empty or rateless is skipped and listed and the rest plays") {
+  // Below velocity 100 the rich file's first instrument plays sample a below
+  // key 64 and sample b from it. Spoiling b skips its zone and no other.
   auto file = richFile();
-  SUBCASE("in ROM") { file.samples[1].type = kRomSample; }
-  SUBCASE("empty") { file.samples[1].points.clear(); }
-  SUBCASE("no sample rate") { file.samples[1].rate = 0; }
-  CHECK(refused(build(file)));
+  const auto intact = build(file);
+  Bytes font;
+  std::string listed;
+  SUBCASE("in ROM, at addresses outside the file's sample data") {
+    file.samples[1].type = kRomSample;
+    auto parts = sf2test::parts(file);
+    put32(list(parts, "shdr").data, 46 + 20, 1u << 30);
+    put32(list(parts, "shdr").data, 46 + 24, (1u << 30) + 30);
+    font = assemble(parts);
+    listed = kRomZones;
+  }
+  SUBCASE("empty") {
+    file.samples[1].points.clear();
+    font = build(file);
+    listed = kEmptyZones;
+  }
+  SUBCASE("with no sample rate") {
+    file.samples[1].rate = 0;
+    font = build(file);
+    listed = kRatelessZones;
+  }
+  CHECK(listedBy(font) == Listed{listed});
+  const Run run{48000, 128, 400};
+  CHECK(firstSounding(play(font, {{13, noteOn(0, 70, 50)}}, run).left) == 400);
+  const std::vector<Timed> low{{13, noteOn(0, 40, 50)}};
+  const auto out = play(font, low, run);
+  CHECK(firstSounding(out.left) < 400);
+  CHECK(out.left == play(intact, low, run).left);
 }
 
-TEST_CASE("a ROM sample no zone plays does not stop a load") {
+TEST_CASE("a ROM sample no zone plays does not stop a load and is not listed") {
   auto file = richFile();
   file.samples.push_back({"rom", {}, 48000, 60, kRomSample});
   auto parts = sf2test::parts(file);
   put32(list(parts, "shdr").data, 46 * 3 + 24, 1u << 30); // ROM addresses, not ours
   CHECK(loadError(assemble(parts)).empty());
+  CHECK(listedBy(assemble(parts)).empty());
 }
 
 TEST_CASE("a 24-bit extension is skipped and the file plays at 16 bits") {
@@ -1588,20 +1800,103 @@ TEST_CASE("a 24-bit extension is skipped and the file plays at 16 bits") {
   CHECK(extended.left == plain.left);
 }
 
-TEST_CASE("generators and modulators the node does not read are ignored silently") {
-  // An effects send, as on the default piano, a reserved generator, an
-  // unknown one and a modulator, at both levels.
-  const auto plain = oneZone(steady(16384, 2000), {set(gen::kPan, -500)});
-  auto extra = plain;
-  auto& zone = extra.instruments[0].zones[0];
-  zone.generators.insert(zone.generators.begin(),
-                         {set(gen::kReverbEffectsSend, 100), set(14, 7), set(99, 3)});
-  zone.modulators.push_back({0x0502, 48, 960, 0, 0});
-  extra.presets[0].zones[0].generators.insert(extra.presets[0].zones[0].generators.begin(),
-                                              set(gen::kReverbEffectsSend, 100));
-  extra.presets[0].zones[0].modulators.push_back({0x0502, 48, 960, 0, 0});
-  const auto expected = play(build(plain), kOneNote, {48000, 128, 1000});
-  CHECK(play(build(extra), kOneNote, {48000, 128, 1000}).left == expected.left);
+namespace {
+
+// One full-left zone, and what it plays: the file that ignore rules leave
+// unchanged, and the render they must not change.
+File plainZone() { return oneZone(steady(16384, 2000), {set(gen::kPan, -500)}); }
+
+Stereo playsPlainly(const File& file) { return play(build(file), kOneNote, {48000, 128, 1000}); }
+
+} // namespace
+
+TEST_CASE("effects sends at either level change nothing and are listed once") {
+  auto file = plainZone();
+  const auto plain = playsPlainly(file);
+  CHECK(listedBy(build(file)).empty());
+  auto& instrument = file.instruments[0].zones[0].generators;
+  auto& preset = file.presets[0].zones[0].generators;
+  SUBCASE("a reverb send in an instrument zone") {
+    instrument.insert(instrument.begin(), set(gen::kReverbEffectsSend, 100));
+  }
+  SUBCASE("a chorus send in a preset zone") {
+    preset.insert(preset.begin(), set(gen::kChorusEffectsSend, 250));
+  }
+  SUBCASE("both sends at both levels, global zones included") {
+    instrument.insert(instrument.begin(), set(gen::kChorusEffectsSend, 10));
+    preset.insert(preset.begin(), set(gen::kReverbEffectsSend, 1000));
+    file.instruments[0].zones.insert(file.instruments[0].zones.begin(),
+                                     {{set(gen::kReverbEffectsSend, 100)}});
+    file.presets[0].zones.insert(file.presets[0].zones.begin(),
+                                 {{set(gen::kChorusEffectsSend, 500)}});
+  }
+  CHECK(listedBy(build(file)) == Listed{kSends});
+  CHECK(playsPlainly(file).left == plain.left);
+}
+
+TEST_CASE("a send of zero is not listed") {
+  auto file = plainZone();
+  auto& instrument = file.instruments[0].zones[0].generators;
+  instrument.insert(instrument.begin(), {set(gen::kReverbEffectsSend, 0),
+                                         set(gen::kChorusEffectsSend, 0)});
+  CHECK(listedBy(build(file)).empty());
+}
+
+TEST_CASE("link modulators at either level change nothing and are listed once") {
+  // A linked pair: the first modulator's output is the second's source, the
+  // link controller (127), and the second adds to initialAttenuation.
+  const std::vector<Modulator> linked{{0x0502, 0x8001, 960, 0, 0}, {0x007f, 48, 300, 0, 0}};
+  auto file = plainZone();
+  const auto plain = playsPlainly(file);
+  SUBCASE("in an instrument zone") { file.instruments[0].zones[0].modulators = linked; }
+  SUBCASE("in a preset's global zone") {
+    file.presets[0].zones.insert(file.presets[0].zones.begin(), Zone{{}, linked});
+  }
+  SUBCASE("a modulator whose source is a link, alone") {
+    file.instruments[0].zones[0].modulators = {linked[1]};
+  }
+  SUBCASE("a modulator whose output feeds another, alone") {
+    file.instruments[0].zones[0].modulators = {linked[0]};
+  }
+  CHECK(listedBy(build(file)) == Listed{kLinks});
+  CHECK(playsPlainly(file).left == plain.left);
+}
+
+TEST_CASE("unknown, unused and reserved generators, misplaced ones and illegal modulators are ignored unlisted") {
+  // Unused 14 and 59, reserved 42, and 99, which the specification does not
+  // define, in the instrument; in the preset, reserved 55 and two generators
+  // valid only in an instrument. The modulators are illegal: a source that is
+  // bank select (CC 0), a destination that is no generator, and a link as an
+  // amount source.
+  auto file = plainZone();
+  const auto plain = playsPlainly(file);
+  auto& instrument = file.instruments[0].zones[0];
+  instrument.generators.insert(instrument.generators.begin(),
+                               {set(14, 7), set(42, 7), set(59, 3), set(99, 3)});
+  instrument.modulators = {{0x0080, 48, 500, 0, 0}, {0x0002, 99, 500, 0, 0},
+                           {0x0002, 48, 500, 0x007f, 0}};
+  auto& preset = file.presets[0].zones[0].generators;
+  preset.insert(preset.begin(), {set(55, 1), set(gen::kOverridingRootKey, 72),
+                                 set(gen::kSampleModes, 1)});
+  CHECK(listedBy(build(file)).empty());
+  CHECK(playsPlainly(file).left == plain.left);
+}
+
+TEST_CASE("the ignored list is empty while the node is empty and follows its content") {
+  Rig rig(kOneNote);
+  CHECK(rig.node().ignored().empty());
+  auto withSend = plainZone();
+  withSend.instruments[0].zones[0].generators.insert(
+      withSend.instruments[0].zones[0].generators.begin(), set(gen::kReverbEffectsSend, 100));
+  rig.node().load(build(withSend));
+  CHECK(Listed(rig.node().ignored().begin(), rig.node().ignored().end()) == Listed{kSends});
+  // A failed load keeps the content, and its list with it.
+  auto truncated = build(plainZone());
+  truncated.pop_back();
+  CHECK_THROWS_AS(rig.node().load(truncated), std::invalid_argument);
+  CHECK(rig.node().ignored().size() == 1);
+  rig.node().load(build(plainZone()));
+  CHECK(rig.node().ignored().empty());
 }
 
 // Counts the global allocations made while `counting` is set.
