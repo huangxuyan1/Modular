@@ -451,7 +451,8 @@ A good test here drives the node only through what a client can do, and checks o
 client can observe. A client loads a soundfont, sets the preset and voice limit, reads the
 ignored list, catches errors, sends MIDI and reads the samples. Tests never reach into the
 reader's tables, the voice slots or the envelope state. A change to the voice's maths that
-keeps the output within tolerance must not break a test.
+keeps the output within tolerance must not break a test. Ticket 08's golden test is the one
+deliberate exception (Further Notes, **Browser against native**).
 
 **Two seams, both existing:**
 
@@ -561,9 +562,9 @@ Below velocity 64 the two differ by design (09, D2).
 
 ## Further Notes
 
-- **Order of work.** Tickets 01 to 05 change the same node, so they run one at a time.
-  Ticket 06 needs only ticket 01, so it may run beside them once 01 is done. Ticket 07 waits
-  for 02 and 03 and for the user's download approval.
+- **Order of work.** Tickets 01 to 05 and 08 change the same node, so they run one at a time;
+  08 needs only 01. Ticket 06 needs only ticket 01, so it may run beside them once 01 is done.
+  Ticket 07 waits for 02 and 03 and for the user's download approval.
 - **Acceptance.**
   1. The tickets' own checks: focused checks, the full suite and the code review, per ticket.
   2. Ticket 07: the default piano against FluidSynth, within the thresholds above. The same
@@ -591,8 +592,12 @@ Below velocity 64 the two differ by design (09, D2).
   differently in the browser. This node does both: envelopes, the filter and the LFOs. Map
   ticket 08,
   [How is a browser render checked against a native one?](../midishare-playback/issues/08-browser-render-checked-against-native.md),
-  is still open. Its answer may require a change to this node, such as a portable maths
-  routine, and that change would be its own ticket.
+  decided that a browser render equals the native one bit for bit, by construction. So this
+  node computes no value that reaches its output with the platform's maths library: its
+  ticket 08 gives it portable `exp2`, `sin` and `cos` behind the internal header ticket 01
+  routes those calls through. The same ticket adds a golden test that pins the rendered bits.
+  A maths change updates its values in the same commit, so review sees every change to them;
+  this is the one exception to the testing rule above. Spec B runs the test under Node.
 - **Licences.** The default piano is FluidR3_GM's (MIT), loaded by the client. The node library
   ships no soundfont, so no licensed asset enters Modular's library or repository (05, D4).
   `FluidR3_GM.sf2`, already on the development machine from ticket 10, stays outside both
