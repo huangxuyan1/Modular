@@ -1,7 +1,7 @@
 # Which soundfonts ship, in what format, under what licence and at what size?
 
 Type: research
-Status: open
+Status: resolved
 
 ## Question
 
@@ -36,3 +36,36 @@ Find out, from primary sources:
 
 Deliverable: a short table of candidates with licence, size and format, the open facts that
 need the file itself, and a recommendation for the default piano.
+
+## Answer
+
+Resolved 2026-11-24 by research, read-only: no soundfont or sample file was downloaded.
+Findings, sources and the full candidate table:
+[Which soundfonts ship](../research/07-which-soundfonts-ship.md).
+
+- **Format: SoundFont 2, read by Modular at authoring time.** It is the only route that keeps
+  Modular free of a codec *and* keeps the instrument an authored node that owns its samples.
+  SoundFont 3 puts a Vorbis decoder in `nodes/` or splits the parse with the page. Per-note files
+  decoded by the browser move the samples out of the graph, against **Stored node content**, and
+  `decodeAudioData` resamples to the context's rate, which moves every loop point.
+- **Hosting limit: 25 MiB per file** (Cloudflare Workers static assets, Free and Paid). Every
+  full General MIDI bank worth shipping is over it (FluidR3_GM 141.5 MiB, GeneralUser GS
+  30.8 MiB), so the site ships a single-preset extract.
+- **Recommended default: FluidR3_GM's acoustic grand piano** (bank 0, program 0), extracted into
+  a piano-only SoundFont 2 file. It is the piano the site plays today, and FluidR3's own licence
+  is MIT, which allows the extract with the notice kept. The `midi-js-soundfonts` renders the site
+  fetches today are labelled CC BY 3.0 there; crediting both costs nothing.
+- **Fallback: FreePats' Upright Piano KW "small" SF2**, CC0, about 10 MiB (unconfirmed), a
+  different sound.
+- **Stretch goal:** further FluidR3_GM presets first (one licence, one notice), GeneralUser GS
+  second (permissive, but it leans on modulators and the filter). Avoid TimGM6mb (GPL-2) and the
+  296 MiB Salamander SF2.
+- **For the subset ticket:** with no controllers, the default modulators that matter are
+  note-on velocity to attenuation (960 cB, concave) and to filter cutoff (−2400 cents). Today's
+  per-note renders are one velocity layer at velocity 85, cut at 3 s.
+- **Open, needs the file:** the extract's size, and the FluidR3 piano's zone layout, velocity
+  layers, loops, envelope, filter and any modulators of its own. That measurement is
+  [Measure the FluidR3_GM piano before it becomes the default](10-measure-the-fluidr3-piano.md).
+
+Which soundfont becomes the default is a judgment call for the planning hub, made once the
+measurement says whether the extract fits.
