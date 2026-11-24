@@ -8,10 +8,22 @@
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
       "binaryDir": "${sourceDir}/build/windows"
+    },
+    {
+      "name": "web",
+      "displayName": "Web (Emscripten, Ninja, Release)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/web",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_TOOLCHAIN_FILE": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
+        "CMAKE_CROSSCOMPILING_EMULATOR": "$env{EMSDK_NODE}"
+      }
     }
   ],
   "buildPresets": [
-    { "name": "windows", "configurePreset": "windows", "configuration": "Debug" }
+    { "name": "windows", "configurePreset": "windows", "configuration": "Debug" },
+    { "name": "web", "configurePreset": "web" }
   ],
   "testPresets": [
     {
@@ -19,6 +31,13 @@
       "configurePreset": "windows",
       "configuration": "Debug",
       "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    },
+    {
+      "name": "web",
+      "configurePreset": "web",
+      "output": { "outputOnFailure": true },
+      "filter": { "include": { "name": "^(web_core_tests|web_smoke_fixture|web_smoke)$" } },
       "execution": { "noTestsAction": "error" }
     }
   ]

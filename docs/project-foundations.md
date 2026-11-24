@@ -24,10 +24,11 @@ does the capability arise from the graph model, or is it inherited from DAW trad
   explicit deletion. Policy and media-specific content remain with clients.
 - `apps/render_cli/`, `apps/midi_cli/`, `apps/graph_editor/`: offline render, MIDI-file
   render/playback and the Windows editor respectively. `apps/web/` (`modular_web_core`)
-  holds the web render surface's C++ core, which builds and is tested on every platform.
+  holds the web render surface's C++ core, which builds and is tested on every platform,
+  and, under Emscripten only, the web module (`modular_web`), its loader and declarations.
 - `tests/`: doctest suites for kernel, nodes, authoring, MIDI files, soundfonts, the web
-  render core and the real editor app. `scripts/check_kernel_purity.cmake` enforces
-  media-free kernel code.
+  render core and the real editor app, and the web module's Node smoke test.
+  `scripts/check_kernel_purity.cmake` enforces media-free kernel code.
 
 Everything commonly called a DAW feature—tracks, mixers, buses, clips, transport,
 playhead and arrangements—is user-space node wiring or a view of the authored graph,
@@ -159,4 +160,5 @@ RESTRICT; do not treat the older index-based fragility as an open constraint.
 - `docs/node-io.md`: MIDI-file and hardware-node behavior.
 - `docs/graph-persistence.md`: Save/Open, id restoration and content codecs.
 - `docs/windows.md`: native Windows build, tests and editor setup.
+- `docs/web.md`: the web build, the render surface a page calls, and its local build.
 - `.scratch/graph-editor/planning.md`: ticket links and recorded verification evidence.
