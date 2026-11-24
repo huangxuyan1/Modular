@@ -400,19 +400,26 @@ test('rendering a clip again and again does not grow the module memory, and each
   const first = await instrument.render(clip, 48000);
   const rendered = measure();
   const renderingBytes = first.channels[0].byteLength + first.channels[1].byteLength;
+  // The heap in use is compared from the second render on. The first places blocks in a
+  // fresh heap, and the allocator keeps a remainder smaller than its smallest chunk inside
+  // the block it hands out, so the first render's count can differ from the rest by those
+  // few bytes without anything growing.
   const repeats = 20;
+  let settled;
   for (let i = 0; i < repeats; ++i) {
     const again = await instrument.render(clip, 48000);
     assert.equal(again.channels[0].length, first.channels[0].length);
+    if (i === 0) settled = measure();
   }
   const repeated = measure();
   t.diagnostic(`rendering: ${renderingBytes} bytes`);
   t.diagnostic(`instrument made: memory ${made.memory}, heap in use ${made.heap}`);
   t.diagnostic(`first render: memory ${rendered.memory}, heap in use ${rendered.heap}`);
+  t.diagnostic(`second render: memory ${settled.memory}, heap in use ${settled.heap}`);
   t.diagnostic(`${repeats} more: memory ${repeated.memory}, heap in use ${repeated.heap}`);
   assert.ok(rendered.memory > made.memory);
   assert.equal(repeated.memory, rendered.memory);
-  assert.equal(repeated.heap, rendered.heap);
+  assert.equal(repeated.heap, settled.heap);
   // What the first render left in use is far less than its rendering: the kept MIDI file
   // and the nodes' state, not the samples.
   assert.ok(rendered.heap - made.heap < renderingBytes / 10);

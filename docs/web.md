@@ -235,8 +235,10 @@ turn and only its own promise, and the calls after it run as usual.
 **Memory.** The module holds at most one rendering, which it releases as soon as the loader
 has copied the channels out. WebAssembly memory grows as a render needs it and never
 shrinks, so a long render keeps its peak for the module's life. Rendering a clip again does
-not grow it: in the smoke test, a minute's rendering grew the memory from 16.1 to 22.9 MiB,
-and twenty more renders of it left both the memory and the heap in use where they were.
+not grow it: in the smoke test, a minute's rendering grew the memory from 16.1 to 23.1 MiB,
+and twenty more renders of it left the memory where it was and the heap in use where the
+second render left it. (The first render's count can sit a few bytes off, as the allocator
+places blocks in a fresh heap.)
 
 ## Browsers and hosting
 
