@@ -460,6 +460,8 @@ void SoundFontNode::render(Voice& voice, float* left, float* right, std::uint32_
       double sample =
           voice.filter.step((a + (b - a) * (voice.position - index)) / 32768.0) *
           volume(voice, plan) * voice.gain;
+      // A taken voice falls in equal steps to zero, from full on the new
+      // note's frame.
       if (voice.fade > 0) sample *= voice.fade / static_cast<double>(fade_frames_);
       left[i] += static_cast<float>(sample * plan.panLeft);
       right[i] += static_cast<float>(sample * plan.panRight);

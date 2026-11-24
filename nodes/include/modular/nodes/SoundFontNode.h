@@ -23,6 +23,10 @@ namespace modular::nodes {
 // as its own mono voice, placed by its pan. A note-off starts a voice's
 // release and frees nothing; a voice ends by itself, when its envelope has
 // fallen 96 dB after its attack or its sample has run out with no loop left.
+// When too few voices are free, a note-on takes whole notes, released before
+// held and oldest first, each fading out over 6 ms. A key struck again starts
+// a new note beside the old one, and its note-offs end its held notes oldest
+// first, whatever has become of their voices.
 //
 // Loading parses the whole file at authoring time. prepare() never reads the
 // file again: it derives what depends on the sample rate and resets the pool,
