@@ -396,33 +396,44 @@ test('rendering a clip again and again does not grow the module memory, and each
   // A minute: a 23 MB rendering, more than the initial 16 MiB, so the first render grows
   // the memory.
   const clip = heldNote(60);
+  const renderAndCheckRelease = async (number) => {
+    const rendering = await instrument.render(clip, 48000);
+    assert.equal(module._modular_rendering_frames(), 0,
+                 `render ${number}: frames still held after copying`);
+    return rendering;
+  };
   const made = measure();
-  const first = await instrument.render(clip, 48000);
+  const first = await renderAndCheckRelease(1);
   const rendered = measure();
   const renderingBytes = first.channels[0].byteLength + first.channels[1].byteLength;
-  // The heap in use is compared from the second render on. The first places blocks in a
-  // fresh heap, and the allocator keeps a remainder smaller than its smallest chunk inside
-  // the block it hands out, so the first render's count can differ from the rest by those
-  // few bytes without anything growing.
-  const repeats = 20;
-  let settled;
-  for (let i = 0; i < repeats; ++i) {
-    const again = await instrument.render(clip, 48000);
-    assert.equal(again.channels[0].length, first.channels[0].length);
-    if (i === 0) settled = measure();
-  }
-  const repeated = measure();
   t.diagnostic(`rendering: ${renderingBytes} bytes`);
   t.diagnostic(`instrument made: memory ${made.memory}, heap in use ${made.heap}`);
   t.diagnostic(`first render: memory ${rendered.memory}, heap in use ${rendered.heap}`);
-  t.diagnostic(`second render: memory ${settled.memory}, heap in use ${settled.heap}`);
-  t.diagnostic(`${repeats} more: memory ${repeated.memory}, heap in use ${repeated.heap}`);
   assert.ok(rendered.memory > made.memory);
-  assert.equal(repeated.memory, rendered.memory);
-  assert.equal(repeated.heap, settled.heap);
   // What the first render left in use is far less than its rendering: the kept MIDI file
   // and the nodes' state, not the samples.
   assert.ok(rendered.heap - made.heap < renderingBytes / 10);
+
+  // The allocator counts a remainder too small to split as part of the block it hands out.
+  // The clean trace drops by 8 bytes on the second render and occasionally returns to the
+  // first count. Limit the entire range, not the change since the previous render.
+  const allocatorSlack = 8;
+  const repeats = 20;
+  let minHeap = rendered.heap;
+  let maxHeap = rendered.heap;
+  for (let number = 2; number <= repeats + 1; ++number) {
+    const again = await renderAndCheckRelease(number);
+    assert.equal(again.channels[0].length, first.channels[0].length);
+    const current = measure();
+    if (number === 2)
+      t.diagnostic(`second render: memory ${current.memory}, heap in use ${current.heap}`);
+    assert.equal(current.memory, rendered.memory, `render ${number}: module memory changed`);
+    minHeap = Math.min(minHeap, current.heap);
+    maxHeap = Math.max(maxHeap, current.heap);
+    assert.ok(maxHeap - minHeap <= allocatorSlack,
+              `render ${number}: heap in use ranged from ${minHeap} to ${maxHeap} bytes ` +
+              `(at most ${allocatorSlack} bytes apart)`);
+  }
 });
 
 // --- golden renders --------------------------------------------------------------------
