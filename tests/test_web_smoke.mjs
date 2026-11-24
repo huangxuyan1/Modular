@@ -13,7 +13,9 @@
 // 64 MiB or more traps in it, and it hands each instance it makes to the test, through
 // globalThis.modularTestInstances, so the test can read its memory.
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { readdirSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { runInNewContext } from 'node:vm';
@@ -265,6 +267,34 @@ test('loadModular passes locateFile through to the module', async () => {
   assert.deepEqual(asked, ['modular_web.wasm']);
   const instrument = await located.createInstrument(soundfont);
   assert.ok(soundsOn((await instrument.render(oneNote(), 48000)).channels[0], 24000));
+});
+
+test('the module reports the commit and Emscripten version that built it, as the manifest beside it does', async () => {
+  const { version } = modular;
+  assert.match(version.commit, /^[0-9a-f]{40}$/);
+  assert.equal(typeof version.dirty, 'boolean');
+  assert.match(version.emscripten, /^\d+\.\d+\.\d+$/);
+
+  const shipped = (name) => readFileSync(join(dirname(loaderPath), name));
+  const manifest = JSON.parse(shipped('modular.manifest.json').toString('utf8'));
+  assert.equal(manifest.commit, version.commit);
+  assert.equal(manifest.dirty, version.dirty);
+  assert.equal(manifest.emscripten, version.emscripten);
+  assert.match(manifest.flags.compile, /-fwasm-exceptions/);
+  assert.match(manifest.flags.link, /-fwasm-exceptions/);
+  // Every shipped file, as it is on disk. The files and the manifest are all the folder
+  // holds, so CI uploads the folder as it is.
+  const names = ['modular.d.mts', 'modular.mjs', 'modular_web.mjs', 'modular_web.wasm'];
+  assert.deepEqual(manifest.files.map((file) => file.name), names);
+  assert.deepEqual(readdirSync(dirname(loaderPath)).sort(),
+                   [...names, 'modular.manifest.json'].sort());
+  for (const file of manifest.files) {
+    const bytes = shipped(file.name);
+    assert.equal(file.size, bytes.length, file.name);
+    assert.equal(file.sha256, createHash('sha256').update(bytes).digest('hex'), file.name);
+  }
+  // The test module is built from the same sources, its version included.
+  assert.deepEqual((await loadTestModular()).version, version);
 });
 
 // --- the test module ---------------------------------------------------------------------

@@ -10,27 +10,50 @@ words, defined below. The decisions behind it are in the
 
 ## What the web build covers
 
-The `web` CMake presets configure with Emscripten's toolchain, build every target and run
-tests under emsdk's own Node, which the configure preset names as CMake's emulator. Today
-they cover:
+The `web` CMake presets configure with Emscripten's toolchain and build every target the
+web build defines, which leaves out the Windows-only and native-only ones below. The test
+preset then runs every test the web build registers, under emsdk's own Node, which the
+configure preset names as CMake's emulator:
 
-- the render core, `modular_web_core`: the C++ behind the module, which also builds and is
-  tested natively on Windows ([windows.md](windows.md));
-- the module, `modular_web`, built only under Emscripten, and its loader and declarations;
-- under Node, the render core's tests (`web_core_tests`) and the module's smoke test
-  (`web_smoke`, with `web_smoke_fixture`, which writes its soundfont first).
+- the kernel, node, authoring, MIDI-file and soundfont tests, graph persistence included;
+- kernel purity;
+- the render core's tests (`web_core_tests`) and the module's smoke test (`web_smoke`, with
+  `web_smoke_fixture`, which writes its soundfont first).
+
+The render core, `modular_web_core`, is the C++ behind the module. It also builds and is
+tested natively on Windows ([windows.md](windows.md)). The module, `modular_web`, its loader
+and its declarations build only under Emscripten. The [`web` CI job](#continuous-integration)
+runs all of this on every pull request that takes the build path.
+
+### What it leaves out
+
+Each exclusion is named, with its reason:
+
+| Left out | Why |
+| --- | --- |
+| The graph editor, the Windows audio node and their tests | Windows only. |
+| `midi_cli_smoke` | Its CMake script runs the CLI directly, with no emulator, so it is registered only natively. |
+| `soundfont_extract` | A check of a native tool: its script runs a native helper. Registered only natively. |
+| In `authoring_tests`, `a client can run and release a graph on a worker before editing and running again` and `a worker reports a processing boundary failure and releases execution` | The web build has no threads, so a graph cannot run on a worker: starting one throws `thread constructor failed: Not supported`. |
+| On a Windows host only, in `node_tests`, `duplicate triggers and Stop ties preserve distinct numbered takes across blocks` and `a partial external write is cleaned and Retry preserves existing output`; in `authoring_tests`, `shared file save replaces complete graphs at Unicode paths and retains files on failure` and `recording graphs reopen with owned MIDI and settings but no transient take` | Each removes a directory, and Node on Windows cannot. The C library's `remove()` unlinks first and falls back to `rmdir` only when the unlink fails with `EISDIR`, but Node on Windows fails it with `EPERM`. So a directory the case expects gone stays, or the removal throws `Operation not permitted`. CI runs these cases on Linux, where they pass. |
+
+The cases are left out with doctest's `--test-case-exclude`, which the root `CMakeLists.txt`
+passes only under Emscripten, so the native suite runs every case. The table was measured
+on the Linux runner and on a Windows host; on Linux only the two worker cases are left out.
+
+### The test module
 
 The smoke test also loads the *test module*, `modular_web_test`, a variant built only for it
-into `build/web/web-test-module/`, never into `dist/`. It is the same exports and loader,
-linked with [`tests/web_test_module.cpp`](../tests/web_test_module.cpp), in which any
-allocation of 64 MiB or more traps and an export reports the heap in use, and with
-`tests/web_test_module.js`, which hands each instance to the test. Through it the test
-induces a trap and reads the module's memory, so the module a client takes carries
-neither.
+into `build/web/web-test-module/`, never into `dist/`, which holds only the files the
+manifest lists. It is built from the module's own sources, version and link options, and
+the same loader, with two additions:
 
-Every other target builds under the `web` preset, but its tests do not run there yet. The
-graph editor and the Windows audio node are Windows only, and the soundfont extract tool's
-test is native only. There is no web CI job yet; the build is checked locally, as below.
+- [`tests/web_test_module.cpp`](../tests/web_test_module.cpp), in which any allocation of
+  64 MiB or more traps and an export reports the heap in use;
+- `tests/web_test_module.js`, which hands each instance to the test.
+
+Through it the test induces a trap and reads the module's memory, so the module a client
+takes carries neither.
 
 ### Build flags
 
@@ -45,7 +68,15 @@ Under Emscripten, the root `CMakeLists.txt` gives every target, at compile and l
 
 No threads, no fast maths and no relaxed SIMD: none is turned on. The module also links
 with `-sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,node -sALLOW_MEMORY_GROWTH=1`. The
-smoke test's fixture writer links Node's raw file system (`-sNODERAWFS=1`) to write a file.
+manifest records the module's flags as CMake passes them ([below](#version-and-manifest)).
+
+The tests link differently from the module:
+
+- every doctest executable links with `-sALLOW_MEMORY_GROWTH=1`, as the module does, since
+  the soundfont tests need more than the default 16 MiB;
+- those that read or write files link Node's raw file system (`-sNODERAWFS=1`), so they see
+  the host's files as the native tests do: the node, authoring, MIDI-file and soundfont
+  tests, and the smoke test's fixture writer.
 
 ## The surface
 
@@ -57,6 +88,7 @@ export function loadModular(options?: {
 }): Promise<Modular>;
 
 export interface Modular {
+  readonly version: { commit: string; dirty: boolean; emscripten: string };
   createInstrument(soundfont: Uint8Array): Promise<Instrument>;
 }
 
@@ -86,6 +118,8 @@ const { sampleRate, channels } = await piano.render(midiBytes, context.sampleRat
 ```
 
 - **`loadModular(options?)`** instantiates one module. A page loads it once and keeps it.
+- **`version`** says what built the module: the commit, whether the tree was dirty, and the
+  Emscripten version, as [Version and manifest](#version-and-manifest) describes.
 - **`createInstrument(soundfont)`** parses a SoundFont 2 file once. The instrument plays
   the file's lowest preset (lowest bank, then lowest program) with the soundfont node's
   default of 256 voices ([node-io.md](node-io.md)). There are no options.
@@ -188,6 +222,80 @@ and twenty more renders of it left both the memory and the heap in use where the
   send the `.wasm` as `application/wasm` for streaming compilation; otherwise the glue falls
   back to compiling from a downloaded copy.
 
+## Version and manifest
+
+The build reads the checkout's commit each time it builds the module, not only when CMake
+configures, and bakes three facts into the module. `loadModular()` returns them as
+`version`:
+
+- `commit`: the commit of the tree the module was built from, 40 hexadecimal digits;
+- `dirty`: true when that tree had uncommitted changes to tracked files. Untracked files do
+  not count, as for the soundfont extract tool, since the build names every source it
+  compiles;
+- `emscripten`: the Emscripten version that built it, such as `6.0.13`.
+
+A build outside a Git checkout stops with a message, since the module could not say what
+it was built from.
+
+The build also writes `modular.manifest.json` beside the files a client takes, so a local
+build and the CI artifact carry the same manifest. For example:
+
+```json
+{
+  "commit": "<40 hexadecimal digits>",
+  "dirty": false,
+  "emscripten": "6.0.13",
+  "flags": {
+    "compile": "-O2 -DNDEBUG -std=gnu++20 -ffp-contract=off -fwasm-exceptions",
+    "link": "-O2 -DNDEBUG -fwasm-exceptions -sMODULARIZE=1 -sEXPORT_ES6=1 ..."
+  },
+  "files": [
+    { "name": "modular.d.mts", "size": 2123, "sha256": "<64 hexadecimal digits>" },
+    ...
+  ]
+}
+```
+
+- `commit`, `dirty` and `emscripten` are the module's own `version`.
+- `flags.compile` holds the flags every source in the module compiles with, and
+  `flags.link` the module's link flags, as CMake passes them.
+- `files` lists the declarations, the loader, the glue and the `.wasm`, by name, with each
+  file's size in bytes and SHA-256.
+
+The manifest holds no date and no path. `.gitattributes` checks the loader and its
+declarations out with LF line endings on every host, so their hashes do not depend on Git's
+`core.autocrlf`. The smoke test checks that `version` is well formed and that the manifest
+matches it and the files beside it.
+
+## Continuous integration
+
+The `web` job in `.github/workflows/ci.yml` runs beside the Windows jobs on every pull
+request and every push to `main` that takes the build path, and is skipped, as they are, on
+a documentation-only change. **CI gate** needs it as it needs them
+([windows.md](windows.md#continuous-integration)): a skipped or cancelled `web` job on the
+build path fails the gate. On `ubuntu-24.04`, the job:
+
+1. clones `emscripten-core/emsdk` at the tag `6.0.13`, outside the checkout so the tree
+   stays clean, and checks that the tag is commit
+   `35659964bc2762fffec0d257997fb61475f765b7`;
+2. runs `emsdk install 6.0.13` and `emsdk activate 6.0.13`. Nothing is cached;
+3. configures, builds and runs CTest with the `web` presets, each step in emsdk's
+   environment (`emsdk_env.sh`), which sets the `EMSDK` and `EMSDK_NODE` the presets read;
+4. shows the manifest in the run's summary;
+5. uploads `build/web/dist/`, which holds only the four files and the manifest, as one
+   workflow artifact, `modular-web-<commit>`, kept for GitHub's default retention.
+
+**The pin.** Emscripten 6.0.13 is pinned in one place in the workflow, the `web` job's
+`EMSCRIPTEN_VERSION`, beside `EMSDK_COMMIT`, the commit its emsdk tag must resolve to, and
+on this page. Moving to another version is one pull request that changes both values and
+this page, and rechecks what the root `CMakeLists.txt` says of 6.0.13: that its default
+exception encoding is the legacy one, which the browser floor above depends on.
+
+**Which artifact a client takes.** A pull request's run builds GitHub's merge of the branch
+into `main`, so its artifact, its manifest and its `version` name that merge commit, which no
+branch keeps. A client takes the artifact of a push to `main`, whose commit is on `main`, and
+keeps the manifest beside the files.
+
 ## Building it locally
 
 From a clean `main` checkout, with emsdk 6.0.13, CMake 3.20 or later and Ninja on `PATH`.
@@ -220,7 +328,7 @@ From a clean `main` checkout, with emsdk 6.0.13, CMake 3.20 or later and Ninja o
 
    The build goes into `build/web/`, which Git ignores.
 
-4. A client takes the four files in `build/web/dist/` and keeps them together:
+4. A client takes the five files in `build/web/dist/` and keeps them together:
 
    | File | What it is |
    | --- | --- |
@@ -228,5 +336,7 @@ From a clean `main` checkout, with emsdk 6.0.13, CMake 3.20 or later and Ninja o
    | `modular.d.mts` | Its TypeScript declarations |
    | `modular_web.mjs` | Emscripten's JavaScript glue, which the loader imports |
    | `modular_web.wasm` | The module, which the glue fetches |
+   | `modular.manifest.json` | What built them, and each file's size and SHA-256 |
 
-   Record the commit beside them. The module does not report it yet.
+   The manifest names the commit. `"dirty": true` there means the files were built from
+   uncommitted changes, so they are not a `main` commit's files.

@@ -17,6 +17,8 @@ export async function loadModular(options = {}) {
   const { locateFile } = options;
   // The live instance, until a trap stops it.
   let instance = await instantiate(locateFile);
+  // What built the module. A fresh instance after a trap is the same build.
+  const { version } = instance;
   // The live instance, or a fresh one in place of a stopped one.
   const live = async () => {
     if (instance.stopped) instance = await instantiate(locateFile);
@@ -62,6 +64,7 @@ export async function loadModular(options = {}) {
   };
 
   return {
+    version,
     async createInstrument(soundfont) {
       const problem = !isBytes(soundfont) ? 'soundfont: bytes must be a Uint8Array' : undefined;
       // The instrument's own copy, made once and never the page's array, which the page
@@ -109,6 +112,13 @@ async function instantiate(locateFile) {
 
   const failure = () => new Error(module.UTF8ToString(call('_modular_error')));
 
+  // What built the module, baked in by the build (apps/web/Version.cpp).
+  const version = {
+    commit: module.UTF8ToString(call('_modular_version_commit')),
+    dirty: call('_modular_version_dirty') !== 0,
+    emscripten: module.UTF8ToString(call('_modular_version_emscripten')),
+  };
+
   // Calls `work` with the bytes copied into the module's memory, freed afterwards unless the
   // instance has stopped.
   const withBytes = (bytes, work) => {
@@ -130,6 +140,8 @@ async function instantiate(locateFile) {
   };
 
   return {
+    version,
+
     get stopped() {
       return stop !== undefined;
     },
