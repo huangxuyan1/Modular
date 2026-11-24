@@ -4,9 +4,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <new>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -846,4 +848,98 @@ TEST_CASE("generators and modulators the node does not read are ignored silently
   extra.presets[0].zones[0].modulators.push_back({0x0502, 48, 960, 0, 0});
   const auto expected = play(build(plain), kOneNote, {48000, 128, 1000});
   CHECK(play(build(extra), kOneNote, {48000, 128, 1000}).left == expected.left);
+}
+
+// Counts the global allocations made while `counting` is set.
+namespace {
+bool counting = false;
+std::size_t allocations = 0;
+} // namespace
+
+void* operator new(std::size_t size) {
+  if (counting) ++allocations;
+  if (void* memory = std::malloc(size == 0 ? 1 : size)) return memory;
+  throw std::bad_alloc();
+}
+void operator delete(void* memory) noexcept { std::free(memory); }
+void operator delete(void* memory, std::size_t) noexcept { std::free(memory); }
+
+namespace {
+
+// A soundfont node that counts what its process() allocates.
+class CountingSoundFontNode : public SoundFontNode {
+public:
+  using SoundFontNode::SoundFontNode;
+  void process(ProcessContext& ctx) override {
+    counting = true;
+    SoundFontNode::process(ctx);
+    counting = false;
+  }
+};
+
+// One preset that takes every path at once: a stereo pair of sines at
+// 44.1 kHz under a full envelope, layered from key 60 with a short quiet
+// sample that runs out while held.
+Bytes busyFont() {
+  File file;
+  file.samples = {{"left", sine(0.01, 30000), 44100, 57},
+                  {"right", sine(0.013, 30000), 44100, 57},
+                  {"short", sine(0.02, 700), 22050, 72}};
+  const Zone envelope{{set(gen::kDelayVolEnv, -9000), set(gen::kAttackVolEnv, -7000),
+                       set(gen::kHoldVolEnv, -8000), set(gen::kDecayVolEnv, -3000),
+                       set(gen::kSustainVolEnv, 150), set(gen::kReleaseVolEnv, -6000)}};
+  file.instruments = {
+      {"pair", {envelope, Zone{{set(gen::kPan, -500), set(gen::kSampleId, 0)}},
+                Zone{{set(gen::kPan, 500), set(gen::kSampleId, 1)}}}},
+      {"layer", {Zone{{range(gen::kKeyRange, 60, 127), set(gen::kInitialAttenuation, 90),
+                       set(gen::kSampleId, 2)}}}}};
+  file.presets = {{"preset", 0, 0, {Zone{{set(gen::kInstrument, 0)}},
+                                    Zone{{set(gen::kInstrument, 1)}}}}};
+  return build(file);
+}
+
+// Overlapping notes on four channels: a retrigger, releases, a velocity-0
+// note-off, a stray note-off, and with ten voices, a note the pool refuses.
+const std::vector<Timed> kBusy{
+    {0, noteOn(0, 60, 100)},   {3, noteOn(1, 64, 90)},     {3, noteOn(0, 48, 70)},
+    {129, noteOn(0, 60, 110)}, {509, noteOff(0, 60)},      {1021, noteOn(9, 67, 1)},
+    {2048, noteOff(1, 64)},    {2048, noteOn(1, 64, 0)},   {3001, noteOn(2, 72, 127)},
+    {4093, noteOff(0, 60)},    {5003, noteOff(0, 48)},     {6007, noteOn(0, 60, 100)},
+    {7919, noteOff(9, 67)},    {9001, noteOff(2, 72)},     {9001, noteOff(0, 60)},
+    {12011, noteOn(3, 50, 64)}, {17389, noteOff(3, 50)}};
+
+const auto kTenVoices = [](SoundFontNode& node) { node.setVoiceLimit(10); };
+
+} // namespace
+
+TEST_CASE("output is bit-identical at any block size and rate") {
+  for (const double rate : {44100.0, 48000.0}) {
+    CAPTURE(rate);
+    const auto reference = play(busyFont(), kBusy, {rate, 512, 20000}, kTenVoices);
+    CHECK(firstSounding(reference.left) < reference.left.size());
+    for (const std::uint32_t block : {1u, 7u, 127u, 509u}) {
+      CAPTURE(block);
+      const auto out = play(busyFont(), kBusy, {rate, block, 20000}, kTenVoices);
+      CHECK(out.left == reference.left);
+      CHECK(out.right == reference.right);
+    }
+  }
+}
+
+TEST_CASE("process allocates nothing") {
+  for (const std::uint32_t block : {7u, 509u}) {
+    CAPTURE(block);
+    Graph graph;
+    const auto source = graph.addNode<MidiAt>(kBusy);
+    const auto synth = graph.addNode<CountingSoundFontNode>(SoundFont::parse(busyFont()));
+    auto& node = static_cast<SoundFontNode&>(graph.node(synth));
+    node.setVoiceLimit(10);
+    const auto sink = graph.addNode<CaptureSinkNode>(2);
+    graph.connect(source, static_cast<MidiAt&>(graph.node(source)).out, synth, node.midiIn());
+    graph.connect(synth, node.out(), sink, static_cast<CaptureSinkNode&>(graph.node(sink)).in());
+    Engine engine(graph, 48000, block);
+    allocations = 0;
+    while (engine.streamTime() < 20000) engine.process(block);
+    CHECK(allocations == 0);
+  }
 }
