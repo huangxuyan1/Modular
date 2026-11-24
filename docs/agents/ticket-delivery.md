@@ -3,9 +3,9 @@
 How an authorized implementation ticket travels from its own branch to one
 squash commit on `main`. The **Commits and delivery** rule in the root
 `AGENTS.md`/`CLAUDE.md` says which tickets are authorized and what stays with
-the user; this file is the procedure. Planning branches and draft PRs are
-version-control ticket 05's and not covered here. The decisions behind it are in
-`.scratch/version-control/spec.md`.
+the user; this file is the procedure. Planning branches and draft PRs follow
+[planning delivery](planning-delivery.md) instead. The decisions behind it are
+in `.scratch/version-control/spec.md`.
 
 ## Steps
 
@@ -62,6 +62,7 @@ version-control ticket 05's and not covered here. The decisions behind it are in
   belong to another session or ticket, or the checkout holds dirty files of
   unknown origin.
 - **A new architecture decision or roadmap change** stops delivery. It becomes
-  its own planning decision; the ticket branch carries none.
+  its own planning decision, delivered as [planning delivery](planning-delivery.md)
+  describes when the user asks; the ticket branch carries none.
 
 A stop leaves the work as it is and reports to the user.

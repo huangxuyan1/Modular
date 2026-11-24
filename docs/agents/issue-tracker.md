@@ -2,6 +2,8 @@
 
 Issues and specs (you may know a spec as a PRD) for this repo live as markdown files in `.scratch/`.
 
+Versioned on `main`, these files are accepted project records. GitHub PRs are review history and do not replace them; see [planning delivery](planning-delivery.md#accepted-records).
+
 ## Conventions
 
 - One feature per directory: `.scratch/<feature-slug>/`
@@ -27,7 +29,7 @@ Used by `/wayfinder`. The **map** is a file with one **child** file per ticket.
 - **Blocking**: a `Blocked by: NN, NN` line near the top. A ticket is unblocked when every listed blocker is closed (`resolved` or `out-of-scope`). When a blocker is scoped out, review dependent questions/edges: closure does not supply the missing answer.
 - **Frontier**: scan `.scratch/<effort>/issues/` for files that are open, unblocked, and unclaimed; first by number wins.
 - **Claim**: set `Status: claimed` and save before any work.
-- **Resolve**: append the answer under an `## Answer` heading, set `Status: resolved`, then append a context pointer (gist + link) to the map's Decisions-so-far in `map.md`.
+- **Resolve**: append the answer under an `## Answer` heading, set `Status: resolved`, then append a context pointer (gist + link) to the map's Decisions-so-far in `map.md`. On a planning branch these edits are provisional until its PR merges; see [planning delivery](planning-delivery.md).
 - **Scope out**: record why the ticket lies beyond the destination, set `Status: out-of-scope`, and link it by name under the map's Out of scope. Do not add it to Decisions so far or leave it eligible for the frontier.
 - **Create then wire**: create precise questions first, even if blocked; add blocking references in a second pass. Keep questions too vague to specify under Not yet specified. Charting then stops, except for research agents; work sessions resolve at most one ticket except research.
 

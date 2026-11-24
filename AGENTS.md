@@ -46,7 +46,8 @@ linked contract instead of treating this summary as the complete design.
   delivery until it is green; unclear file scope or a new architecture or roadmap
   decision stops it for the user. Leave unrelated dirty changes unstaged and
   intact. Read `docs/agents/ticket-delivery.md` before starting an authorized
-  ticket.
+  ticket, and `docs/agents/planning-delivery.md` before a planning branch or
+  draft PR.
 
 ## Skills and phase boundaries
 
