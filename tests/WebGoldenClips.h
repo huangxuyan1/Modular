@@ -1,11 +1,11 @@
 #pragma once
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
 
 #include "GoldenRender.h"
+#include "MidiTestFiles.h"
 #include "SoundFontTestFiles.h"
 
 // The web render surface's golden clips (map ticket 08, decisions 5 and 6): a
@@ -18,6 +18,10 @@
 namespace webgolden {
 
 using Bytes = sf2test::Bytes;
+using miditest::midiFile;
+using miditest::noteOff;
+using miditest::noteOn;
+using miditest::tempo;
 
 // --- the soundfont -------------------------------------------------------------
 
@@ -38,8 +42,8 @@ inline std::vector<std::int16_t> tone(std::size_t points, int period,
   return result;
 }
 
-// One preset, the file's only one, with what the soundfont node does when the
-// golden values were set:
+// One preset, the file's only one. It takes the paths a piano takes through the
+// soundfont node as it stood when these values were set:
 //
 // - every note plays a stereo pair of looping tones, panned -500 and +500;
 // - keys 72 and up add a chime on a third voice, played once to its end;
@@ -76,77 +80,6 @@ inline Bytes soundFont() {
   return sf2test::build(file);
 }
 
-// --- Standard MIDI Files -------------------------------------------------------
-
-// A channel message, or a meta event from its 0xff on, at a tick.
-struct Event {
-  std::uint32_t tick;
-  std::vector<std::uint8_t> bytes;
-};
-
-inline Event noteOn(std::uint32_t tick, int key, int velocity, int channel = 0) {
-  return {tick, {static_cast<std::uint8_t>(0x90 | channel),
-                 static_cast<std::uint8_t>(key), static_cast<std::uint8_t>(velocity)}};
-}
-
-inline Event noteOff(std::uint32_t tick, int key, int channel = 0) {
-  return {tick, {static_cast<std::uint8_t>(0x80 | channel),
-                 static_cast<std::uint8_t>(key), 0}};
-}
-
-inline Event tempo(std::uint32_t tick, std::uint32_t microsecondsPerQuarter) {
-  return {tick, {0xff, 0x51, 3, static_cast<std::uint8_t>(microsecondsPerQuarter >> 16),
-                 static_cast<std::uint8_t>(microsecondsPerQuarter >> 8),
-                 static_cast<std::uint8_t>(microsecondsPerQuarter)}};
-}
-
-namespace detail {
-
-inline void bigEndian(Bytes& out, std::uint32_t value, int size) {
-  for (int i = size - 1; i >= 0; --i)
-    out.push_back(static_cast<std::uint8_t>(value >> (8 * i)));
-}
-
-// A variable-length quantity: seven bits a byte, most significant first.
-inline void variable(Bytes& out, std::uint32_t value) {
-  std::uint8_t groups[5];
-  int count = 0;
-  do {
-    groups[count++] = static_cast<std::uint8_t>(value & 0x7f);
-    value >>= 7;
-  } while (value != 0);
-  while (count > 1) out.push_back(static_cast<std::uint8_t>(groups[--count] | 0x80));
-  out.push_back(groups[0]);
-}
-
-} // namespace detail
-
-// A format 0 file at 480 ticks per quarter, ending at `endTick`. Events at one
-// tick keep the order given. With no tempo event, a quarter lasts 500,000 us, so
-// 960 ticks make a second.
-inline Bytes midiFile(std::vector<Event> events, std::uint32_t endTick) {
-  std::stable_sort(events.begin(), events.end(),
-                   [](const Event& a, const Event& b) { return a.tick < b.tick; });
-  Bytes track;
-  std::uint32_t at = 0;
-  for (const auto& event : events) {
-    detail::variable(track, event.tick - at);
-    at = event.tick;
-    track.insert(track.end(), event.bytes.begin(), event.bytes.end());
-  }
-  detail::variable(track, endTick - at);
-  track.insert(track.end(), {0xff, 0x2f, 0});
-  Bytes file{'M', 'T', 'h', 'd'};
-  detail::bigEndian(file, 6, 4);
-  detail::bigEndian(file, 0, 2); // format 0
-  detail::bigEndian(file, 1, 2); // one track
-  detail::bigEndian(file, 480, 2);
-  file.insert(file.end(), {'M', 'T', 'r', 'k'});
-  detail::bigEndian(file, static_cast<std::uint32_t>(track.size()), 4);
-  file.insert(file.end(), track.begin(), track.end());
-  return file;
-}
-
 // --- the clips -----------------------------------------------------------------
 
 // The timing tie. Q:1/4=90 in whole microseconds, 666,667 a quarter, with a note
@@ -154,9 +87,9 @@ inline Bytes midiFile(std::vector<Event> events, std::uint32_t endTick) {
 // 48 kHz tick 15,000 is exactly frame 1,000,000.5, which a 64-bit and a 128-bit
 // long double rounded to opposite sides. Then the tempo moves to 140 a quarter and
 // the notes go on for two more beats. Each note is let go as the next starts, and
-// keys 72 and up start three voices.
+// keys 72 and up start three voices. The grid starts at tick 0, as the probe's did.
 inline Bytes timingClip() {
-  std::vector<Event> events{tempo(0, 666667)};
+  std::vector<miditest::Event> events{tempo(0, 666667)};
   int key = 0;
   for (std::uint32_t tick = 0; tick <= 16000; tick += 40) {
     if (tick > 0) events.push_back(noteOff(tick, key));
@@ -168,14 +101,15 @@ inline Bytes timingClip() {
   return midiFile(events, 16000);
 }
 
-// A dense passage on four channels, notes 22, 22, then 7 ticks apart, each held
-// 71 ticks, then a chord of three notes held and let go together. Below key 72 a
-// note starts two voices and from it three, so a pool of four voices takes notes,
-// with their 6 ms fade, all through it, and drops the note-offs of notes it took.
+// A dense passage on four channels from tick 3, notes 22, 22, then 7 ticks apart,
+// each held 71 ticks, then a chord of three notes held and let go together. Below
+// key 72 a note starts two voices and from it three, so a pool of four voices takes
+// notes, with their 6 ms fade, all through it, and drops the note-offs of notes it
+// took.
 inline Bytes poolClip() {
-  std::vector<Event> events;
+  std::vector<miditest::Event> events;
   for (std::uint32_t i = 0; i < 32; ++i) {
-    const std::uint32_t tick = 17 * i + 5 * (i % 3);
+    const std::uint32_t tick = 3 + 17 * i + 5 * (i % 3);
     const int channel = static_cast<int>(i % 4);
     const int key = 57 + static_cast<int>(7 * i % 24);
     events.push_back(noteOn(tick, key, 40 + static_cast<int>(29 * i % 88), channel));
@@ -189,8 +123,9 @@ inline Bytes poolClip() {
 // The voice limit the pool clip renders with.
 inline constexpr std::uint32_t kPoolVoiceLimit = 4;
 
-// A note preview: middle C held 0.25 s at velocity 105. The file ends as it is
-// let go, so its release is the rendering's tail.
+// A note preview: middle C held 0.25 s at velocity 105, from the file's start as a
+// client's preview plays it. The file ends as it is let go, so its release is the
+// rendering's tail.
 inline Bytes previewClip() {
   return midiFile({noteOn(0, 60, 105), noteOff(240, 60)}, 240);
 }
@@ -413,19 +348,19 @@ inline const std::vector<golden::Render> kTimingGolden{
 
 inline const std::vector<golden::Render> kPoolGolden{
     {44100, 45804, {
-        0x5e21a41d2af836a7ull, 0x1a0c05356ae6a6a2ull, 0x80bbdc437a6aa7e2ull,
-        0xb527e18847f6652cull, 0x81ec9a80365b324dull, 0x044f11f9af2a7d43ull,
-        0xb38a2262ab034c42ull, 0xcf49e2748eeeaee7ull, 0x17b1d248f5eab8f9ull,
+        0xf69778f67fb319c8ull, 0x4d885a0d4085f88aull, 0x120e9643ce044781ull,
+        0xeb03df8eb2b72a30ull, 0x566b86d9c0aa99ecull, 0x3833ddefecdf138eull,
+        0xf03c30d2b3e139cdull, 0x92538671764dada2ull, 0x17b1d248f5eab8f9ull,
         0xc68459d2630ab647ull, 0x59d96ee2bf8729edull, 0xfffba9d654a2a131ull}},
     {48000, 49855, {
-        0x6f14ff983b744948ull, 0xf4c9c1106c385b31ull, 0x5863ff1c7933a7acull,
-        0x8bbaf041839ccea2ull, 0xcd5b26716cac115cull, 0x4c2b7d275384d3ebull,
-        0x942c8131f9fce284ull, 0x3e3542176b955b9bull, 0x0fa574896bc70f9aull,
+        0x9f18423ebecace45ull, 0xaca3b8926b34d180ull, 0x3643510b870be498ull,
+        0x7e151cd198b53ff3ull, 0x65a76cf8778e4f10ull, 0x6b035f91871ee138ull,
+        0x8ba2bb5f5a987a25ull, 0x5f0f59f5746803f9ull, 0x2d8f0b2c5549e9fcull,
         0xafc1047b74b90219ull, 0x6fa5f7355997960eull, 0x4597e8aa32416659ull,
         0xab4b5e3f511d713aull}},
     {22050, 22903, {
-        0x24a0294890ae005dull, 0x75bd2371a1c95347ull, 0xa1e91c7191c5d99aull,
-        0xe25a917779f7573bull, 0x6c803ca11c4bdd2aull, 0xe77a276f134e82b2ull}},
+        0x784752d61fd06c28ull, 0x6a1e8991cf7bb678ull, 0xf012c4ee700ac56eull,
+        0xfdc847d4503e5e60ull, 0x6c803ca11c4bdd2aull, 0xe77a276f134e82b2ull}},
 };
 
 inline const std::vector<golden::Render> kPreviewGolden{

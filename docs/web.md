@@ -92,7 +92,7 @@ their frame count and a 64-bit hash of every 4,096 frames (`tests/GoldenRender.h
 - **the preview:** one note held 0.25 s at velocity 105, then its release.
 
 The clips, their soundfont and the values live in `tests/WebGoldenClips.h`, written in
-memory with the test-side soundfont builder. `web_core_tests` checks every clip at every
+memory with the test-side soundfont builder and MIDI writer (`tests/MidiTestFiles.h`). `web_core_tests` checks every clip at every
 rate, natively in Debug and Release and under Node here, against the same values, so the
 module's render equals the native one by transitivity. The smoke test renders the preview
 at 48 kHz through the loader and checks the same values with the hash ported to
@@ -101,9 +101,9 @@ The soundfont node's own golden test, in `soundfont_tests`, runs here too.
 
 **A change that alters a rendered clip updates the values in the same commit,** whether it
 changes the render core or the soundfont node ([node-io.md](node-io.md)). On a mismatch
-the test names each rate's frame count and first differing block, then prints every
-rate's values to paste over the golden ones. The smoke test reads its values from the same
-header, so one update covers both.
+the test names each differing rate's frame count and first differing block, then prints
+every rate's values to paste over the golden ones. The smoke test reads its values from
+the same header, so one update covers both, and on a mismatch it prints its own.
 
 ## The surface
 

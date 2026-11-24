@@ -26,8 +26,8 @@ import { runInNewContext } from 'node:vm';
 
 const [loaderPath, soundfontPath, testLoaderPath, goldenPath] = process.argv.slice(2);
 if (!loaderPath || !soundfontPath || !testLoaderPath || !goldenPath)
-  throw new Error('usage: node test_web_smoke.mjs <modular.mjs> <soundfont> <test modular.mjs> ' +
-                  '<golden dir>');
+  throw new Error('usage: node test_web_smoke.mjs <modular.mjs> <soundfont> ' +
+                  '<test modular.mjs> <golden dir>');
 const { loadModular } = await import(pathToFileURL(loaderPath).href);
 const { loadModular: loadTestModular } = await import(pathToFileURL(testLoaderPath).href);
 const soundfont = new Uint8Array(readFileSync(soundfontPath));

@@ -12,8 +12,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_windows.ps1
 This configures the `windows` preset, builds Debug, and runs all eleven CTest
 entries: kernel, node, authoring, MIDI-file and soundfont tests, the web render
 core's tests with its golden clips (`web_core_tests`), a CLI smoke test, the
-soundfont extract tool's test
-(`soundfont_extract`), kernel purity, and the two `desktop`-labelled entries, the
+soundfont extract tool's test (`soundfont_extract`), kernel purity, and the two
+`desktop`-labelled entries, the
 actual graph-editor app check (`graph_editor_app`) and a focused gesture regression
 (`graph_editor_gesture`). The extract tool's test runs `scripts/soundfont_extract.py`
 with the Python 3 (3.8 or later) that CMake finds when it configures; with none

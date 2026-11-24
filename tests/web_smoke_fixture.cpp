@@ -27,7 +27,7 @@ namespace gen = sf2test::gen;
 
 namespace {
 
-bool write(const std::filesystem::path& path, const std::vector<std::uint8_t>& bytes) {
+bool writeFile(const std::filesystem::path& path, const std::vector<std::uint8_t>& bytes) {
   std::FILE* out = std::fopen(path.string().c_str(), "wb");
   if (!out) {
     std::fprintf(stderr, "web_smoke_fixture: cannot write %s\n", path.string().c_str());
@@ -93,9 +93,10 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "web_smoke_fixture: no golden preview at 48 kHz\n");
     return 1;
   }
-  const bool written = write(argv[1], smokeSoundFont()) &&
-                       write(goldenDirectory / "preview.sf2", webgolden::soundFont()) &&
-                       write(goldenDirectory / "preview.mid", webgolden::previewClip()) &&
-                       write(goldenDirectory / "preview.json", goldenJson(*preview));
+  const bool written =
+      writeFile(argv[1], smokeSoundFont()) &&
+      writeFile(goldenDirectory / "preview.sf2", webgolden::soundFont()) &&
+      writeFile(goldenDirectory / "preview.mid", webgolden::previewClip()) &&
+      writeFile(goldenDirectory / "preview.json", goldenJson(*preview));
   return written ? 0 : 1;
 }
