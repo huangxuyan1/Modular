@@ -267,3 +267,18 @@ which its answer now records.
   page, so this is off the destination's path. Counting held notes per channel and key in
   `MidiBlockNode` would fix it. Whether and when is the planning hub's call, not this
   ticket's.
+
+### Planning hub decision: `MidiBlockNode`'s held flag (2026-11-24)
+
+Decided by the planning hub under the judgment the user delegated for this map ("All, on your
+best judgment").
+
+**Deferred, and recorded as a known limitation.** A site render never depends on it. Every
+normal note gets its own note-off from the file. Under D4, a stuck note from the abcjs writer's
+staccato defect leaves at most one stuck note per channel and key, so the single note-off per
+key at the file's end releases it. The limitation bites only under a realtime transport: Stop
+or retrigger with two held notes on one key and channel. No client gives the soundfont node
+such a transport on this map. The soundfont node's spec lists the limitation. Counting held
+notes per channel and key in `MidiBlockNode`, a small `nodes/` change, belongs to whichever
+ticket first gives the soundfont node a realtime transport, such as the graph editor's palette
+or a DAW.
