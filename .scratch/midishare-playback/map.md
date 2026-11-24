@@ -71,7 +71,8 @@ hub, 2026-11-24, under the user's delegation). The work splits into two specs:
 - **(A) The soundfont node**, [spec](../soundfont-node/spec.md) and
   [tickets](../soundfont-node/issues/): the SF2 reader, the voice, the policy, the node, its
   codec, tests and docs. Its tickets 01 to 03 complete the website's route.
-- **(B) The web build and its render surface**, after tickets 02, 03 and 08: the Emscripten
+- **(B) The web build and its render surface**, [spec](../web-build/spec.md) and
+  [tickets](../web-build/issues/), after tickets 02, 03 and 08: the Emscripten
   build, the glue (`loadModular`, `createInstrument`, `render`), where the module lives, the
   `MidiFileNode` import from bytes, the output sink, and the extract tool (a `scripts/` script,
   per [ticket 03](issues/03-where-the-web-build-lives.md)).
