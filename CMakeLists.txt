@@ -89,17 +89,33 @@ target_link_libraries(modular_web_core PUBLIC modular_kernel modular_midi modula
 # dist/: the hand-written loader and its declarations, and the module's glue and .wasm.
 if(EMSCRIPTEN)
   set(MODULAR_WEB_DIST "${CMAKE_CURRENT_BINARY_DIR}/dist")
+  set(MODULAR_WEB_LINK_OPTIONS
+    -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,node -sALLOW_MEMORY_GROWTH=1
+    -sEXPORTED_FUNCTIONS=_malloc,_free
+    -sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPF32,UTF8ToString)
   add_executable(modular_web apps/web/Exports.cpp)
   target_link_libraries(modular_web PRIVATE modular_web_core)
   set_target_properties(modular_web PROPERTIES
     SUFFIX ".mjs"
     RUNTIME_OUTPUT_DIRECTORY "${MODULAR_WEB_DIST}")
-  target_link_options(modular_web PRIVATE
-    -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,node -sALLOW_MEMORY_GROWTH=1
-    -sEXPORTED_FUNCTIONS=_malloc,_free
-    -sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPF32,UTF8ToString)
+  target_link_options(modular_web PRIVATE ${MODULAR_WEB_LINK_OPTIONS})
   configure_file(apps/web/modular.mjs "${MODULAR_WEB_DIST}/modular.mjs" COPYONLY)
   configure_file(apps/web/modular.d.mts "${MODULAR_WEB_DIST}/modular.d.mts" COPYONLY)
+
+  # The test module: the same module and loader, built for the smoke test only and never
+  # in dist/. tests/web_test_module.cpp traps on a huge allocation and reports the heap in
+  # use, and tests/web_test_module.js hands each instance to the test.
+  set(MODULAR_WEB_TEST_MODULE "${CMAKE_CURRENT_BINARY_DIR}/web-test-module")
+  add_executable(modular_web_test apps/web/Exports.cpp tests/web_test_module.cpp)
+  target_link_libraries(modular_web_test PRIVATE modular_web_core)
+  set_target_properties(modular_web_test PROPERTIES
+    OUTPUT_NAME modular_web
+    SUFFIX ".mjs"
+    RUNTIME_OUTPUT_DIRECTORY "${MODULAR_WEB_TEST_MODULE}"
+    LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/web_test_module.js")
+  target_link_options(modular_web_test PRIVATE ${MODULAR_WEB_LINK_OPTIONS}
+    "SHELL:--post-js \"${CMAKE_CURRENT_SOURCE_DIR}/tests/web_test_module.js\"")
+  configure_file(apps/web/modular.mjs "${MODULAR_WEB_TEST_MODULE}/modular.mjs" COPYONLY)
 endif()
 
 if(WIN32)
@@ -209,7 +225,8 @@ if(EMSCRIPTEN)
     COMMAND web_smoke_fixture "${MODULAR_WEB_SMOKE_SOUNDFONT}")
   add_test(NAME web_smoke COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR}
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_web_smoke.mjs"
-    "${MODULAR_WEB_DIST}/modular.mjs" "${MODULAR_WEB_SMOKE_SOUNDFONT}")
+    "${MODULAR_WEB_DIST}/modular.mjs" "${MODULAR_WEB_SMOKE_SOUNDFONT}"
+    "${MODULAR_WEB_TEST_MODULE}/modular.mjs")
   set_tests_properties(web_smoke_fixture PROPERTIES FIXTURES_SETUP web_smoke_soundfont)
   set_tests_properties(web_smoke PROPERTIES FIXTURES_REQUIRED web_smoke_soundfont)
 endif()
