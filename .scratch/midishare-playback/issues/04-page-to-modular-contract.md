@@ -37,5 +37,9 @@ short note), and it must not quietly decide roadmap questions that are still ope
 - **Errors.** Authoring and compile errors throw in Modular. Does one reach JavaScript as an
   exception with Modular's message, or as a result value?
 
-The instrument tickets decide whether sample data also crosses this boundary; this ticket
-leaves room for it rather than deciding it.
+- **The soundfont.** The node reads a soundfont, so the soundfont's bytes reach Modular
+  somehow: the page fetches the site's soundfont file and hands Modular the bytes, as with the
+  MIDI, or the bytes arrive inside a saved graph, or they are built into the module. When the
+  page reads it (on load, on first Play or on first note press), and whether it is read once
+  per page or once per render (see the map's fog on repeated renders). Leave room for the
+  stretch goal, a choice among a few soundfonts, without designing it.

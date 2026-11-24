@@ -12,7 +12,7 @@ expose a web build's problems, and report numbers, not opinions.
 - Build `modular_kernel`, the header-only nodes and `modular_midi` with Emscripten. Wrap
   `apps/midi_cli`'s graph (trigger → MIDI file → voice allocator → sine voices → mix → gain →
   capture) in one exported function that takes Standard MIDI File bytes and a sample rate and
-  returns samples.
+  returns samples. The sine voice stands in for the soundfont node here and is never shipped.
 - Call it from a plain local page, play the result through an `AudioBufferSourceNode`, and
   render a clip as long as midishare allows (5000 characters of ABC).
 - Throwaway code under `.scratch/midishare-playback/prototypes/`, outside the build, as roadmap
