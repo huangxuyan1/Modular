@@ -2581,25 +2581,18 @@ namespace {
 // A drum kit of steady samples that hold, each heard apart by its side and
 // level: the open hi-hat (key 46) left and the closed one (42) right, both in
 // exclusive class 1; a snare (38), in no class, and a crash (49), in class 2,
-// both left; and on key 51 a stereo pair in class 1. The open hi-hat's release
-// lasts 0.5 s.
+// both left; and on key 51 a stereo pair in class 1. Each release lasts 0.5 s.
 Bytes drumKit() {
-  const auto drum = [](int key, int group, int pan, int attenuation,
-                       std::vector<Generator> more = {}) {
-    std::vector<Generator> generators{range(gen::kKeyRange, key, key),
-                                      set(gen::kExclusiveClass, group),
-                                      set(gen::kPan, pan),
-                                      set(gen::kInitialAttenuation, attenuation)};
-    generators.insert(generators.end(), more.begin(), more.end());
-    generators.push_back(set(gen::kSampleId, 0));
-    return Zone{generators};
+  const auto drum = [](int key, int group, int pan, int attenuation) {
+    return Zone{{range(gen::kKeyRange, key, key), set(gen::kExclusiveClass, group),
+                 set(gen::kPan, pan), set(gen::kInitialAttenuation, attenuation),
+                 set(gen::kReleaseVolEnv, -1200), set(gen::kSampleId, 0)}};
   };
   File file;
   file.samples = {{"steady", steady(8192, 60000)}};
   file.instruments.push_back(
-      {"kit", {drum(46, 1, -500, 0, {set(gen::kReleaseVolEnv, -1200)}), drum(42, 1, 500, 60),
-               drum(38, 0, -500, 120), drum(49, 2, -500, 180), drum(51, 1, -500, 240),
-               drum(51, 1, 500, 300)}});
+      {"kit", {drum(46, 1, -500, 0), drum(42, 1, 500, 60), drum(38, 0, -500, 120),
+               drum(49, 2, -500, 180), drum(51, 1, -500, 240), drum(51, 1, 500, 300)}});
   file.presets.push_back({"kit", 0, 128, {{{set(gen::kInstrument, 0)}}}});
   return build(file);
 }
@@ -2694,6 +2687,41 @@ TEST_CASE("a modulated exclusive class ends its class as the generator's does") 
   CHECK(lastSounding(play(build(file), {open, closed}, run).left) == 2003 + kFade - 1);
 }
 
+namespace {
+
+// The drum kit through two voices, as frames; a fade is 265 or 288 frames.
+// - 2003: the closed hi-hat ends the open one, whose tail fades in slot 1, and
+//   takes that slot. Released after its attack, at 2111, it is the note the
+//   pool gives up first, so the crash at 2153 takes it, replacing slot 1's
+//   tail within its fade.
+// - 4001: the open hi-hat takes the snare, the oldest held note, from slot 0,
+//   and at 4057 the closed hi-hat ends it there, within the snare's fade.
+// - 6007: the pair ends the closed hi-hat and takes the crash.
+// Each was confirmed with temporary counters in the node, since removed.
+const std::vector<Timed> kChokes{
+    {13, noteOn(0, kSnare, 100)},     {101, noteOn(9, kOpenHat, 100)},
+    {2003, noteOn(1, kClosedHat, 90)}, {2111, noteOff(1, kClosedHat)},
+    {2153, noteOn(0, kCrash, 110)},    {4001, noteOn(2, kOpenHat, 80)},
+    {4057, noteOn(9, kClosedHat, 70)}, {6007, noteOn(3, kPair, 100)},
+    {7919, noteOff(3, kPair)}};
+
+} // namespace
+
+TEST_CASE("output is bit-identical at any block size when a class's end and a pool take land on one slot") {
+  for (const double rate : {44100.0, 48000.0}) {
+    CAPTURE(rate);
+    const auto reference = play(drumKit(), kChokes, {rate, 512, 10000}, voiceLimit(2));
+    // Notes were taken: with room for every note, the render differs.
+    CHECK(reference.left != play(drumKit(), kChokes, {rate, 512, 10000}).left);
+    for (const std::uint32_t block : {1u, 7u, 127u, 509u}) {
+      CAPTURE(block);
+      const auto out = play(drumKit(), kChokes, {rate, block, 10000}, voiceLimit(2));
+      CHECK(out.left == reference.left);
+      CHECK(out.right == reference.right);
+    }
+  }
+}
+
 // Counts the global allocations made while `counting` is set.
 namespace {
 bool counting = false;
@@ -2722,8 +2750,8 @@ public:
 };
 
 // One preset that takes every path at once: a looping stereo pair of sines
-// at 44.1 kHz under both envelopes, both LFOs and a resonant filter, layered
-// from key 60 with a short quiet sample.
+// at 44.1 kHz under both envelopes, both LFOs, a resonant filter and file
+// modulators, layered from key 60 with a short quiet sample.
 Bytes busyFont() {
   File file;
   file.samples = {{"left", sine(0.01, 30000), 44100, 57},
@@ -2747,7 +2775,15 @@ Bytes busyFont() {
                        set(gen::kKeynumToModEnvDecay, -25),
                        set(gen::kDelayModLfo, -9500), set(gen::kFreqModLfo, 1200),
                        set(gen::kModLfoToPitch, 40), set(gen::kModLfoToFilterFc, -600),
-                       set(gen::kModLfoToVolume, 30), set(gen::kFineTune, 13)}};
+                       set(gen::kModLfoToVolume, 30), set(gen::kFineTune, 13)},
+                      // File modulators that leave every voice's life as it was:
+                      // the key to attenuation and pan, a held controller to the
+                      // LFO's cutoff depth under a key switch, and FluidR3's
+                      // switch-off.
+                      {{0x0403, gen::kInitialAttenuation, 200, 0, 0},
+                       {0x0a02, gen::kPan, 300, 0, 0},
+                       {0x0087, gen::kModLfoToFilterFc, 400, 0x0c03, 0},
+                       {0x0102, gen::kInitialFilterFc, 0, 0x0d02, 0}}};
   // The pair loops through its release. The layer, tuned and under the
   // vibrato LFO, loops while held up to key 66, and above it runs out while
   // held at a fixed velocity.
@@ -2766,8 +2802,10 @@ Bytes busyFont() {
                        set(gen::kSampleId, 2)}},
                  Zone{{range(gen::kKeyRange, 67, 127), set(gen::kVelocity, 90),
                        set(gen::kSampleId, 2)}}}}};
+  // The preset's modulator gives the layer velocity-made resonance.
   file.presets = {{"preset", 0, 0, {Zone{{set(gen::kInstrument, 0)}},
-                                    Zone{{set(gen::kInstrument, 1)}}}}};
+                                    Zone{{set(gen::kInstrument, 1)},
+                                         {{0x0002, gen::kInitialFilterQ, 100, 0, 0}}}}}};
   return build(file);
 }
 
@@ -3068,12 +3106,19 @@ TEST_CASE("a clip through the LFOs, resonance, tuning and key scaling renders it
 }
 
 TEST_CASE("process allocates nothing") {
-  for (const auto& [limit, block] : {std::pair{4u, 7u}, std::pair{10u, 509u}}) {
+  struct Case {
+    Bytes font;
+    std::vector<Timed> midi;
+    std::uint32_t limit, block;
+  };
+  for (const auto& [font, midi, limit, block] :
+       {Case{busyFont(), kBusy, 4, 7}, Case{busyFont(), kBusy, 10, 509},
+        Case{drumKit(), kChokes, 2, 7}}) {
     CAPTURE(limit);
     CAPTURE(block);
     Graph graph;
-    const auto source = graph.addNode<MidiAt>(kBusy);
-    const auto synth = graph.addNode<CountingSoundFontNode>(SoundFont::parse(busyFont()));
+    const auto source = graph.addNode<MidiAt>(midi);
+    const auto synth = graph.addNode<CountingSoundFontNode>(SoundFont::parse(font));
     auto& node = static_cast<SoundFontNode&>(graph.node(synth));
     node.setVoiceLimit(limit);
     const auto sink = graph.addNode<CaptureSinkNode>(2);
