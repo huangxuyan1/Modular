@@ -16,7 +16,7 @@ constexpr double kPi = std::numbers::pi;
 // A voice has ended once its envelope has fallen this far below its peak.
 constexpr double kFloorDb = 96;
 // A voice taken for a new note ramps linearly to zero over this long, SFZ's
-// off_mode=fast, so taking it does not click (ticket 06, D5).
+// off_mode=fast, so taking it does not click (map ticket 06, D5).
 constexpr double kFadeSeconds = 0.006;
 
 // The specification's ceiling on a voice's total attenuation, so with the
@@ -46,9 +46,14 @@ bool matches(const SoundFont::Zone& zone, std::uint8_t key, std::uint8_t velocit
          velocity <= zone.velocityHigh;
 }
 
-// A key's place among the counts of its notes: 16 channels of 128 keys.
+// The keys whose notes the node counts: 16 channels of 128 keys.
+constexpr std::size_t kKeysPerChannel = 128;
+constexpr std::size_t kKeys = 16 * kKeysPerChannel;
+
+// A key's place among the counts of its notes. The key is a MIDI data byte,
+// below 128.
 std::size_t keyIndex(std::uint8_t channel, std::uint8_t key) {
-  return std::size_t{channel} * 128 + key;
+  return channel * kKeysPerChannel + key;
 }
 
 } // namespace
@@ -176,7 +181,7 @@ void SoundFontNode::prepare(const PrepareInfo& info) {
     plans_.push_back(plan);
   }
   slots_.assign(voice_limit_, Slot{});
-  keys_.assign(16 * 128, KeyNotes{});
+  keys_.assign(kKeys, KeyNotes{});
   events_ = 0;
 }
 
@@ -200,6 +205,9 @@ void SoundFontNode::process(ProcessContext& ctx) {
   for (const Event& event : ctx.eventsIn(midi_)) {
     renderTo(event.offset);
     const auto message = event.as<MidiMsg>();
+    // A data byte of 128 or more is not MIDI, and a key byte that large would
+    // fall outside the counts of the keys' notes.
+    if (!message.isValidChannelMessage()) continue;
     const auto channel = static_cast<std::uint8_t>(message.status & 0x0f);
     if (message.isNoteOn()) noteOn(channel, message.data1, message.data2);
     else if (message.isNoteOff()) noteOff(channel, message.data1);
@@ -283,7 +291,7 @@ std::size_t SoundFontNode::takeNote() {
   for (auto& slot : slots_)
     if (slot.voice.active && slot.voice.note == note) {
       slot.tail = slot.voice;
-      slot.tail.fade = fade_frames_;
+      slot.tail.fadeLeft = fade_frames_;
       slot.voice.active = false;
       ++taken;
     }
@@ -462,7 +470,8 @@ void SoundFontNode::render(Voice& voice, float* left, float* right, std::uint32_
           volume(voice, plan) * voice.gain;
       // A taken voice falls in equal steps to zero, from full on the new
       // note's frame.
-      if (voice.fade > 0) sample *= voice.fade / static_cast<double>(fade_frames_);
+      if (voice.fadeLeft > 0)
+        sample *= voice.fadeLeft / static_cast<double>(fade_frames_);
       left[i] += static_cast<float>(sample * plan.panLeft);
       right[i] += static_cast<float>(sample * plan.panRight);
       voice.position += voice.increment;
@@ -475,8 +484,8 @@ void SoundFontNode::render(Voice& voice, float* left, float* right, std::uint32_
     ++envelope.frame;
     ++voice.modulation.frame;
     voice.modulation.settle(plan.modulation);
-    // A fading voice ends with its fade, if it has not ended by itself first.
-    if ((voice.fade > 0 && --voice.fade == 0) || !sounds(voice, plan)) {
+    // A taken voice ends with its fade, unless it ends by itself first.
+    if ((voice.fadeLeft > 0 && --voice.fadeLeft == 0) || !sounds(voice, plan)) {
       voice.active = false;
       return;
     }

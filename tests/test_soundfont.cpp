@@ -993,6 +993,17 @@ TEST_CASE("every channel plays the preset and other channel messages change noth
   CHECK(drums.right == reference.right);
 }
 
+TEST_CASE("a note message whose data bytes are not MIDI changes nothing") {
+  // A key byte of 200 on channel 0 would fall among channel 1's keys if it
+  // counted as a key.
+  const auto font = twoVelocities();
+  const std::vector<Timed> notes{{101, noteOn(1, 72, 100)}, {1009, noteOff(1, 72)}};
+  auto withBad = notes;
+  withBad.insert(withBad.begin(), {13, MidiMsg{0x90, 200, 100}});
+  const Run run{48000, 128, 30000};
+  CHECK(play(font, withBad, run).left == play(font, notes, run).left);
+}
+
 TEST_CASE("a key struck again sounds beside its earlier note and note-offs end the oldest first") {
   const auto out = play(twoVelocities(),
                         {{13, noteOn(0, 60, 100)}, {1009, noteOn(0, 60, 30)},
@@ -1034,38 +1045,6 @@ TEST_CASE("two parts in unison on two channels both sound and end separately") {
 
 namespace {
 
-// As twoVelocities(), but a soft note's sample is 600 points long, so a held
-// soft note ends by itself soon after its onset.
-Bytes shortSoftNotes() {
-  File file;
-  file.samples = {{"soft", steady(1000, 600)}, {"loud", steady(2000, 60000)}};
-  file.instruments.push_back(
-      {"i", {{{set(gen::kPan, -500), set(gen::kReleaseVolEnv, -1200)}},
-             {{range(gen::kVelRange, 0, 63), set(gen::kSampleId, 0)}},
-             {{range(gen::kVelRange, 64, 127), set(gen::kSampleId, 1)}}}});
-  file.presets.push_back({"p", 0, 0, {{{set(gen::kInstrument, 0)}}}});
-  return build(file);
-}
-
-} // namespace
-
-TEST_CASE("a held note that ended by itself still takes its key's next note-off") {
-  // The soft note's sample runs out while it is held. The first note-off on
-  // its key is spent on it, so the loud note struck after it holds on until
-  // the second.
-  const auto font = shortSoftNotes();
-  const auto out = play(font,
-                        {{13, noteOn(0, 60, 30)}, {1009, noteOn(0, 60, 100)},
-                         {2003, noteOff(0, 60)}, {9001, noteOff(0, 60)}},
-                        {48000, 128, 40000});
-  const auto loud = play(font, {{1009, noteOn(0, 60, 100)}, {9001, noteOff(0, 60)}},
-                         {48000, 128, 40000});
-  REQUIRE(lastSounding(play(font, {{13, noteOn(0, 60, 30)}}).left) < 1009);
-  CHECK(std::equal(out.left.begin() + 1009, out.left.end(), loud.left.begin() + 1009));
-}
-
-namespace {
-
 // 6 ms at 48 kHz: how long a taken voice takes to fade out.
 constexpr std::size_t kFade = 288;
 
@@ -1081,13 +1060,49 @@ bool agreeFrom(const Stereo& a, const Stereo& b, std::size_t from) {
                     b.right.end());
 }
 
+// Full left, with velocity choosing how a held note ends. Below 20 it starts
+// no voice. From 20 its 600-point sample runs out. From 40 its decay falls to
+// the 96 dB floor in 0.06 s. From 64 it holds a long sample. Each releases
+// 100 dB in 0.5 s.
+Bytes heldNoteEndings() {
+  File file;
+  file.samples = {{"short", steady(1000, 600)}, {"long", steady(2000, 60000)}};
+  file.instruments.push_back(
+      {"i", {{{set(gen::kPan, -500), set(gen::kReleaseVolEnv, -1200)}},
+             {{range(gen::kVelRange, 20, 39), set(gen::kSampleId, 0)}},
+             {{range(gen::kVelRange, 40, 63), set(gen::kDecayVolEnv, -4800),
+               set(gen::kSustainVolEnv, 1000), set(gen::kSampleId, 1)}},
+             {{range(gen::kVelRange, 64, 127), set(gen::kSampleId, 1)}}}});
+  file.presets.push_back({"p", 0, 0, {{{set(gen::kInstrument, 0)}}}});
+  return build(file);
+}
+
 } // namespace
+
+TEST_CASE("a held note whose voices have ended still takes its key's next note-off") {
+  // However the first note's voices ended while it was held, the first
+  // note-off on its key is spent on it, so the loud note struck after it holds
+  // until the second note-off.
+  const auto font = heldNoteEndings();
+  const Run run{48000, 128, 40000};
+  const Timed loud{4001, noteOn(0, 60, 100)}, last{12007, noteOff(0, 60)};
+  const auto reference = play(font, {loud, last}, run);
+  // A note that started no voice, one whose sample ran out and one whose
+  // envelope reached the floor.
+  for (const int velocity : {10, 30, 50}) {
+    CAPTURE(velocity);
+    const Timed first{13, noteOn(0, 60, velocity)};
+    const auto alone = play(font, {first}, run);
+    REQUIRE(firstSounding(alone.left, 4001) == alone.left.size());
+    const auto out = play(font, {first, loud, {5003, noteOff(0, 60)}, last}, run);
+    CHECK(agreeFrom(out, reference, 4001));
+  }
+}
 
 TEST_CASE("a full pool takes released notes before held ones and each oldest first") {
   // Each note is one voice and the pool holds two, so the third note, at frame
   // 2003, takes one. Once the taken note has faded, the render matches one in
-  // which that note was never struck. Each note's velocity sets it apart, and
-  // a release lasts 0.48 s, so every released note still sounds when taken.
+  // which that note was never struck. Each note's velocity sets it apart.
   const auto font = envelopeFont({set(gen::kReleaseVolEnv, -1200)});
   const Run run{48000, 128, 8000};
   const auto takes = [&](const std::vector<Timed>& midi, const std::vector<Timed>& untaken) {
@@ -1096,6 +1111,8 @@ TEST_CASE("a full pool takes released notes before held ones and each oldest fir
   };
   const Timed a{13, noteOn(0, 60, 100)}, b{503, noteOn(0, 62, 90)},
       c{2003, noteOn(0, 64, 80)};
+  // A release lasts 0.48 s, so every released note still sounds when taken.
+  REQUIRE(play(font, {b, {1009, noteOff(0, 62)}}, run).left[2003 + kFade] != 0);
   SUBCASE("a released note goes before an older held one") {
     CHECK(takes({a, b, {1009, noteOff(0, 62)}, c}, {a, c}));
   }
@@ -1198,22 +1215,22 @@ TEST_CASE("a unison on one channel sounds and is taken note by note") {
 }
 
 TEST_CASE("a slot taken again within 6 ms stops its older tail at once") {
-  // One voice. The note at 2003 takes the left note, and the note 101 frames
+  // One voice. The note at 2003 takes the left note, and the note 102 frames
   // later takes it in turn, so the left note's fade stops there.
   const auto font = splitByKey();
-  const Timed third{2104, noteOn(0, 67, 100)};
+  const Timed third{2105, noteOn(0, 67, 100)};
   const auto out = play(font, {{13, noteOn(0, 60, 100)}, {2003, noteOn(0, 64, 100)}, third},
                         {}, voiceLimit(1));
-  CHECK(out.left[2103] != 0);
-  CHECK(lastSounding(out.left) == 2103);
-  CHECK(agreeFrom(out, play(font, {third}), 2104 + kFade));
+  CHECK(out.left[2104] != 0);
+  CHECK(lastSounding(out.left) == 2104);
+  CHECK(agreeFrom(out, play(font, {third}), 2105 + kFade));
 }
 
 TEST_CASE("a voice's slot is free from the frame after its last sound") {
   // Two voices: a long loud note, then a soft one whose sample runs out. A
   // note-on on the frame after the soft note's last sound finds its slot free,
   // so the loud note is not taken.
-  const auto font = shortSoftNotes();
+  const auto font = heldNoteEndings();
   const Timed loud{13, noteOn(0, 60, 100)};
   const auto last = lastSounding(play(font, {{101, noteOn(0, 62, 30)}}).left);
   REQUIRE(last < 4800);
@@ -1650,9 +1667,10 @@ Bytes busyFont() {
 
 // Overlapping notes on six channels: a retrigger, releases, a velocity-0
 // note-off, a stray note-off and a layer that ends while held. A note at 60
-// or above starts three voices and one below starts two, so a pool of four or
-// ten turns over: held notes are taken, slots are taken again within 6 ms,
-// a released note is taken at 9103, and taken notes' note-offs are dropped.
+// or above starts three voices and one below starts two. With four voices,
+// held notes are taken, frame 3 takes slots again within 6 ms, frame 9103
+// takes a released note, and taken notes' note-offs are dropped. Ten voices
+// turn over too, from frame 131.
 const std::vector<Timed> kBusy{
     {1, noteOn(0, 60, 100)},    {3, noteOn(1, 64, 90)},     {3, noteOn(0, 48, 70)},
     {131, noteOn(0, 60, 110)},  {509, noteOff(0, 60)},      {1021, noteOn(9, 67, 1)},

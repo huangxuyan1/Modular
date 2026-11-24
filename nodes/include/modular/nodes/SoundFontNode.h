@@ -127,9 +127,9 @@ private:
     std::uint64_t ordinal = 0; // which of its key's note-ons started it
     std::uint64_t noteOff = 0; // its note-off's number, once released
     std::uint8_t channel = 0, key = 0;
-    // A taken voice's frames left to fade out, its next at fade / the fade's
-    // length; 0 for a voice that is not fading.
-    std::uint32_t fade = 0;
+    // A taken voice's frames left to fade out, its next frame's gain being
+    // fadeLeft over the fade's length; 0 for a voice that is not fading.
+    std::uint32_t fadeLeft = 0;
     Envelope volume, modulation;
     double position = 0, increment = 0;
     // The gain of its total attenuation: initialAttenuation, the held
