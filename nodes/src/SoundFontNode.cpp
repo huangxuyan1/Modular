@@ -207,8 +207,24 @@ void SoundFontNode::select(SoundFont::PresetNumber preset,
                          static_cast<std::uint8_t>(velocity)) ? 1 : 0;
       most = std::max(most, count);
     }
+  std::vector<PlayedZone> played;
+  played.reserve(zones.size());
+  for (auto& zone : zones) {
+    // The default modulators no instrument modulator replaces come first, so
+    // the default ones sum as ticket 02's did, then the file's.
+    std::vector<Modulator> modulators;
+    for (const auto& fallback : kDefaultModulators)
+      if (std::none_of(zone.instrumentModulators.begin(), zone.instrumentModulators.end(),
+                       [&](const Modulator& m) { return replaces(m, fallback); }))
+        modulators.push_back(fallback);
+    modulators.insert(modulators.end(), zone.instrumentModulators.begin(),
+                      zone.instrumentModulators.end());
+    modulators.insert(modulators.end(), zone.presetModulators.begin(),
+                      zone.presetModulators.end());
+    played.push_back({std::move(zone), std::move(modulators)});
+  }
   preset_ = preset;
-  zones_ = std::move(zones);
+  zones_ = std::move(played);
   voices_per_note_ = most;
 }
 
@@ -223,24 +239,6 @@ void SoundFontNode::prepare(const PrepareInfo& info) {
   rate_ = rate;
   fade_frames_ = static_cast<std::uint32_t>(
       std::max<long long>(1, std::llround(kFadeSeconds * rate)));
-  plans_.clear();
-  plans_.reserve(zones_.size());
-  for (const auto& zone : zones_) {
-    PreparedZone plan;
-    plan.zone = zone;
-    plan.rateRatio = zone.sampleRate / rate;
-    // The default modulators no instrument modulator replaces come first, so
-    // the default ones sum as ticket 02's did, then the file's.
-    for (const auto& fallback : kDefaultModulators)
-      if (std::none_of(zone.instrumentModulators.begin(), zone.instrumentModulators.end(),
-                       [&](const Modulator& m) { return replaces(m, fallback); }))
-        plan.modulators.push_back(fallback);
-    plan.modulators.insert(plan.modulators.end(), zone.instrumentModulators.begin(),
-                           zone.instrumentModulators.end());
-    plan.modulators.insert(plan.modulators.end(), zone.presetModulators.begin(),
-                           zone.presetModulators.end());
-    plans_.push_back(std::move(plan));
-  }
   slots_.assign(voice_limit_, Slot{});
   starting_.assign(voices_per_note_, Voice{});
   keys_.assign(kKeys, KeyNotes{});
@@ -284,10 +282,10 @@ void SoundFontNode::noteOn(std::uint8_t channel, std::uint8_t key, std::uint8_t 
   // The note's voices, one for each zone it matches, made before any takes a
   // slot. prepare() made room for the most one note starts.
   std::size_t needed = 0;
-  for (const auto& plan : plans_) {
-    if (!matches(plan.zone, key, velocity)) continue;
+  for (const auto& played : zones_) {
+    if (!matches(played.zone, key, velocity)) continue;
     auto& voice = starting_[needed++];
-    start(voice, plan, key, velocity);
+    start(voice, played, key, velocity);
     voice.note = number;
     voice.ordinal = ordinal;
     voice.channel = channel;
@@ -316,9 +314,9 @@ void SoundFontNode::noteOn(std::uint8_t channel, std::uint8_t key, std::uint8_t 
 // modulator's output for the note, evaluated once, so every modulator is a
 // fixed offset for the voice's life; from them it derives what it plays at the
 // graph's rate.
-void SoundFontNode::start(Voice& voice, const PreparedZone& plan, std::uint8_t key,
+void SoundFontNode::start(Voice& voice, const PlayedZone& played, std::uint8_t key,
                           std::uint8_t velocity) const {
-  const auto& zone = plan.zone;
+  const auto& zone = played.zone;
   // Within the zone, keynum and velocity, when set, replace the note's own,
   // which is what the modulators read.
   const int zoneKey = zone.generators[SoundFont::kKeynum] >= 0
@@ -327,7 +325,7 @@ void SoundFontNode::start(Voice& voice, const PreparedZone& plan, std::uint8_t k
                                ? zone.generators[SoundFont::kVelocity] : velocity;
   SoundFont::Values g{};
   std::copy(zone.generators.begin(), zone.generators.end(), g.begin());
-  for (const auto& modulator : plan.modulators)
+  for (const auto& modulator : played.modulators)
     g[modulator.destination] += output(modulator, zoneKey, zoneVelocity);
   // A modulated value is kept within its generator's range, and whole where
   // the generator counts whole things, as the reader keeps a generator. The
@@ -360,7 +358,7 @@ void SoundFontNode::start(Voice& voice, const PreparedZone& plan, std::uint8_t k
   const double tuning = 100 * g[SoundFont::kCoarseTune] + g[SoundFont::kFineTune] +
                         zone.pitchCorrection;
   voice.pitch = g[SoundFont::kScaleTuning] * (zoneKey - root) + tuning;
-  voice.rateRatio = plan.rateRatio;
+  voice.rateRatio = zone.sampleRate / rate_;
   voice.increment = maths::exp2(voice.pitch / 1200) * voice.rateRatio;
   voice.modEnvToPitch = g[SoundFont::kModEnvToPitch];
   voice.modLfoToPitch = g[SoundFont::kModLfoToPitch];
@@ -683,8 +681,8 @@ void SoundFontNode::render(Voice& voice, float* left, float* right, std::uint32_
       // makes the LFO's rise louder.
       if (voice.modLfoToVolume != 0)
         sample *= maths::exp10(voice.modLfoToVolume * modLfo / 200);
-      // A taken voice falls in equal steps to zero, from full on the new
-      // note's frame.
+      // A voice ended early, taken or by its class, falls in equal steps to
+      // zero, from full on the new note's frame.
       if (voice.fadeLeft > 0)
         sample *= voice.fadeLeft / static_cast<double>(fade_frames_);
       left[i] += static_cast<float>(sample * voice.panLeft);
@@ -709,7 +707,7 @@ void SoundFontNode::render(Voice& voice, float* left, float* right, std::uint32_
     voice.modulation.settle();
     voice.modLfo.advance();
     voice.vibLfo.advance();
-    // A taken voice ends with its fade, unless it ends by itself first.
+    // An ended voice's tail ends with its fade, unless it ends by itself first.
     if ((voice.fadeLeft > 0 && --voice.fadeLeft == 0) || !sounds(voice)) {
       voice.active = false;
       return;

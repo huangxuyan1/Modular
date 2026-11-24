@@ -33,8 +33,9 @@ namespace modular::nodes {
 // first, whatever has become of their voices.
 //
 // Loading parses the whole file at authoring time. prepare() never reads the
-// file again: it lists each zone's modulators and resets the pool for the
-// sample rate, so a fresh Engine on the same graph renders from a clean start.
+// file again: it resets the pool for the sample rate, so a fresh Engine on the
+// same graph renders from a clean start. Each note-on derives its voices at
+// that rate.
 class SoundFontNode : public Node {
 public:
   static constexpr std::uint32_t kDefaultVoiceLimit = 256;
@@ -125,10 +126,10 @@ private:
 
   // One zone of the selected preset, with the modulators a note evaluates on
   // it: the default ones no instrument modulator replaces, then the
-  // instrument's, then the preset's.
-  struct PreparedZone {
+  // instrument's, then the preset's. Choosing the preset makes them, at
+  // authoring time, so prepare() allocates nothing for them.
+  struct PlayedZone {
     SoundFont::Zone zone;
-    double rateRatio = 1; // sample rate over graph rate
     std::vector<SoundFont::Modulator> modulators;
   };
 
@@ -197,7 +198,7 @@ private:
   void select(SoundFont::PresetNumber preset, std::vector<SoundFont::Zone> zones);
   void noteOn(std::uint8_t channel, std::uint8_t key, std::uint8_t velocity);
   void noteOff(std::uint8_t channel, std::uint8_t key);
-  void start(Voice& voice, const PreparedZone& plan, std::uint8_t key,
+  void start(Voice& voice, const PlayedZone& played, std::uint8_t key,
              std::uint8_t velocity) const;
   void scaleToKey(Voice& voice, const SoundFont::Values& generators, int key) const;
   std::size_t takeNote();
@@ -213,14 +214,13 @@ private:
   PortId midi_ = kNoPort, out_ = kNoPort;
   std::optional<SoundFont> sound_font_;
   SoundFont::PresetNumber preset_;
-  std::vector<SoundFont::Zone> zones_;
+  std::vector<PlayedZone> zones_;
   std::uint32_t voices_per_note_ = 0; // the most voices one note can start
   std::uint32_t voice_limit_ = kDefaultVoiceLimit;
 
   // Execution state, built by prepare().
   double rate_ = 0;
-  std::uint32_t fade_frames_ = 1; // a taken voice's fade, 6 ms
-  std::vector<PreparedZone> plans_;
+  std::uint32_t fade_frames_ = 1; // an ended voice's fade, 6 ms
   std::vector<Slot> slots_;    // the pool, one slot per voice of the limit
   std::vector<Voice> starting_; // a note's voices before they take slots
   std::vector<KeyNotes> keys_; // 16 channels of 128 keys

@@ -42,8 +42,10 @@ ends the open one with a short fade. See the [spec](../spec.md) (ticket 09, D2 a
 - [x] Output stays bit-identical across block sizes, including when a class choke and a pool
   take land on the same slot.
 - [x] `docs/node-io.md` records file modulators, the replacement rule and exclusive class.
-- [x] Nothing changes under `kernel/` or `workspace/`. The full suite passes, and
+- [ ] Nothing changes under `kernel/` or `workspace/`. The full suite passes, and
   `/code-review` runs on the branch's diff.
+  - Remaining: the review, which the planning hub runs with Codex on the open PR. Nothing
+    under `kernel/` or `workspace/` changed, and the full suite passes.
 
 ## Comments
 
@@ -69,13 +71,15 @@ cut from a freshly fetched `origin/main` at `bc33cf8`.
     points and keeps a modulated value as the reader keeps a generator; `Zone` carries its
     sample header's points instead of placed ones.
   - **The node** (`nodes/src/SoundFontNode.cpp`).
-    - `prepare()` gives each zone its modulators in order: the default modulators no
-      instrument modulator replaces, then the instrument's, then the preset's.
+    - Choosing the preset (`select()`, at authoring time) gives each zone its modulators
+      in order: the default modulators no instrument modulator replaces, then the
+      instrument's, then the preset's.
     - A note-on adds each modulator's output, for the zone's key and velocity, to the zone's
       generators, keeps each sum within its range (and whole where the generator counts
       whole things, the cutoff excepted), and derives the voice from the sums. Everything
       `prepare()` used to derive per zone from generators is now derived per voice; the
-      voice carries it, so `render()` reads only the voice.
+      voice carries it, so `render()` reads only the voice, and `prepare()` only resets
+      the pool.
     - Sources map to fractions, numerator over denominator, and the amount is divided by
       the denominators first. So the default modulators come out bit for bit as ticket 02
       computed them; a plain product of the mapped values differed in the last place at 6 of
@@ -87,7 +91,7 @@ cut from a freshly fetched `origin/main` at `bc33cf8`.
   - **Docs**: `docs/node-io.md` records file modulators (sources, curves, normalization,
     output, levels, the replacement rule, ranges, address offsets and what is ignored),
     the defaults as the node plays them, and exclusive class.
-- *Tests* (`tests/test_soundfont.cpp`, CTest `soundfont_tests`: 102 doctest cases, from 86).
+- *Tests* (`tests/test_soundfont.cpp`, CTest `soundfont_tests`: 102 doctest cases, from 85).
   - **New:**
     - a constant modulator to each of 43 generators renders bit for bit as the generator
       moved by its amount, and each move is heard;
@@ -130,7 +134,69 @@ cut from a freshly fetched `origin/main` at `bc33cf8`.
     identical modulators both kept; identity ignoring the amount source; preset modulators
     to instrument-only generators kept; a send modulator of amount 0 listed; global zone
     modulators dropped; whole generators not rounded.
+
+  Two survived at first, controllers 32 to 63 and general controller 1 allowed: a source
+  held at 0 gives 0 on a rising curve, so the illegal test could not hear them kept. Its
+  sources now fall from 1, and both are caught.
 - *Golden values.* The first two clips' values and web build 07's are unchanged. The golden
   font gains program 2, whose clip pins file modulators at both levels along every curve
   and exclusive classes ending voices across channels beside pool takes. Temporary counters
   confirmed the clip's and the block-size stream's comments, and were removed.
+- *A heap check under Node.* `web_smoke` checks that twenty more renders leave the module's
+  heap in use as the first left it. With each zone's modulator list rebuilt in every
+  `prepare()`, it was 8 bytes over, from the allocator's slack. The lists do not depend on
+  the sample rate, so choosing the preset makes them, and `prepare()` allocates as before.
+- *Judgement calls.*
+  - **Bits.** The default modulators run through the general evaluation and keep ticket
+    02's bits (fractions, and CC7 before velocity), shown by every golden value.
+  - **Normalization.** Linear and switch sources over their range (128, or the pitch
+    wheel's 16384), as ticket 02's velocity to cutoff and FluidSynth; unipolar concave and
+    convex over 0 to 127, as ticket 02's velocity to attenuation; bipolar curves by the
+    distance from the centre over half the range, as FluidSynth's, so a centred controller
+    gives exactly 0 but 127 gives 0.75 on the concave curve, where 0 gives -1. The curves
+    are capped at 1, which only a 14-bit source or a bipolar one can reach.
+  - **No controller** as a primary source is the constant 1, as the 2.04 text says;
+    FluidSynth drops such a modulator.
+  - **Held controllers:** the pitch wheel's sensitivity at 2 semitones, General MIDI's,
+    where the spec says "every other source 0". Only a file modulator with that source
+    sees it.
+  - **The defaults played:** CC7, velocity to attenuation and to cutoff, CC11, CC10, CC1
+    and channel pressure. The sends' (the node has none) and the pitch wheel's (its
+    destination is the pitch itself, and it adds nothing centred) are left out.
+  - **Identity.** Superseding, local over global and within a zone (the last kept), uses
+    the source, destination, amount source and transform. Replacing a default ignores the
+    amount source, as D2 rules, and only an instrument-level modulator replaces one; a
+    preset-level one adds, as 2.04's preset modulators add to instrument ones.
+  - **An illegal modulator replaces nothing.** D3 ignores it, so a switch-off whose amount
+    source is bank select leaves the default velocity-to-cutoff in place.
+  - **Destinations.** Every generator a voice reads, except `keynum` and `velocity`, which
+    the modulators read as their sources, and those that choose zones or name what they
+    play; these are ignored unlisted. A modulator to a send with a non-zero amount lists the
+    sends, though a negative one alone cannot make a send.
+  - **Ranges.** A modulated sum is clamped to its generator's range and rounded, half away
+    from zero, for whole-number generators. The cutoff is not clamped, as ticket 02 summed
+    the velocity modulator into it; the filter caps it.
+  - **Address offsets.** A note-on places a voice's points from its sample header and
+    offsets; a modulated loop outside the points played plays unlooped, unlisted.
+  - **Exclusive class.** A note's zone of a class ends its class even when its own voice
+    ends before its first frame. Tails, already fading, are not ended again. A modulated
+    class is rounded and kept within 0 to 127.
+  - **Per-voice derivation.** Each voice now derives about a dozen portable exponentials
+    and two sines at its note-on, which `prepare()` derived per zone before.
+- *Review.* Pending: the planning hub runs the two-axis `/code-review` with Codex once the
+  PR is open, as the user asked to save tokens. Before that instruction reached this
+  session, two Claude sub-agents had already reviewed the branch at `4daa276`; their cheap
+  findings were fixed (two long test lines, stale "taken voice" comments, `prepare()`'s
+  docs row, the bipolar curves' reach and these judgement calls recorded). Left for the
+  hub's review: the source enumerator decoded in both files, `Header` and `Points`
+  sharing four fields, `start()` beside `Voice::start`, and the tests' raw source numbers.
+
+**Open notes for the planning hub.**
+
+- *For ticket 07, against FluidSynth:* the bipolar curves' asymmetry is FluidSynth's;
+  FluidSynth drops a modulator with no controller as its primary source and scopes
+  exclusive class per channel with a -2000 timecent release, where the node keeps the
+  constant 1 and D8's whole-node 6 ms fade. FluidR3's census found no constant modulators.
+- *Note-on cost:* the per-voice derivation above, for ticket 07's timings.
+- *Unlisted ignores:* modulators to `keynum` or `velocity` are ignored unlisted. The
+  specification states no rule for them; listing them would be a new entry.

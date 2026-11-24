@@ -115,7 +115,7 @@ zones, such as a kit's hi-hats, of which one sounds at a time.
 | `bank()` / `program()` | The selected preset; zero while empty |
 | `setVoiceLimit(n)` / `voiceLimit()` | 1 to 65535, default 256; throws otherwise |
 | `ignored()` | What the loaded file uses that the node ignores or skips; empty while empty |
-| `prepare()` | Derives rate-dependent values and resets the pool |
+| `prepare()` | Resets the pool for the sample rate; each note-on derives its voices at that rate |
 
 A load reads the file into the node, which keeps it whole as its content. A failed
 load throws and keeps the previous content. A successful load selects the lowest
@@ -277,11 +277,14 @@ and derives the voice from the sums.
 - *Curves:* linear, concave, convex or switch, each unipolar (0 to 1) or bipolar
   (-1 to 1), rising or falling. Concave and convex are the specification's 96 dB
   curves: concave is `-20/96 log10((1 - x)^2)` and convex `1 + 20/96 log10(x^2)`,
-  each reaching 1 at the top. A linear or switch source is normalized by its range
-  (128 values, or the pitch wheel's 16384), as FluidSynth does, so a centred
-  controller is exactly half and the switch is on from 64. A unipolar concave or
-  convex curve runs over a 7-bit source's values 0 to 127, so 127 gives 1. A
-  bipolar one runs from the centre out each way.
+  each reaching 1 at its end and capped there. A linear or switch source is
+  normalized by its range (128 values, or the pitch wheel's 16384), as FluidSynth
+  does, so a centred controller is exactly half and the switch is on from 64. A
+  unipolar concave or convex curve runs over a 7-bit source's values 0 to 127, so
+  127 gives 1. A bipolar one runs from the centre out each way, by the distance
+  from the centre over half the range, as FluidSynth's does: a centred controller
+  gives exactly 0 and 0 gives -1, but 127 falls short of 1 (0.75 on the concave
+  curve).
 - *Output:* the amount times the source and the amount source, each on its curve,
   then the transform: linear, or 2, the absolute value.
 - *Levels:* a zone takes its global zone's modulators, each superseded by an
@@ -381,9 +384,10 @@ node one, such as the editor's, counts held notes per channel and key in
 `MidiBlockNode`.
 
 `process()` allocates nothing: `prepare()` allocates the voices, their tails, room
-for the most voices one note starts, each zone's list of modulators and the counts of
-held notes, 16 channels of 128 keys. Voices and tails render in slot order between
-events, so the output is bit-identical at every block size.
+for the most voices one note starts and the counts of held notes, 16 channels of 128
+keys. Each zone's list of modulators is made when the preset is chosen. Voices and
+tails render in slot order between events, so the output is bit-identical at every
+block size.
 
 **Portable maths.** The node computes its output without the platform's maths
 library. Maths libraries disagree on `exp2`, `pow`, `log10`, `sin` and `cos` in the

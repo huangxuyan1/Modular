@@ -2247,7 +2247,9 @@ double addedCentibels(const std::function<void(File&)>& edit, int key, int veloc
 // The same for modulators in the instrument zone.
 double addedCentibels(const std::vector<Modulator>& modulators, int key, int velocity,
                       std::vector<Timed> before = {}) {
-  const auto edit = [&](File& file) { file.instruments[0].zones[0].modulators = modulators; };
+  const auto edit = [&](File& file) {
+    file.instruments[0].zones[0].modulators = modulators;
+  };
   return addedCentibels(edit, key, velocity, std::move(before));
 }
 
@@ -2494,7 +2496,8 @@ TEST_CASE("preset-level modulators add to instrument-level ones and a zone's own
       if (!instrumentGlobal.empty())
         instrumentZones.insert(instrumentZones.begin(), Zone{{}, instrumentGlobal});
       presetZones[0].modulators = preset;
-      if (!presetGlobal.empty()) presetZones.insert(presetZones.begin(), Zone{{}, presetGlobal});
+      if (!presetGlobal.empty())
+        presetZones.insert(presetZones.begin(), Zone{{}, presetGlobal});
     };
   };
   const auto atten = [](int amount, std::uint16_t amountSource = 0) {
