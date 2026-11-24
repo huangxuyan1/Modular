@@ -5,7 +5,9 @@
 #include <cstddef>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "StereoSinkNode.h"
 #include "modular/Engine.h"
@@ -21,6 +23,9 @@ using nodes::TriggerAtNode;
 
 // The render core's own choice: no node's output depends on the block size.
 constexpr std::uint32_t kBlockFrames = 512;
+// The longest file a render accepts. A longer one is refused before anything is
+// sized for it: ten minutes of stereo floats at 48 kHz already take 230 MB.
+constexpr int kLongestFileMinutes = 10;
 // The release tail renders for at most this long past the file's end.
 constexpr double kTailSeconds = 2;
 // The tail is kept through its last frame at or above -80 dBFS. A float
@@ -37,14 +42,30 @@ std::size_t trimmedLength(const Channels& channels, std::size_t fileFrames) {
   return fileFrames;
 }
 
+// The most frames a channel can hold. On wasm32 a vector of floats holds fewer
+// than size_t counts, so a larger rendering would fail as a bare length error.
+std::size_t mostFrames() {
+  return std::min(std::numeric_limits<std::size_t>::max(), std::vector<float>().max_size());
+}
+
+// Refuses a file longer than the limit, or one whose rendering could not be
+// counted at this rate, from its duration alone: before any node prepares at
+// the rate and before anything is sized for the rendering.
+void checkLength(double fileSeconds, double sampleRate) {
+  if (fileSeconds > 60.0 * kLongestFileMinutes)
+    throw std::invalid_argument("render: file is longer than " +
+                                std::to_string(kLongestFileMinutes) + " minutes");
+  if ((fileSeconds + kTailSeconds) * sampleRate >= static_cast<double>(mostFrames()))
+    throw std::invalid_argument("render: too many frames");
+}
+
 // The file's frames plus the whole frames of the tail: the sink's size. Counted
 // in size_t, which is 32 bits on wasm32, so a sum that does not fit throws
 // rather than wrapping.
 std::size_t renderedFrames(std::uint64_t fileFrames, double sampleRate) {
-  constexpr auto kMostFrames = std::numeric_limits<std::size_t>::max();
+  const auto most = mostFrames();
   const double tail = std::floor(kTailSeconds * sampleRate);
-  if (tail >= static_cast<double>(kMostFrames) ||
-      fileFrames > kMostFrames - static_cast<std::size_t>(tail))
+  if (tail >= static_cast<double>(most) || fileFrames > most - static_cast<std::size_t>(tail))
     throw std::invalid_argument("render: too many frames");
   return static_cast<std::size_t>(fileFrames) + static_cast<std::size_t>(tail);
 }
@@ -74,6 +95,7 @@ Rendering Instrument::render(std::span<const std::uint8_t> midiFile, double samp
   auto& midi = static_cast<MidiFileNode&>(graph_.node(midi_));
   auto& sink = static_cast<StereoSinkNode&>(graph_.node(sink_));
   midi.import(midiFile);
+  checkLength(midi.file().durationSeconds(), sampleRate);
 
   std::size_t fileFrames = 0;
   {
@@ -88,6 +110,10 @@ Rendering Instrument::render(std::span<const std::uint8_t> midiFile, double samp
     while (engine.streamTime() < frames)
       engine.process(static_cast<std::uint32_t>(
           std::min<std::uint64_t>(kBlockFrames, frames - engine.streamTime())));
+    // A node reports a failure while processing rather than throwing, so the
+    // render asks once every frame is rendered.
+    if (auto error = engine.errorMessage(); !error.empty())
+      throw std::invalid_argument(error);
   }
 
   // The rendering takes the sink's channels rather than copying them, so a
