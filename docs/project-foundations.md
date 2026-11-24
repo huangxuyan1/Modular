@@ -128,10 +128,10 @@ RESTRICT; do not treat the older index-based fragility as an open constraint.
   `#pragma once`; kernel implementation belongs in `kernel/src/`. Use fixed-width
   integers for contractual frames, ports and ids, `std::size_t` for indices,
   floats for samples and doubles for phase/time math.
-- Floating-point results are the same bits in every build. The root `CMakeLists.txt`
-  passes `-ffp-contract=off` to GCC and Clang, Emscripten's included; MSVC keeps its
-  default `/fp:precise`. Never fast maths (`-ffast-math`, `/fp:fast`), relaxed SIMD
-  or flush-to-zero. Never `long double`, whose width differs between builds.
+- Floating-point flags: the root `CMakeLists.txt` passes `-ffp-contract=off` to GCC and
+  Clang, Emscripten's and clang-cl included, and MSVC keeps its default `/fp:precise`, so
+  no build fuses operations and arithmetic gives the same bits in every build. Never fast
+  maths (`-ffast-math`, `/fp:fast`), relaxed SIMD or flush-to-zero.
 - Kernel code never names or interprets a media concept. Subtype ids are opaque
   `uint32` values; connection checking compares them for equality. Typed payload
   access uses `memcpy` and requires trivially copyable types, never aliasing casts.

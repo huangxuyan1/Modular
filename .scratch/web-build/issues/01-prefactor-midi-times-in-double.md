@@ -73,12 +73,13 @@ freshly fetched `origin/main` at `4db75a1`.
   - The `modular.midi-file/1` codec writes `double`'s `max_digits10` (17) and reads `double`
     with `std::from_chars`. No `long double` remains in `nodes/`, `apps/`, `kernel/` or
     `workspace/` code.
-  - The root `CMakeLists.txt` adds `-ffp-contract=off` when the compiler is GCC or Clang and
-    not MSVC-compatible, so clang-cl takes MSVC's side. Nothing is added for MSVC.
+  - The root `CMakeLists.txt` adds `-ffp-contract=off` for GCC and Clang. clang-cl, which
+    defaults to contracting, gets the same option as `/clang:-ffp-contract=off`. Nothing is
+    added for MSVC.
   - Docs:
     - `docs/graph-persistence.md`: the 17 digits, why older graphs keep their bytes, and the
       new coverage;
-    - `docs/project-foundations.md`: a convention for the flags and against `long double`.
+    - `docs/project-foundations.md`: the floating-point flags, as a convention.
   - Nothing under `kernel/` or `workspace/` changed.
 - *Tests.* One doctest case in each of two existing suites.
   - `midi_file_tests`, "file times are summed and rounded in double so a half-frame tie lands
@@ -86,8 +87,8 @@ freshly fetched `origin/main` at `4db75a1`.
     PPQ, a note every 40 ticks through tick 15,000. At 48 kHz, with a trigger at frame 101,
     the note at tick 15,000 lands on frame 101 + 1,000,001.
   - `authoring_tests`, "stored MIDI file times keep the digits that recover each double as
-    earlier saves wrote them". Notes at ticks 40 and 15,000 at the same tempo give times
-    that need all 17 digits. The graph's saved text is pinned to what the earlier writer
+    earlier saves wrote them". A note from tick 40 to tick 15,000 at the same tempo gives
+    times that need all 17 digits. The graph's saved text is pinned to what the earlier writer
     saved under MSVC. That text was captured from this test against the unchanged code. It
     opens to the same doubles bit for bit and saves the same bytes.
 - *Red, then green.* Natively, both cases pass before and after the type change, as
@@ -129,6 +130,11 @@ freshly fetched `origin/main` at `4db75a1`.
   - `compile_commands.json`: all 19 compile commands carry `-ffp-contract=off`. None
     carries `-ffast-math`, `-mrelaxed-simd`, `-funsafe-math` or another `-ffp-contract`.
     CMake reports the compiler as Clang 24.0.0. The MSVC projects carry no such flag.
+- *clang-cl.* None is installed here, so emsdk's `clang.exe` stood in for it, under that
+  name, from a VS 2022 x64 developer environment. Its driver puts `-ffp-contract=on` on
+  the cc1 line by default and `-ffp-contract=off` with `/clang:-ffp-contract=off`. Configured
+  with Ninja, CMake reports "Clang 24.0.0 with MSVC-like command-line". All 24 compile
+  commands carry `/clang:-ffp-contract=off`, and the kernel and MIDI libraries compile.
 - *MSVC byte identity.* A throwaway harness outside the repository was built with MSVC,
   Release, against `origin/main` and against this branch. Each build saved four graphs:
   - the committed fixture `tests/fixtures/graph-version-1.modular`, opened and saved again;
@@ -147,3 +153,32 @@ freshly fetched `origin/main` at `4db75a1`.
     tests and kernel purity included. Doctest cases: kernel 44, node 17, authoring 29,
     MIDI-file 16, soundfont 45.
   - `python scripts/check_docs.py`: 0 problems. `git diff --check`: clean.
+- *Review.* `/code-review` ran on both axes over `git diff origin/main...HEAD` at
+  `8969454`, with a clean working tree. The fixes above are re-checked on the final tree.
+  - Both axes: the review record was missing from this ticket. It is this entry.
+  - Both axes: `NOT MSVC` left clang-cl, which contracts by default, without the option.
+    Fixed with `/clang:-ffp-contract=off`, checked as recorded above.
+  - Spec: the docs claimed that floating-point results are the same bits in every build.
+    That is not true while library maths still differs (map ticket 08, D2). The convention
+    and the CMake comment now say that no build fuses operations, so arithmetic gives the
+    same bits.
+  - Spec: `docs/project-foundations.md` added an undecided repo-wide rule against
+    `long double`. Removed. The reason stays in `MidiFile.h`'s comment.
+  - Standards: the new authoring case wrote out the same container text as the malformed-MIDI
+    case's `encoded` lambda. Both now call one helper, `midiNodeGraph`. The case's `times`
+    became `reopenedFile`, and its comment now says "a note from tick 40 to tick 15,000".
+  - Kept, Standards: in `MidiFile::parse`, `static_cast<double>(ticks) * tempo /
+    (static_cast<double>(division) * 1000000)` appears twice. A shared lambda would give the
+    same bits, but the diff stays the probe's patch line for line. That patch is the code
+    whose 107 million events map ticket 08 checked.
+  - Kept, Standards: the repeated prose. The reason for `double` is in `MidiFile.h`'s
+    comment, and each test's comment says only what that case pins. The flag rule's
+    comment in `CMakeLists.txt` now points to the convention.
+  - Kept, Spec: no in-repo test resaves `tests/fixtures/graph-version-1.modular` byte for
+    byte. Its README promises that every later container version opens it, not that Save
+    reproduces it, so such a test would tie the writer to version 1. The fixture also holds
+    no MIDI-file node. The new authoring case is the in-repo guard for the changed codec,
+    and the harness above checked the fixture.
+  - Noted, not a defect: neither new case can fail natively, since MSVC computes the same
+    bits before and after. Their red shows only under Emscripten, which CI runs from
+    ticket 05.
