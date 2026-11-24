@@ -28,7 +28,9 @@ Report:
 - whether the browser's render equals the native `midi_cli` render of the same file, sample
   for sample, and if not, by how much it differs (feeds
   [How is a browser render checked against a native one?](08-browser-render-checked-against-native.md));
-- whether `<filesystem>` or other unused library code ends up in the module.
+- whether `<filesystem>` or other unused library code ends up in the module;
+- which browsers it ran in. midishare names no target browsers and has tested sound in
+  Chromium only; the exception mode decides the oldest browser that can load the module.
 
 Outcome: turns "the first WebAssembly build of a C++20 project usually needs fixes" from a risk
 into a list, and gives the build-location and surface tickets their numbers.

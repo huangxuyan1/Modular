@@ -1,9 +1,9 @@
 # Charting facts
 
 What charting found on 2026-11-24, read-only, so ticket sessions need not repeat the
-inspection. Modular facts are at `origin/main` fdb1206. midishare facts come from reading the
-midishare repository's working tree; the midishare session's facts-only brief replaces them
-where the two differ. Recheck a fact before a decision rests on it.
+inspection. Modular facts are at `origin/main` fdb1206. midishare facts come from the
+midishare session's facts-only brief, checked against charting's own reading. Recheck a fact
+before a decision rests on it.
 
 ## Modular in a web page
 
@@ -59,33 +59,89 @@ development machine on 2026-11-23.
 
 ## midishare today
 
-**Its sound is abcjs's built-in synth** (abcjs 6.7.2). One playback hook serves the editor and
-the clip page. On Play it:
+From the midishare session's facts-only brief, read from the midishare repository at its
+commit 91721ab on 2026-11-24. Charting's own read-only pass agreed with it on every point it
+covered; the brief added the detail below. midishare's source is public on GitHub, so its
+files are named here by their path inside that repository.
 
-1. parses the ABC;
-2. creates the synth, whose `init` downloads one recorded piano note per pitch from a public
-   soundfont host (FluidR3_GM, hosted on GitHub Pages) at play time;
-3. `prime` renders the whole clip into one buffer;
-4. `seek` and `start` play that buffer from the playhead.
+**One library makes every sound:** abcjs 6.7.2, pinned exactly, through its built-in synth
+`abcjs.synth.CreateSynth`. abcjs is also the ABC parser, the sheet-music renderer and the MIDI
+writer; those are separate from the synth. The site has no other audio code than two wrappers:
 
-Editing the music stops playback, and the next Play rebuilds the buffer. The playhead is
-computed from the clock and the tune's milliseconds per bar, not read from the audio, and the
-end of the music is detected from the buffer's duration.
+- `src/lib/use-playback.ts`, the transport hook and the only place a clip is played. The editor
+  and the clip page both call it, and pass its values to the transport and the piano roll,
+  which never touch audio themselves.
+- `src/lib/note-preview.ts`, the one-note preview.
 
-**Note preview.** Pressing a note in the piano roll, or dragging it across pitches, renders a
-one-note clip (an eighth note at 120 BPM) with the same synth. Only one preview sounds at a
-time. It does not sound while the clip is playing.
+`src/lib/abc.ts` makes Download .mid with abcjs's `getMidiFile` in binary form, and makes no
+sound. `src/lib/abc-notes.ts` gets the piano roll's notes from abcjs's flattened note events
+(`setUpAudio`), so the roll shows what abcjs plays, chord symbols such as "Dm" expanded into
+real notes. Card rolls and the landing demo are silent.
 
-**Download .mid** comes from abcjs's `getMidiFile` in binary form.
+**The transport's interface.** `usePlayback(abc, barSteps)` returns `status` (stopped, loading
+or playing), `position` (the playhead in fractional 16th-note steps, updated every animation
+frame while playing), and `play`, `stop`, `reset`, `seek` and `endSeek`.
 
-**Hosting.** A Cloudflare Worker serves the built site as static assets; deploy runs
-`vite build`, which cannot run `emcc`, so a built module would have to arrive prebuilt. The
-site's headers set a Content-Security-Policy with no `script-src` directive and send no
-cross-origin isolation headers, so `SharedArrayBuffer` is unavailable.
+**What playback does.**
 
-**Size of a clip.** ABC is capped at 5000 characters; the AI assistant writes at most 16 bars.
+- **Build once per ABC text.** The synth's `init` fetches the samples the clip needs, then
+  `prime` mixes the whole clip into one stereo `AudioBuffer` at the `AudioContext`'s sample
+  rate. A replay or a seek reuses the buffer; a changed ABC text rebuilds it. Status is
+  "loading" during the build, and seeks are ignored then.
+- **Play from a position** converts steps to seconds, seeks the buffer and starts it. A playhead
+  at or past the end starts from 0.
+- **Seek while playing** goes silent on the first drag move and plays from the drop.
+- **End of clip** is found by the hook, comparing `performance.now()` against the buffer's
+  length, which includes abcjs's default 200 ms fade tail. There is no loop.
+- **The playhead clock** is `performance.now()`, not the audio clock, at one constant tempo
+  for the whole clip.
+- Editing the ABC, or leaving the page, stops playback.
 
-**The site's own record.** Its README lists the abcjs synth and its third-party sample download
-under known limits and says a change of audio engine is planned. A set-aside plan for this
-change, written 2026-11-23, proposes rendering offline in WebAssembly and playing the buffer
-with Web Audio, with a soundfont supernode in Modular as the instrument.
+**Note preview.** Pressing a note, and each pitch change while dragging one, renders a
+one-note clip (an eighth note at 120 BPM, 0.25 s) with a new synth and plays it. The latest
+request wins: a new one stops the sounding one and cancels one still loading. Failures are
+silent. No preview sounds while the clip is playing.
+
+**Not done anywhere:** recording, microphone or MIDI-device input, effects, volume, loop,
+metronome, tempo change during playback, audio-file export, instrument choice, velocity (the
+site's notes carry pitch, start and length; loudness is what abcjs assigns), sound on cards or
+the landing page, and any real-time synthesis: every sound is a pre-rendered buffer.
+
+**Where it runs.** On the main thread, through one shared `AudioContext` that abcjs creates on
+the first Play or note press and never closes. `prime` renders with an `OfflineAudioContext`
+per unique note, and playback is an `AudioBufferSourceNode` connected straight to the output.
+The repository has no AudioWorklet, WebAssembly, Web Worker or server-side audio.
+
+**Samples.** One MP3 per pitch of FluidR3_GM's acoustic grand piano, from abcjs's default host
+on GitHub Pages (the `midi-js-soundfonts` project). The site sets no sound-font URL and no
+program. A clip's first Play fetches the pitches it uses; a pitch's first preview fetches that
+pitch; abcjs caches decoded samples for the life of the page.
+
+**Stack and hosting.** TypeScript, React 19 and Vite 8, built by `vite build`, served by a
+Cloudflare Worker whose asset layer serves the built files. `deepspace deploy` runs
+`vite build`, which cannot run `emcc`, so a module would have to arrive prebuilt. The live
+site's Content-Security-Policy sets only `object-src`, `base-uri` and `frame-ancestors`, with
+no `script-src` or `connect-src`, and it sends no cross-origin isolation headers, so
+`SharedArrayBuffer` is unavailable.
+
+**Browsers and performance.** The repository names no target browsers or devices. Sound has
+been tested in Chromium only; there is no record of a phone, Safari or Firefox. No latency or
+performance requirement is written down. The first Play after an edit waits for the sample
+downloads and the full render; later plays start at once. ABC is capped at 5000 characters
+and the roll covers MIDI notes 36 to 95 (C2 to B6).
+
+**What else names the current sound** and would change with it: two end-to-end tests detect
+"a note sounded" by watching for the sample-file requests, and the centred-playhead test plays
+a clip with the network samples (`tests/collab.spec.ts`); the landing page credits abcjs for
+the sound; the README and submission docs describe the abcjs synth.
+
+**Audio work in progress:** none. Another midishare session is shipping non-audio features
+until the submission deadline.
+
+**The candidate route on file.** `docs/MODULAR_AUDIO_ENGINE.md` in the midishare repository,
+written by an agent on 2026-11-23 and never approved by the user, proposes rendering offline:
+abcjs MIDI bytes into a Modular WebAssembly function, a `Float32Array` back, played as an
+`AudioBuffer`; seek and stop stay in Web Audio; the built module is committed in midishare; a
+sine voice first, then a soundfont supernode; the abcjs synth kept until the new path is
+verified live. It is one candidate route, not a decision. It predates the note preview and
+playhead dragging.

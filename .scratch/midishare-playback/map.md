@@ -19,6 +19,8 @@ The built change will count as done when, on the live site:
 - Play, Stop, Reset, seek and note preview behave as they do today, and every sample heard is
   computed by Modular, with no abcjs synth call and no sample download from a third-party host;
 - what you hear is what Download .mid contains, because the same MIDI bytes feed both;
+- it does so in the browsers the user names for it (asked in round 1; the site names none
+  today, and its sound has been tested in Chromium only);
 - the purity grep still returns nothing, and no media word entered `kernel/` or `workspace/`.
 
 ## Notes
@@ -40,9 +42,10 @@ Modular is missing, not to specify Modular. Say "Modular", never "the engine", f
   paths.
 
 **Sources of fact.** [Charting facts](facts.md) records what charting found in both
-repositories. The midishare repository also holds a set-aside plan for this change, written on
-2026-11-23 against an older Modular commit; facts from it are rechecked before use. A
-facts-only brief from the midishare session is pending, and wins where it differs.
+repositories, with midishare's side taken from the midishare session's facts-only brief. The
+midishare repository also holds a plan for this change, written by an agent on 2026-11-23
+against an older Modular commit and never approved by the user: one candidate route, not a
+decision.
 
 **Related roadmap tickets** (on `.scratch/roadmap/`):
 [How is the command/edit API cut?](../roadmap/issues/07-command-api-cut.md),

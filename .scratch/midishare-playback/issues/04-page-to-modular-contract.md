@@ -10,10 +10,12 @@ short note), and it must not quietly decide roadmap questions that are still ope
 
 - **What goes in.** abcjs already makes Standard MIDI File bytes for Download .mid, and
   `MidiFile::parse` reads bytes from memory. Feeding Modular those bytes makes "what you hear is
-  what you download" true by construction. The alternative is a note list built from abcjs's
-  audio data, which the piano roll already uses. Check whether abcjs's MIDI file carries
-  everything its synth plays (chord symbols played as accompaniment, `%%MIDI program`, grace
-  notes, swing), because whatever it omits goes silent.
+  what you download" true by construction. The alternative is abcjs's flattened note events
+  (`setUpAudio`), which the piano roll already draws, chord symbols expanded; feeding those
+  makes "what you hear is what you see" true instead. Check whether the two agree: whether the
+  MIDI file carries everything the roll shows and the synth plays (chord symbols, grace notes,
+  swing, `%%MIDI program`, the velocities abcjs assigns), because whatever it omits goes
+  silent. The site's own notes carry no velocity.
 - **What the page names: a function, a graph or commands.**
   1. One fixed function, for example `render(midiBytes, sampleRate)`. Smallest, but the graph
      (instrument, voice count, level) is compiled in, so every sound change is a rebuild.
@@ -27,9 +29,11 @@ short note), and it must not quietly decide roadmap questions that are still ope
      still open; choosing it here would decide 07 by the back door. Every unwired `value` input
      would also read zero, which is roadmap ticket 13's.
 - **What comes out.** Samples at the `AudioContext`'s rate (one global rate, roadmap ticket 04),
-  one channel or two, as a `Float32Array` per channel. How the page learns the clip's length,
-  including the release after the last note: a fixed tail, or render until the output falls
-  silent, which is the "tail length" idea the roadmap ranks for plugins.
+  one channel or two (abcjs's buffer is stereo today), as a `Float32Array` per channel. How the
+  page learns the clip's length, including the release after the last note: a fixed tail (abcjs
+  adds a 200 ms fade), or render until the output falls silent, which is the "tail length" idea
+  the roadmap ranks for plugins. The site's end-of-clip check reads the buffer's length, so the
+  tail is part of the contract.
 - **Errors.** Authoring and compile errors throw in Modular. Does one reach JavaScript as an
   exception with Modular's message, or as a result value?
 
