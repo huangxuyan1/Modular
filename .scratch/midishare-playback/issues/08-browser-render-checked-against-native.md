@@ -28,7 +28,9 @@ Decide, using the probe's measured difference:
 A ticket session investigated and recommended; nothing here is decided. The planning hub
 decides each call under the judgment the user delegated for this map, except where a call is
 marked **[user approval needed]**. Calls marked **[Modular]** are this repository's to decide.
-Modular facts are at `origin/main` 0d0db07. The numbers come from a throwaway probe,
+Modular facts are at `origin/main` 0d0db07; the [soundfont node spec](../../soundfont-node/spec.md),
+merged while this ran (28c95d6), and ticket 03's open planning PR are taken into account where
+they bear on a call. The numbers come from a throwaway probe,
 [`prototypes/08-libm-and-timing/`](../prototypes/08-libm-and-timing/results.md), which also
 says how to rerun it: MSVC 19.43 with CMake's Release flags against Emscripten 6.0.13 in its
 Node 24.19.0, on the development machine. No recommendation needs a change under `kernel/` or
@@ -132,8 +134,9 @@ own integer inputs:
     (ticket 06, D1) moves by a frame: that sample is up to −96 dBFS for a full-scale zone with
     no attenuation (about −110 dBFS on the default piano, with its 140 cB). It still catches a
     wrong rate, a missing note (velocity 40 and the default piano's attenuation take a note only
-    about 34 dB below its sample), a block seam, and a note one frame late (a one-frame shift changes a note's samples by about
-    2πf/rate of its level: 25 dB down at 440 Hz, 49 dB down at 27.5 Hz). It misses anything
+    about 34 dB below its sample), a block seam, and a note one frame late (a one-frame shift
+    changes a note's samples by about 2πf/rate of its level: 25 dB down at 440 Hz, 49 dB down
+    at 27.5 Hz). It misses anything
     below −90 dBFS: a wrong release tail under that level, or quiet noise from uninitialised
     memory. It cannot use a hash as its reference (J5). And a voice that ends a frame later
     while the pool is full can turn a free voice into a taken note (ticket 06, D3), an audible
@@ -169,6 +172,15 @@ own integer inputs:
 - *Tables are a speed choice, not a portability one.* A table filled at `prepare()` from
   `std::exp2` inherits MSVC's 38% of differing values. Filled from the portable routines, or
   written as literals, it is the same everywhere.
+- *Against the soundfont node spec.* Its Further Notes say ticket 08's answer may require "a
+  portable maths routine, and that change would be its own ticket". Its testing decisions
+  already fit: "A change to the voice's maths that keeps the output within tolerance must not
+  break a test", and the tolerances (±1 cent, one frame, 0.1 dB, 1 dB) are far wider than 1 or
+  2 ulp. So the rule needs one new ticket on that spec, not a rewrite of it. Its ticket 01
+  (pitch, interpolation, pan, the volume envelope) is the first to write these conversions,
+  and a session already holds its branch. The new ticket is cheapest placed after 01 and
+  before 02, which adds the filter, the modulation envelope and velocity; or 01's session can
+  take the rule from the start, if the hub tells it in time.
 - *Where.* A small header in `nodes/`, under a name the spec chooses. Its tests pin a few
   outputs' bit patterns natively, so a compiler change that alters them fails on Windows too,
   and check accuracy within 2 ulp of `std::` over a sweep. Optionally, a source check like
@@ -192,14 +204,19 @@ planning hub decision 2
   frames equal native, lets persistence compile, and saves 7.3 KB (ticket 02). (b) would round
   every tie correctly, but it moves 47,925 of the 21.5 million probe events by a frame on
   Windows today and changes how stored times are kept. It can come later on its own merits.
+- *Against ticket 03's proposal.* Its open planning PR names persistence's `long double`
+  (`std::from_chars`) as a pre-existing defect with its own fix ticket, and keeps persistence
+  out of the web build until then. (a) is that fix, widened to the timing code that produces
+  the stored value: one ticket, four files, not two tickets.
 
 **J4. Compiler flags that keep the bits the same.** [Modular]
 
 - MSVC keeps its default `/fp:precise`; the build never adds `/fp:fast` or `/fp:contract`.
 - **The root `CMakeLists.txt` adds `-ffp-contract=off` for GCC and Clang.** It changes nothing
   on WebAssembly or on x86-64 without FMA. It makes a native build on ARM64, such as an
-  Apple-silicon Mac (`docs/windows.md` mentions a Mac build), compute the same bits. It applies to every target, so it
-  is a root build-file change, though not a `kernel/` source change.
+  Apple-silicon Mac (`docs/windows.md` mentions a Mac build), compute the same bits. It
+  applies to every target, so it is a root build-file change, though not a `kernel/` source
+  change.
 - The web build never uses `-ffast-math` or `-mrelaxed-simd`, and the offline render never sets
   flush-to-zero. Emscripten's `-sJS_MATH` would put each browser's own maths library in the
   module's place; once J2 holds it would change nothing, and it is not wanted.
@@ -225,12 +242,13 @@ planning hub decision 2
 
 **J6. Which clips.** [Modular]
 
-- *The soundfont.* The test writes its own, in memory, from integer arithmetic: a few kilobytes
-  of synthetic 16-bit samples. No soundfont file enters `tests/`, and the licensed piano never
-  does. It sets every group of generators ticket 09's D1 honours: samples at two rates (neither
-  the render rate), a root key away from the played notes, fine and scale tuning, loop modes 0,
-  1 and 3, both envelopes with key scaling, both LFOs to pitch, filter and volume, a filter with
-  Q, pan at 0 and ±500, two velocity layers and an exclusive class.
+- *The soundfont.* The test writes its own, in memory, with the soundfont node spec's shared
+  test-side builder: a few kilobytes of synthetic 16-bit samples. No soundfont file enters
+  `tests/`, and the licensed piano never does. It sets every group of generators ticket 09's
+  D1 honours: samples at two rates (neither the render rate), a root key away from the played
+  notes, fine and scale tuning, loop modes 0, 1 and 3, both envelopes with key scaling, both
+  LFOs to pitch, filter and volume, a filter with Q, pan at 0 and ±500, two velocity layers and
+  an exclusive class. Each feature joins it as the node's ticket that adds it lands.
 - *The clips:*
   1. overlapping chords whose releases end at the 96 dB floor, through every path above;
   2. timing: an event every 40 ticks at `Q:1/4=90` through tick 15,000 at 48 kHz, which splits
@@ -248,8 +266,8 @@ planning hub decision 2
 [user approval needed] only as far as ticket 03's decision needs it
 
 - *If the web is a supported platform with a CI job:* the check runs in that job, and `CI gate`
-  waits for it, as it does for the Windows jobs. Estimated, not measured on a runner: an
-  `ubuntu-latest` job takes 1.5 to 2.5 minutes (Emscripten install about 35 s to a minute,
+  waits for it, as it does for the Windows jobs. Estimated, not measured on a runner: a Linux
+  job takes 1.5 to 2.5 minutes (Emscripten install about 35 s to a minute,
   cacheable; configure 2 s; build under a minute on a hosted runner; tests a few seconds). It
   runs beside the Windows jobs, so the gate waits about 0 to 1 minute longer, for about
   2 runner-minutes more per code-path run. Documentation-only PRs skip it, as they skip the
@@ -262,7 +280,11 @@ planning hub decision 2
   workflow could run it on demand. *Recommendation:* the script's check is mandatory, with no
   scheduled job.
 - Either way it is the same test, so a recipe can become a CI job later by adding the job.
-- *Facts for ticket 03.* A supported build has to fix what the CTest run above found:
+- *Where ticket 03 stands.* Its open planning PR proposes the first: a `web` job under
+  `CI gate` on every PR that takes the build path, on a pinned `ubuntu-24.04` with emsdk
+  6.0.13, with no cache at first. If it merges, the check is a test in that job, the gate
+  needs no further change, and the uncached install is the job's largest cost.
+- *Facts for ticket 03.* A supported build has to deal with what the CTest run above found:
   persistence's `long double` (J3), the two file-system cases in `node_tests`, and
   `midi_cli_smoke` calling the `.js` directly.
 
@@ -286,8 +308,8 @@ are the user's
 
 - **`kernel/`, `workspace/`:** nothing.
 - **`nodes/`:** `long double` to `double` in `MidiFile.h`, `MidiFile.cpp`, `MidiFileNode.h` and
-  `PrimitivePersistence.cpp` (J3); a portable maths header, and J2's rule in the soundfont
-  node's spec.
+  `PrimitivePersistence.cpp` (J3); a portable maths header, used by the soundfont node under
+  J2's rule, through a new ticket on its spec.
 - **Root `CMakeLists.txt`:** `-ffp-contract=off` for GCC and Clang (J4), and the web build's
   configuration, which is ticket 03's.
 - **`tests/`:** the golden render test and its in-memory soundfont writer, shared with the
@@ -297,9 +319,14 @@ are the user's
 
 #### For the planning hub
 
-1. J3 reverses ticket 02's decision 2 ("not taken now"), on the new evidence of split ties.
-2. J7 waits on
-   [Where does the web build live, and how does a built module reach the site?](03-where-the-web-build-lives.md);
-   its facts above may help that ticket.
-3. If the hub takes J1 (a), the web-build and soundfont-node specs each carry their part: J2
-   and J6 in the soundfont node's, and J3 to J5 and J7 in the web build's.
+1. J3 reverses ticket 02's decision 2 ("not taken now"), on the new evidence of split ties, and
+   merges with the persistence fix ticket that ticket 03's proposal names.
+2. J7 follows
+   [Where does the web build live, and how does a built module reach the site?](03-where-the-web-build-lives.md),
+   whose open proposal makes the web a supported platform with a gated job.
+3. J2 is time-sensitive. The soundfont node's ticket 01 is the first code to convert cents,
+   timecents and pan, and its branch exists. Decided now, the rule costs a new ticket between
+   01 and 02, or nothing if 01's session takes it from the start.
+4. If the hub takes J1 (a), the two specs each carry their part: J2 and J6 in the soundfont
+   node's (J6's soundfont comes from its shared test-side builder), and J3 to J5 and J7 in
+   spec B, the web build's.
