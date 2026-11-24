@@ -1,7 +1,6 @@
 #include "modular/nodes/SoundFont.h"
 
 #include <algorithm>
-#include <cmath>
 #include <fstream>
 #include <initializer_list>
 #include <iterator>
@@ -137,21 +136,20 @@ constexpr auto kInstrumentOnly = [] {
   return only;
 }();
 
-// Generators that count whole things: points, a sample mode, a class or a key.
-constexpr auto kWhole = [] {
-  std::array<bool, SoundFont::kGeneratorCount> whole{};
-  for (const int g : {0, 1, 2, 3, 4, 12, 45, 46, 47, 50, 54, 57, 58}) whole[g] = true;
-  return whole;
-}();
-
-// The generators a modulator moves in a voice. The rest have no meaning as a
-// destination: unused and reserved ones, those that choose zones or name what
-// they play, and keynum and velocity, which modulators read as their sources.
+// The generators a modulator moves in a voice. Unused and reserved generators,
+// zone and sample selectors, keynum and velocity aren't destinations here.
 // Effects sends are the node's to ignore, and a load lists them.
 constexpr auto kModulated = [] {
-  std::array<bool, SoundFont::kGeneratorCount> moved{};
-  for (int g = 0; g < SoundFont::kGeneratorCount; ++g) moved[g] = true;
+  using enum SoundFont::Generator;
+  std::array<bool, kGeneratorCount> moved{};
+  moved.fill(true);
   for (const int g : {14, 15, 16, 18, 19, 20, 41, 42, 43, 44, 46, 47, 49, 53, 55, 59, 60})
+    moved[g] = false;
+  // Sample Generators (§8.1.1) may not be modulator destinations at either level.
+  for (const auto g : {kStartAddrsOffset, kEndAddrsOffset, kStartloopAddrsOffset,
+                       kEndloopAddrsOffset, kStartAddrsCoarseOffset, kEndAddrsCoarseOffset,
+                       kStartloopAddrsCoarseOffset, kEndloopAddrsCoarseOffset, kSampleModes,
+                       kExclusiveClass, kOverridingRootKey})
     moved[g] = false;
   return moved;
 }();
@@ -199,17 +197,14 @@ bool legalSource(std::uint16_t source) {
 // The transforms the specification defines: linear (0) and absolute value (2).
 bool legalTransform(std::uint16_t transform) { return transform == 0 || transform == 2; }
 
-// Two modulators are identical when only their amounts differ.
-bool identical(const SoundFont::Modulator& a, const SoundFont::Modulator& b) {
-  return a.source == b.source && a.destination == b.destination &&
-         a.amountSource == b.amountSource && a.transform == b.transform;
-}
+enum class ModulatorScope { kWithinZone, kAcrossZones };
 
-// Adds a modulator to a list, in place of an identical one if it has one.
+// The last match wins. Only matching across zones considers the transform.
 void supersede(std::vector<SoundFont::Modulator>& list,
-               const SoundFont::Modulator& modulator) {
+               const SoundFont::Modulator& modulator, ModulatorScope scope) {
   const auto same = std::find_if(list.begin(), list.end(), [&](const auto& m) {
-    return identical(m, modulator);
+    return scope == ModulatorScope::kWithinZone ? m.sameZoneKey(modulator)
+                                               : m.identicalTo(modulator);
   });
   if (same != list.end()) *same = modulator;
   else list.push_back(modulator);
@@ -228,7 +223,8 @@ std::optional<std::int16_t> given(const auto& local, const auto& global, std::si
 std::vector<SoundFont::Modulator> modulators(const auto& local, const auto& global) {
   std::vector<SoundFont::Modulator> result;
   if (global) result = global->modulators;
-  for (const auto& modulator : local.modulators) supersede(result, modulator);
+  for (const auto& modulator : local.modulators)
+    supersede(result, modulator, ModulatorScope::kAcrossZones);
   return result;
 }
 
@@ -391,12 +387,9 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
   };
 
   // A zone's modulator, kept if a voice plays it. A link is listed, and so is
-  // a modulator to an effects send that has an amount. The rest that are not
-  // kept are illegal or move nothing in a voice, and are ignored unlisted: an
-  // illegal source, amount source or transform, a destination that is no
-  // generator a modulator moves, or, in a preset, one valid only in an
-  // instrument, as the preset's own generator would be.
-  const auto keep = [&listed](const Modulator& modulator, bool preset) {
+  // a modulator to an effects send that has an amount. An illegal source,
+  // amount source, transform or destination is ignored unlisted.
+  const auto keep = [&listed](const Modulator& modulator) {
     if (isLink(modulator)) {
       listed[kLinks] = true;
       return false;
@@ -409,15 +402,14 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
       if (modulator.amount != 0) listed[kSends] = true;
       return false;
     }
-    return destination < kGeneratorCount && kModulated[destination] &&
-           !(preset && kInstrumentOnly[destination]);
+    return destination < kGeneratorCount && kModulated[destination];
   };
 
   // Zones [first, last) of one preset or instrument. A first zone without a
   // terminal generator is the global zone; a later one is ignored. Generators
-  // after the terminal one are ignored; a repeated one keeps its last value,
-  // and of identical modulators the last is kept. A zone read lists its
-  // effects sends above 0 and what its modulators list.
+  // after the terminal one are ignored; a repeated one keeps its last value.
+  // A repeated modulator key also keeps its last record. A zone read lists
+  // its effects sends above 0 and what its modulators list.
   const auto readZones = [&listed, &keep](const Bags& bags, const Generators& generators,
                                           const std::vector<Modulator>& modulators,
                                           std::size_t first, std::size_t last,
@@ -443,8 +435,8 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
       for (const auto send : {kChorusEffectsSend, kReverbEffectsSend})
         if (zone.given[send] && zone.amounts[send] > 0) listed[kSends] = true;
       for (std::size_t m = bags.modulators[bag]; m < bags.modulators[bag + 1]; ++m)
-        if (keep(modulators[m], terminal == kInstrument))
-          supersede(zone.modulators, modulators[m]);
+        if (keep(modulators[m]))
+          supersede(zone.modulators, modulators[m], ModulatorScope::kWithinZone);
       if (terminated) zones.local.push_back(zone);
       else zones.global = zone;
     }
@@ -515,8 +507,7 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
   return result;
 }
 
-// The generators read here are whole numbers, as bounded() keeps a modulated
-// one, so their conversions are exact.
+// Sample Generators can't be modulated, so these conversions are exact.
 SoundFont::Points SoundFont::place(const Header& header, const Values& generators) {
   const auto value = [&](Generator g) {
     return static_cast<std::int64_t>(generators[g]);
@@ -551,7 +542,6 @@ SoundFont::Points SoundFont::place(const Header& header, const Values& generator
 }
 
 double SoundFont::bounded(std::size_t generator, double value) {
-  if (kWhole[generator]) value = static_cast<double>(std::llround(value));
   const auto& bounds = kGeneratorBounds[generator];
   return bounds.bounded ? std::clamp<double>(value, bounds.low, bounds.high) : value;
 }
@@ -595,19 +585,27 @@ std::vector<SoundFont::Zone> SoundFont::zones(PresetNumber number) const {
         }
         std::int32_t total = value ? *value : kGeneratorDefaults[g];
         if (offset && !kInstrumentOnly[g]) total += *offset;
-        const auto& bounds = kGeneratorBounds[g];
-        if (bounds.bounded) total = std::clamp(total, bounds.low, bounds.high);
         zone.generators[g] = total;
       }
       if (zone.keyLow > zone.keyHigh || zone.velocityLow > zone.velocityHigh) continue;
+      zone.instrumentModulators = modulators(instrumentZone, instrument.global);
+      zone.presetModulators = modulators(presetZone, preset->zones.global);
+      // A file destination keeps its raw generator sum until note-on. The
+      // other bases keep ticket 02's bounds before any defaults are applied.
+      std::array<bool, kGeneratorCount> fileDestinations{};
+      for (const auto& m : zone.instrumentModulators) fileDestinations[m.destination] = true;
+      for (const auto& m : zone.presetModulators) fileDestinations[m.destination] = true;
+      for (std::size_t g = 0; g < kGeneratorCount; ++g) {
+        const auto& bounds = kGeneratorBounds[g];
+        if (bounds.bounded && !fileDestinations[g])
+          zone.generators[g] = std::clamp(zone.generators[g], bounds.low, bounds.high);
+      }
       const auto& sample = samples_[instrumentZone.target];
       zone.header = sample.header;
       zone.sampleRate = sample.rate;
       zone.originalPitch = sample.originalPitch;
       zone.pitchCorrection = sample.correction;
-      zone.instrumentModulators = modulators(instrumentZone, instrument.global);
-      zone.presetModulators = modulators(presetZone, preset->zones.global);
-      result.push_back(zone);
+      result.push_back(std::move(zone));
     }
   }
   return result;

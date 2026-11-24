@@ -194,15 +194,20 @@ private:
     std::uint64_t noteOffs = 0; // its note-offs that found a held note
   };
 
+  struct Selection {
+    std::vector<PlayedZone> zones;
+    std::uint32_t voicesPerNote;
+  };
+
   void adopt(SoundFont soundFont);
-  void select(SoundFont::PresetNumber preset, std::vector<SoundFont::Zone> zones);
+  static Selection prepareSelection(std::vector<SoundFont::Zone> zones);
+  void select(SoundFont::PresetNumber preset, Selection&& selection) noexcept;
   void noteOn(std::uint8_t channel, std::uint8_t key, std::uint8_t velocity);
   void noteOff(std::uint8_t channel, std::uint8_t key);
   void start(Voice& voice, const PlayedZone& played, std::uint8_t key,
              std::uint8_t velocity) const;
   void scaleToKey(Voice& voice, const SoundFont::Values& generators, int key) const;
   std::size_t takeNote();
-  void endClass(std::uint8_t exclusiveClass);
   void fadeOut(Slot& slot) const;
   static void startRelease(Voice& voice);
   void render(Voice& voice, float* left, float* right, std::uint32_t from,

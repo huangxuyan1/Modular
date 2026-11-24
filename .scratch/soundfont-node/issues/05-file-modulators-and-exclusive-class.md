@@ -42,10 +42,8 @@ ends the open one with a short fade. See the [spec](../spec.md) (ticket 09, D2 a
 - [x] Output stays bit-identical across block sizes, including when a class choke and a pool
   take land on the same slot.
 - [x] `docs/node-io.md` records file modulators, the replacement rule and exclusive class.
-- [ ] Nothing changes under `kernel/` or `workspace/`. The full suite passes, and
-  `/code-review` runs on the branch's diff.
-  - Remaining: the review, which the planning hub runs with Codex on the open PR. Nothing
-    under `kernel/` or `workspace/` changed, and the full suite passes.
+- [x] Nothing changes under `kernel/` or `workspace/`. The full suite passes, and
+  `/code-review` runs on the branch's diff. The planning hub completed the review with Codex.
 
 ## Comments
 
@@ -192,13 +190,38 @@ cut from a freshly fetched `origin/main` at `bc33cf8`.
     class is rounded and kept within 0 to 127.
   - **Per-voice derivation.** Each voice now derives about a dozen portable exponentials
     and two sines at its note-on, which `prepare()` derived per zone before.
-- *Review.* Pending: the planning hub runs the two-axis `/code-review` with Codex once the
-  PR is open, as the user asked to save tokens. Before that instruction reached this
-  session, two Claude sub-agents had already reviewed the branch at `4daa276`; their cheap
-  findings were fixed (two long test lines, stale "taken voice" comments, `prepare()`'s
-  docs row, the bipolar curves' reach and these judgement calls recorded). Left for the
-  hub's review: the source enumerator decoded in both files, `Header` and `Points`
-  sharing four fields, `start()` beside `Voice::start`, and the tests' raw source numbers.
+- *Review.* The planning hub completed the two-axis review with Codex. Its findings and
+  fixes are recorded below.
+
+### Codex review (2026-11-24)
+
+The planning hub completed the review with Codex and accepted all seven findings
+and the web smoke-test change. The notes above describe the pre-review implementation.
+
+1. Prepare the selection before replacing the bank. Injecting a selection allocation
+   failure proves the old bytes, preset and render survive.
+2. Ignore modulators to Sample Generators unlisted at both levels. The tests cover
+   every such destination, including a class modulator that cannot cause or stop a choke.
+3. Sum identical instrument and preset modulator amounts before applying the transform.
+   The absolute-value test covers opposing signs and sums wider than the on-disk amount.
+4. Clamp file-modulated generators after adding their preset offsets and file modulators.
+   A pan test distinguishes this from clamping the generator sum first.
+5. Count only incoming voices that can play a frame when taking slots. A zero-frame
+   zone leaves an existing voice in a full pool sounding unchanged.
+6. Within a zone, the last record wins on source, destination and amount source;
+   across zones, identity also includes the transform. Tests distinguish both keys.
+7. Collect the incoming classes in a fixed bitset and end them in one pool pass.
+   The layered callback regression compares many same-class layers against no class.
+8. The web smoke checks zero held frames and exact linear memory after each repeat,
+   with an 8-byte bound on the whole run's allocator variation. A missing release, a
+   one-time retained allocation and a transient retained allocation each fail it.
+
+**Verification.** The Windows Debug red run failed 8 of 108 SoundFont cases.
+After the fixes, Windows Debug and Release each passed 12 of 12 CTest entries,
+including both desktop tests. The Emscripten build passed 9 of 9 CTest entries,
+including 108 of 108 SoundFont cases and 14 of 14 Node smoke cases. The program 2
+fixture now uses legal class generators on both sides, and its updated golden
+hashes match in Debug, Release and Node at all three rates.
 
 **Open notes for the planning hub.**
 

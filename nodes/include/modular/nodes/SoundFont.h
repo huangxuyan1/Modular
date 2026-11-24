@@ -88,9 +88,19 @@ public:
   struct Modulator {
     std::uint16_t source = 0;
     std::uint16_t destination = 0;
-    std::int16_t amount = 0;
+    std::int32_t amount = 0; // signed 16-bit in the file, widened for sums
     std::uint16_t amountSource = 0;
     std::uint16_t transform = 0;
+
+    // Within a zone, duplicate records match without regard to the transform.
+    bool sameZoneKey(const Modulator& other) const {
+      return source == other.source && destination == other.destination &&
+             amountSource == other.amountSource;
+    }
+    // Across zones and levels, identity also requires matching transforms.
+    bool identicalTo(const Modulator& other) const {
+      return sameZoneKey(other) && transform == other.transform;
+    }
   };
 
   // A sample header's points, indexes into the sample data: its first point,
@@ -112,9 +122,10 @@ public:
   // A zone's value for each generator.
   using Values = std::array<double, kGeneratorCount>;
 
-  // One instrument zone as a preset plays it. Generators hold the final values:
-  // instrument defaults, then its global and local zone, plus the preset's
-  // global and local offsets, clamped to the specification's ranges.
+  // One instrument zone as a preset plays it. Generators hold the effective
+  // instrument values plus the effective preset offsets. A file modulator's
+  // destination stays unclamped here so that its range applies to the sum at
+  // note-on; other generators keep their usual bounds here.
   struct Zone {
     std::uint8_t keyLow = 0, keyHigh = 127;
     std::uint8_t velocityLow = 0, velocityHigh = 127;
@@ -141,9 +152,7 @@ public:
   // would loop (sampleModes 1 or 3) says why.
   static Points place(const Header& header, const Values& generators);
 
-  // A value for a generator kept as the reader keeps a generator's: within
-  // the specification's range for it, and whole for one that counts whole
-  // things (points, a sample mode, a class or a key).
+  // A value clamped to the specification's range for its generator, if any.
   static double bounded(std::size_t generator, double value);
 
   // The lowest bank, then the lowest program in it.
@@ -169,7 +178,7 @@ private:
     std::array<std::int16_t, kGeneratorCount> amounts{};
     std::array<bool, kGeneratorCount> given{};
     std::uint16_t target = 0; // instrument or sample index
-    std::vector<Modulator> modulators; // its legal ones, the last of identical ones
+    std::vector<Modulator> modulators; // its legal ones, last of each same-zone key
   };
   // A preset's or instrument's zones, and its global zone if it has one.
   struct Zones {

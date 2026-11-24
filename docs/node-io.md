@@ -287,32 +287,30 @@ and derives the voice from the sums.
   curve).
 - *Output:* the amount times the source and the amount source, each on its curve,
   then the transform: linear, or 2, the absolute value.
-- *Levels:* a zone takes its global zone's modulators, each superseded by an
-  identical one of its own (the same source, destination, amount source and
-  transform); of identical modulators in one zone the last is kept. Preset-level
-  modulators add to instrument-level ones.
+- *Levels:* within one zone, the last modulator wins when the source, destination
+  and amount source match, even if the transform differs. Across zones, identity
+  also requires the same transform: a local zone's modulator supersedes an
+  identical global one. An identical preset modulator adds its amount to the
+  instrument modulator's before the transform; otherwise their outputs add.
 - *Default modulators* (below) run through the same evaluation. An instrument-level
   modulator replaces a default one when their source, destination and transform
   match, **whatever their amount sources**. So FluidR3's amount-0 modulators, note-on
   velocity to `initialFilterFc` with a velocity switch as their amount source, switch
   the velocity-to-cutoff default off. A preset-level modulator never replaces one.
-- *Ranges:* each sum is kept within its generator's range, as the reader keeps a
-  generator, and rounded to a whole number for a generator that counts whole things
-  (address offsets, `sampleModes`, `exclusiveClass` and `overridingRootKey`). The
-  cutoff is not clamped: its modulators sum with its envelope and LFO terms, and the
+- *Ranges:* a file modulator's destination is clamped after combining the
+  instrument value, preset offset and modulator outputs. The cutoff keeps its
+  existing policy: its modulators sum with its envelope and LFO terms, and the
   filter keeps the total below 0.45 of the graph's rate.
-- *Address offsets:* a note-on places the voice's points from its sample header and
-  its offsets, modulated or not. A modulated loop outside the points played plays
-  unlooped, unlisted, since the list is built at load.
 - *Ignored, unlisted:* a modulator the specification calls illegal: a source or
   amount source that is a MIDI controller it forbids (0, 6, 32 to 63, 98 to 101 and
   120 to 127), a general controller it does not list, or a curve type past switch;
   the link as an amount source; a transform other than 0 and 2. Also one that moves
   nothing in a voice: to an unused, reserved or unknown generator, to one that
   chooses zones or names what they play (`instrument`, `keyRange`, `velRange`,
-  `sampleID`), to `keynum` or `velocity`, which modulators read, and, at the preset
-  level, to one valid only in an instrument. A link is ignored and listed, and so is
-  a modulator with an amount to an effects send.
+  `sampleID`), or to `keynum` or `velocity`, which modulators read. Sample
+  Generators (the eight address offsets, `sampleModes`, `overridingRootKey` and
+  `exclusiveClass`) are not modulator destinations at either level. A link is
+  ignored and listed, and so is a modulator with an amount to an effects send.
 
 **Default modulators.** The specification's defaults, read at the held controllers:
 
@@ -349,8 +347,9 @@ key does nothing, and the node keeps no credit for a later note-on.
 **The pool.** The voice limit counts voices, so a note on a stereo pair takes two. A
 note-off frees nothing: a voice is busy until it ends by itself. When a note-on finds
 too few free voices, the node takes whole notes, every voice one note-on started,
-until the new note has the voices it needs. A stereo pair or a layered note never
-loses one side.
+until the new note has the voices it needs. A zone with no playable frames does
+not need a slot and cannot cause a take. A stereo pair or a layered note never
+loses one side to a take.
 
 - *Which note goes:* released notes first, the one whose note-off came first. Only
   when none is left, held notes, the one whose note-on came first. Every note-on and

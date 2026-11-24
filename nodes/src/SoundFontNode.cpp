@@ -1,6 +1,7 @@
 #include "modular/nodes/SoundFontNode.h"
 
 #include <algorithm>
+#include <bitset>
 #include <cmath>
 #include <cstdlib>
 #include <numbers>
@@ -178,15 +179,19 @@ void SoundFontNode::load(const std::filesystem::path& path) {
 
 void SoundFontNode::adopt(SoundFont soundFont) {
   const auto preset = soundFont.lowestPreset();
-  auto zones = soundFont.zones(preset);
-  sound_font_ = std::move(soundFont);
-  select(preset, std::move(zones));
+  auto selection = prepareSelection(soundFont.zones(preset));
+  // Finish all selection work before replacing the bank its zones address.
+  // Moving into an existing bank and committing the selection cannot throw.
+  static_assert(noexcept(*sound_font_ = std::move(soundFont)));
+  if (sound_font_) *sound_font_ = std::move(soundFont);
+  else sound_font_.emplace(std::move(soundFont));
+  select(preset, std::move(selection));
 }
 
 void SoundFontNode::setPreset(std::uint16_t bank, std::uint16_t program) {
   if (!ready()) throw std::invalid_argument("soundfont: load a soundfont first");
   const SoundFont::PresetNumber preset{bank, program};
-  select(preset, sound_font_->zones(preset));
+  select(preset, prepareSelection(sound_font_->zones(preset)));
 }
 
 void SoundFontNode::setVoiceLimit(std::uint32_t limit) {
@@ -195,8 +200,7 @@ void SoundFontNode::setVoiceLimit(std::uint32_t limit) {
   voice_limit_ = limit;
 }
 
-void SoundFontNode::select(SoundFont::PresetNumber preset,
-                           std::vector<SoundFont::Zone> zones) {
+SoundFontNode::Selection SoundFontNode::prepareSelection(std::vector<SoundFont::Zone> zones) {
   // The most zones any one key and velocity match: the voices one note starts.
   std::uint32_t most = 0;
   for (int key = 0; key < 128; ++key)
@@ -210,8 +214,8 @@ void SoundFontNode::select(SoundFont::PresetNumber preset,
   std::vector<PlayedZone> played;
   played.reserve(zones.size());
   for (auto& zone : zones) {
-    // The default modulators no instrument modulator replaces come first, so
-    // the default ones sum as ticket 02's did, then the file's.
+    // Keep the surviving defaults first, in ticket 02's order, then the
+    // instrument modulators. Preset modulators add to these, not replace them.
     std::vector<Modulator> modulators;
     for (const auto& fallback : kDefaultModulators)
       if (std::none_of(zone.instrumentModulators.begin(), zone.instrumentModulators.end(),
@@ -219,13 +223,25 @@ void SoundFontNode::select(SoundFont::PresetNumber preset,
         modulators.push_back(fallback);
     modulators.insert(modulators.end(), zone.instrumentModulators.begin(),
                       zone.instrumentModulators.end());
-    modulators.insert(modulators.end(), zone.presetModulators.begin(),
-                      zone.presetModulators.end());
+    for (const auto& presetModulator : zone.presetModulators) {
+      const auto same = std::find_if(modulators.begin(), modulators.end(),
+                                     [&](const Modulator& m) {
+        return m.identicalTo(presetModulator);
+      });
+      // Combine identical amounts before evaluating the transform, so a
+      // positive and a negative amount can cancel even with absolute value.
+      if (same != modulators.end()) same->amount += presetModulator.amount;
+      else modulators.push_back(presetModulator);
+    }
     played.push_back({std::move(zone), std::move(modulators)});
   }
+  return {std::move(played), most};
+}
+
+void SoundFontNode::select(SoundFont::PresetNumber preset, Selection&& selection) noexcept {
   preset_ = preset;
-  zones_ = std::move(played);
-  voices_per_note_ = most;
+  zones_ = std::move(selection.zones);
+  voices_per_note_ = selection.voicesPerNote;
 }
 
 void SoundFontNode::prepare(const PrepareInfo& info) {
@@ -281,30 +297,34 @@ void SoundFontNode::noteOn(std::uint8_t channel, std::uint8_t key, std::uint8_t 
   const auto ordinal = keys_[keyIndex(channel, key)].noteOns++;
   // The note's voices, one for each zone it matches, made before any takes a
   // slot. prepare() made room for the most one note starts.
+  std::bitset<128> classes;
   std::size_t needed = 0;
   for (const auto& played : zones_) {
     if (!matches(played.zone, key, velocity)) continue;
-    auto& voice = starting_[needed++];
+    auto& voice = starting_[needed];
     start(voice, played, key, velocity);
+    if (voice.exclusiveClass != 0) classes[voice.exclusiveClass] = true;
+    // A voice that ends before its first frame neither takes nor needs a slot.
+    if (!voice.active) continue;
+    ++needed;
     voice.note = number;
     voice.ordinal = ordinal;
     voice.channel = channel;
     voice.key = key;
   }
-  if (needed == 0) return;
-  // Its exclusive classes end every other sounding voice of theirs, on any
-  // channel, which frees their slots first.
-  for (std::size_t i = 0; i < needed; ++i)
-    if (starting_[i].exclusiveClass != 0) endClass(starting_[i].exclusiveClass);
+  if (needed == 0 && classes.none()) return;
+  // End all of the note's exclusive classes in one pass before the pool takes
+  // any notes. New voices aren't in the pool yet, so they cannot choke one another.
+  std::size_t idle = 0;
+  for (auto& slot : slots_) {
+    if (slot.voice.active && classes[slot.voice.exclusiveClass]) fadeOut(slot);
+    if (!slot.voice.active) ++idle;
+  }
   // A full pool takes whole notes until this one has its voices. prepare()
   // made the pool at least as large as any one note.
-  auto idle = static_cast<std::size_t>(std::count_if(
-      slots_.begin(), slots_.end(), [](const Slot& slot) { return !slot.voice.active; }));
   while (idle < needed) idle += takeNote();
-  // A voice that ends before its first frame takes no slot.
   std::size_t slot = 0;
   for (std::size_t i = 0; i < needed; ++i) {
-    if (!starting_[i].active) continue;
     while (slots_[slot].voice.active) ++slot;
     slots_[slot].voice = starting_[i];
   }
@@ -327,10 +347,10 @@ void SoundFontNode::start(Voice& voice, const PlayedZone& played, std::uint8_t k
   std::copy(zone.generators.begin(), zone.generators.end(), g.begin());
   for (const auto& modulator : played.modulators)
     g[modulator.destination] += output(modulator, zoneKey, zoneVelocity);
-  // A modulated value is kept within its generator's range, and whole where
-  // the generator counts whole things, as the reader keeps a generator. The
-  // cutoff is not: its terms sum unclamped, as ticket 02 sums the velocity
-  // modulator's, and the filter keeps the sum below 0.45 of the graph's rate.
+  // For file destinations, the zone's generator sum is still unclamped;
+  // apply the bounds after adding the note's modulation. Cutoff is the
+  // exception: its terms sum unclamped, as ticket 02 sums the velocity term,
+  // and the filter keeps the sum below 0.45 of the graph's rate.
   for (std::size_t i = 0; i < g.size(); ++i)
     if (i != SoundFont::kInitialFilterFc) g[i] = SoundFont::bounded(i, g[i]);
 
@@ -481,13 +501,6 @@ std::size_t SoundFontNode::takeNote() {
       ++taken;
     }
   return taken;
-}
-
-// Ends every sounding voice of an exclusive class, on every channel (map ticket
-// 09, D8): each fades out as a taken voice does, and its slot is free at once.
-void SoundFontNode::endClass(std::uint8_t exclusiveClass) {
-  for (auto& slot : slots_)
-    if (slot.voice.active && slot.voice.exclusiveClass == exclusiveClass) fadeOut(slot);
 }
 
 // Ends a slot's voice early: it moves to the slot's tail, which stops an older
