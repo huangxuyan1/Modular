@@ -31,19 +31,46 @@ SoundFontNode::SoundFontNode(Graph& graph) : Node(graph) {
 }
 
 SoundFontNode::SoundFontNode(Graph& graph, SoundFont soundFont) : SoundFontNode(graph) {
-  const auto preset = soundFont.lowestPreset();
-  sound_font_ = std::move(soundFont);
-  select(preset);
+  adopt(std::move(soundFont));
 }
 
-void SoundFontNode::load(std::span<const std::uint8_t>) {}
-void SoundFontNode::load(const std::filesystem::path&) {}
-void SoundFontNode::setPreset(std::uint16_t, std::uint16_t) {}
-void SoundFontNode::setVoiceLimit(std::uint32_t) {}
+void SoundFontNode::load(std::span<const std::uint8_t> bytes) { adopt(SoundFont::parse(bytes)); }
 
-void SoundFontNode::select(SoundFont::PresetNumber preset) {
-  zones_ = sound_font_->zones(preset);
+void SoundFontNode::load(const std::filesystem::path& path) { adopt(SoundFont::read(path)); }
+
+void SoundFontNode::adopt(SoundFont soundFont) {
+  const auto preset = soundFont.lowestPreset();
+  auto zones = soundFont.zones(preset);
+  sound_font_ = std::move(soundFont);
+  select(preset, std::move(zones));
+}
+
+void SoundFontNode::setPreset(std::uint16_t bank, std::uint16_t program) {
+  if (!ready()) throw std::invalid_argument("soundfont: load a soundfont first");
+  const SoundFont::PresetNumber preset{bank, program};
+  select(preset, sound_font_->zones(preset));
+}
+
+void SoundFontNode::setVoiceLimit(std::uint32_t limit) {
+  if (limit < 1 || limit > 65535)
+    throw std::invalid_argument("soundfont: voice limit must be 1 to 65535");
+  voice_limit_ = limit;
+}
+
+void SoundFontNode::select(SoundFont::PresetNumber preset, std::vector<SoundFont::Zone> zones) {
+  // The most zones any one key and velocity match: the voices one note starts.
+  std::uint32_t most = 0;
+  for (int key = 0; key < 128; ++key)
+    for (int velocity = 1; velocity < 128; ++velocity) {
+      std::uint32_t count = 0;
+      for (const auto& zone : zones)
+        count += matches(zone, static_cast<std::uint8_t>(key),
+                         static_cast<std::uint8_t>(velocity)) ? 1 : 0;
+      most = std::max(most, count);
+    }
   preset_ = preset;
+  zones_ = std::move(zones);
+  voices_per_note_ = most;
 }
 
 void SoundFontNode::prepare(const PrepareInfo& info) {
@@ -51,6 +78,8 @@ void SoundFontNode::prepare(const PrepareInfo& info) {
   const double rate = info.sampleRate;
   if (!std::isfinite(rate) || rate <= 0)
     throw std::invalid_argument("soundfont: invalid sample rate");
+  if (voice_limit_ < voices_per_note_)
+    throw std::invalid_argument("soundfont: voice limit is below the voices one note starts");
   const auto frames = [&](std::int32_t timecents) {
     return static_cast<std::uint64_t>(std::llround(seconds(timecents) * rate));
   };

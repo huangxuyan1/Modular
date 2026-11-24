@@ -4,7 +4,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <functional>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -62,31 +65,51 @@ struct Run {
   std::uint64_t frames = 4800;
 };
 
-// Renders a fresh graph: MIDI at exact frames into a soundfont node holding
-// `font`, into a two-channel capture. `setup` authors the node before the
+// A soundfont node, empty or holding `font`, between MIDI at exact frames and
+// a two-channel capture. Each run is a fresh Engine on the same graph.
+class Rig {
+public:
+  explicit Rig(std::vector<Timed> midi, const std::optional<Bytes>& font = std::nullopt) {
+    const auto source = graph_.addNode<MidiAt>(std::move(midi));
+    synth_ = font ? graph_.addNode<SoundFontNode>(SoundFont::parse(*font))
+                  : graph_.addNode<SoundFontNode>();
+    sink_ = graph_.addNode<CaptureSinkNode>(2);
+    graph_.connect(source, static_cast<MidiAt&>(graph_.node(source)).out, synth_,
+                   node().midiIn());
+    graph_.connect(synth_, node().out(), sink_, capture().in());
+  }
+
+  SoundFontNode& node() { return static_cast<SoundFontNode&>(graph_.node(synth_)); }
+
+  Stereo run(Run run = {}) {
+    const auto from = capture().samples().size();
+    Engine engine(graph_, run.rate, run.block);
+    while (engine.streamTime() < run.frames)
+      engine.process(static_cast<std::uint32_t>(
+          std::min<std::uint64_t>(run.block, run.frames - engine.streamTime())));
+    Stereo result;
+    const auto& samples = capture().samples();
+    for (std::size_t i = from; i + 1 < samples.size(); i += 2) {
+      result.left.push_back(samples[i]);
+      result.right.push_back(samples[i + 1]);
+    }
+    return result;
+  }
+
+private:
+  CaptureSinkNode& capture() { return static_cast<CaptureSinkNode&>(graph_.node(sink_)); }
+
+  Graph graph_;
+  NodeId synth_ = kNoNode, sink_ = kNoNode;
+};
+
+// Renders a fresh graph holding `font`. `setup` authors the node before the
 // Engine prepares it.
 Stereo play(const Bytes& font, const std::vector<Timed>& midi, Run run = {},
             const std::function<void(SoundFontNode&)>& setup = {}) {
-  Graph graph;
-  const auto sourceId = graph.addNode<MidiAt>(midi);
-  const auto synthId = graph.addNode<SoundFontNode>(SoundFont::parse(font));
-  const auto sinkId = graph.addNode<CaptureSinkNode>(2);
-  auto& source = static_cast<MidiAt&>(graph.node(sourceId));
-  auto& synth = static_cast<SoundFontNode&>(graph.node(synthId));
-  auto& sink = static_cast<CaptureSinkNode&>(graph.node(sinkId));
-  graph.connect(sourceId, source.out, synthId, synth.midiIn());
-  graph.connect(synthId, synth.out(), sinkId, sink.in());
-  if (setup) setup(synth);
-  Engine engine(graph, run.rate, run.block);
-  while (engine.streamTime() < run.frames)
-    engine.process(static_cast<std::uint32_t>(
-        std::min<std::uint64_t>(run.block, run.frames - engine.streamTime())));
-  Stereo result;
-  for (std::size_t i = 0; i + 1 < sink.samples().size(); i += 2) {
-    result.left.push_back(sink.samples()[i]);
-    result.right.push_back(sink.samples()[i + 1]);
-  }
-  return result;
+  Rig rig(midi, font);
+  if (setup) setup(rig.node());
+  return rig.run(run);
 }
 
 std::vector<std::int16_t> steady(std::int16_t value, std::size_t points) {
@@ -409,4 +432,140 @@ TEST_CASE("generator values outside the specification's ranges are clamped once 
   std::size_t peak = onset;
   while (level(out, peak) < 1) ++peak;
   CHECK(std::abs(static_cast<double>(peak - onset + 1) - 46.875) <= 1);
+}
+
+namespace {
+
+// Three single-zone presets, listed out of order and told apart by level:
+// bank 1 program 0, bank 0 program 5 and bank 0 program 3.
+Bytes threePresets() {
+  File file;
+  file.samples = {{"a", steady(1000, 2000)}, {"b", steady(2000, 2000)},
+                  {"c", steady(4000, 2000)}};
+  for (int i = 0; i < 3; ++i)
+    file.instruments.push_back({"i", {{{set(gen::kPan, -500), set(gen::kSampleId, i)}}}});
+  file.presets = {{"bank 1", 0, 1, {{{set(gen::kInstrument, 2)}}}},
+                  {"program 5", 5, 0, {{{set(gen::kInstrument, 1)}}}},
+                  {"program 3", 3, 0, {{{set(gen::kInstrument, 0)}}}}};
+  return build(file);
+}
+
+const std::vector<Timed> kOneNote{{0, noteOn(0, 60, 100)}};
+
+double steadyLevel(const Stereo& out) { return out.left.at(300) * 32768.0; }
+
+// A file written for one test and removed with it.
+struct TemporaryFile {
+  std::filesystem::path path = std::filesystem::temp_directory_path() /
+      ("modular-soundfont-" + std::to_string(reinterpret_cast<std::uintptr_t>(this)) + ".sf2");
+  explicit TemporaryFile(const Bytes& bytes) {
+    std::ofstream(path, std::ios::binary)
+        .write(reinterpret_cast<const char*>(bytes.data()),
+               static_cast<std::streamsize>(bytes.size()));
+  }
+  ~TemporaryFile() {
+    std::error_code error;
+    std::filesystem::remove(path, error);
+  }
+};
+
+} // namespace
+
+TEST_CASE("an empty soundfont node is not ready and prepare asks for a soundfont") {
+  Rig rig(kOneNote);
+  CHECK_FALSE(rig.node().ready());
+  CHECK_THROWS_WITH_AS(rig.run(), "soundfont: load a soundfont first", std::invalid_argument);
+}
+
+TEST_CASE("a load selects the lowest bank then its lowest program and keeps the voice limit") {
+  Rig rig(kOneNote);
+  rig.node().setVoiceLimit(7);
+  rig.node().load(threePresets());
+  CHECK(rig.node().ready());
+  CHECK(rig.node().bank() == 0);
+  CHECK(rig.node().program() == 3);
+  CHECK(rig.node().voiceLimit() == 7);
+  CHECK(steadyLevel(rig.run()) == doctest::Approx(1000));
+}
+
+TEST_CASE("a failed load throws and keeps the previous soundfont and preset") {
+  Rig rig(kOneNote);
+  rig.node().load(threePresets());
+  rig.node().setPreset(0, 5);
+  auto truncated = threePresets();
+  truncated.pop_back();
+  CHECK_THROWS_AS(rig.node().load(truncated), std::invalid_argument);
+  CHECK_THROWS_AS(rig.node().load(std::filesystem::path("missing.sf2")), std::invalid_argument);
+  CHECK(rig.node().program() == 5);
+  CHECK(steadyLevel(rig.run()) == doctest::Approx(2000));
+}
+
+TEST_CASE("the preset setting chooses another preset and throws for one the file lacks") {
+  Rig rig(kOneNote, threePresets());
+  rig.node().setPreset(1, 0);
+  CHECK_THROWS_WITH_AS(rig.node().setPreset(0, 4), "soundfont: no preset at bank 0 program 4",
+                       std::invalid_argument);
+  CHECK(rig.node().bank() == 1);
+  CHECK(rig.node().program() == 0);
+  CHECK(steadyLevel(rig.run()) == doctest::Approx(4000));
+  Rig empty(kOneNote);
+  CHECK_THROWS_AS(empty.node().setPreset(0, 0), std::invalid_argument);
+}
+
+TEST_CASE("the voice limit accepts 1 to 65535 and defaults to 256") {
+  Rig rig(kOneNote, threePresets());
+  CHECK(rig.node().voiceLimit() == 256);
+  for (const std::uint32_t limit : {0u, 65536u, 100000u}) {
+    CAPTURE(limit);
+    CHECK_THROWS_AS(rig.node().setVoiceLimit(limit), std::invalid_argument);
+    CHECK(rig.node().voiceLimit() == 256);
+  }
+  for (const std::uint32_t limit : {1u, 65535u}) {
+    rig.node().setVoiceLimit(limit);
+    CHECK(rig.node().voiceLimit() == limit);
+    CHECK(steadyLevel(rig.run()) == doctest::Approx(1000));
+  }
+}
+
+TEST_CASE("prepare throws when the voice limit is below the voices one note of the preset starts") {
+  // Program 0 plays a stereo pair everywhere and layers a third zone on keys
+  // 60 to 70, so a note can start three voices. Program 1 starts one.
+  File file;
+  file.samples = {{"s", steady(1000, 2000)}};
+  file.instruments.push_back({"pair", {{{set(gen::kPan, -500), set(gen::kSampleId, 0)}},
+                                       {{set(gen::kPan, 500), set(gen::kSampleId, 0)}},
+                                       {{range(gen::kKeyRange, 60, 70),
+                                         set(gen::kSampleId, 0)}}}});
+  file.instruments.push_back({"one", {{{set(gen::kSampleId, 0)}}}});
+  file.presets = {{"three", 0, 0, {{{set(gen::kInstrument, 0)}}}},
+                  {"one", 1, 0, {{{set(gen::kInstrument, 1)}}}}};
+  Rig rig(kOneNote, build(file));
+  rig.node().setVoiceLimit(2);
+  CHECK_THROWS_WITH_AS(rig.run(), "soundfont: voice limit is below the voices one note starts",
+                       std::invalid_argument);
+  rig.node().setVoiceLimit(3);
+  CHECK_NOTHROW(rig.run());
+  rig.node().setVoiceLimit(1);
+  rig.node().setPreset(0, 1);
+  CHECK_NOTHROW(rig.run());
+}
+
+TEST_CASE("a node loaded from a path renders after the file is deleted") {
+  Rig rig(kOneNote);
+  {
+    TemporaryFile file(threePresets());
+    rig.node().load(file.path);
+  }
+  CHECK(steadyLevel(rig.run()) == doctest::Approx(1000));
+}
+
+TEST_CASE("a second Engine on the same graph renders the same samples as the first") {
+  // The first run ends with the note still sounding; the second starts clean.
+  Rig rig({{5, noteOn(0, 60, 100)}, {701, noteOn(0, 64, 90)}, {1301, noteOff(0, 60)}},
+          envelopeFont({set(gen::kReleaseVolEnv, -1200)}));
+  const auto first = rig.run({48000, 127, 2000});
+  const auto second = rig.run({48000, 127, 2000});
+  CHECK(lastSounding(first.left) == 1999);
+  CHECK(first.left == second.left);
+  CHECK(first.right == second.right);
 }

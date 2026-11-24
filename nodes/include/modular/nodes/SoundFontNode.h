@@ -84,7 +84,8 @@ private:
     double position = 0, increment = 0;
   };
 
-  void select(SoundFont::PresetNumber preset);
+  void adopt(SoundFont soundFont);
+  void select(SoundFont::PresetNumber preset, std::vector<SoundFont::Zone> zones);
   void noteOn(std::uint8_t channel, std::uint8_t key, std::uint8_t velocity);
   void noteOff(std::uint8_t channel, std::uint8_t key);
   void startRelease(Voice& voice);
