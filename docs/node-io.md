@@ -86,8 +86,8 @@ The file rules follow the [Standard MIDI Files specification](https://midi.org/s
 
 Status: soundfont-node ticket 01, the tracer, ticket 02, loops and the piano's tone,
 ticket 03, the voice policy, ticket 04, the rest of the voice and the ignored list,
-ticket 06, persistence, and ticket 08, portable maths. Ticket 05 adds the file's own
-modulators and exclusive class. See `.scratch/soundfont-node/spec.md` for the end
+ticket 05, the file's own modulators and exclusive class, ticket 06, persistence,
+and ticket 08, portable maths. See `.scratch/soundfont-node/spec.md` for the end
 state.
 
 Include `modular/nodes/SoundFontNode.h` and link `modular_soundfont`. That library
@@ -98,10 +98,10 @@ header-only node library. The node is one polyphonic primitive with its own voic
 numbered by a *bank* and a program. A preset's *zones* point to instruments, and an
 instrument's zones point to samples. Each zone has key and velocity ranges and
 *generators*, the settings a sample plays with. *Modulators* adjust generators from
-the note or controllers; the node applies the specification's default modulators
-and does not read a file's own yet. A *voice* is one sounding
-sample. The *voice limit* sizes the node's fixed pool of voices. A note-off starts a
-voice's *release*.
+the note or controllers: the specification's default ones, and the file's own. A
+*voice* is one sounding sample. The *voice limit* sizes the node's fixed pool of
+voices. A note-off starts a voice's *release*. An *exclusive class* is a group of
+zones, such as a kit's hi-hats, of which one sounds at a time.
 
 | Surface | Behavior |
 | --- | --- |
@@ -154,7 +154,7 @@ node ignores or skips, each kind once, in the errors' short form and in this ord
 
 | Entry | When |
 | --- | --- |
-| `soundfont: reverb and chorus sends are ignored` | A zone at either level sets `chorusEffectsSend` or `reverbEffectsSend` above 0. The output is dry; reverb is wiring after the node |
+| `soundfont: reverb and chorus sends are ignored` | A zone at either level sets `chorusEffectsSend` or `reverbEffectsSend` above 0, or has a legal modulator with an amount to either. The output is dry; reverb is wiring after the node |
 | `soundfont: link modulators are ignored` | A modulator's source is another modulator's output (the link source, 127), or its output feeds another modulator (a destination with bit 15 set) |
 | `soundfont: zones playing a sample in rom are skipped` | An instrument zone's sample has the ROM bit (`0x8000`) |
 | `soundfont: zones playing an empty sample are skipped` | An instrument zone's sample starts where it ends |
@@ -171,9 +171,8 @@ node ignores or skips, each kind once, in the errors' short form and in this ord
   reads it.
 - Ignored as the specification says, and not listed: unknown, unused and reserved
   generators (14, 18 to 20, 42, 49, 55, 59, 60 and from 61 up), instrument-only
-  generators at the preset level, and modulators the specification calls illegal,
-  such as a link as an amount source. The file's other modulators are ticket 05's;
-  until then the node does not read them.
+  generators at the preset level, and modulators the specification calls illegal
+  (**Modulators**, below).
 
 **Zones.** The first zone at either level without a terminal generator is that
 level's global zone. A note plays every instrument zone whose key and velocity
@@ -196,13 +195,13 @@ generator are ignored, and a repeated generator keeps its last value.
 | Vibrato LFO | `delayVibLFO` 23, `freqVibLFO` 24, `vibLfoToPitch` 6 | Honoured |
 | Filter | `initialFilterFc` 8, `initialFilterQ` 9 | Honoured |
 | Level and placement | `initialAttenuation` 48, `pan` 17, `velocity` 47 | Honoured |
-| Exclusive class | `exclusiveClass` 57 | Ticket 05 |
+| Exclusive class | `exclusiveClass` 57 | Honoured |
 | Effects sends | `chorusEffectsSend` 15, `reverbEffectsSend` 16 | Ignored and listed |
 | Unused, reserved and unknown | 14, 18 to 20, 42, 49, 55, 59, 60, and 61 up | Ignored, not listed |
 
 `keynum` and `velocity`, when set, replace the note's key and velocity within the
-zone: in its pitch, its key scaling and its default modulators. The note's own key
-and velocity still choose the zones.
+zone: in its pitch, its key scaling and its modulators. The note's own key and
+velocity still choose the zones.
 
 **The voice:**
 
@@ -223,9 +222,9 @@ and velocity still choose the zones.
   point with its first, so no point past the loop is read. Loops shorter than 32
   points, or closer than 8 points to an end of the sample, play as given. A loop that
   is empty or lies outside the points the zone plays plays unlooped, and is listed;
-- `initialAttenuation` plus the default modulators' attenuation, in centibels, the
-  total clamped to 0 to 1440 cB, so no voice is louder than its sample. The
-  modulation LFO's volume term and the filter's gain at DC come on top;
+- `initialAttenuation` plus its modulators' attenuation, in centibels, the total
+  clamped to 0 to 1440 cB, so no voice is louder than its sample. The modulation
+  LFO's volume term and the filter's gain at DC come on top;
 - equal-power `pan`: a centred zone is 3 dB down on each side, and +-500 is fully
   one-sided. A stereo pair is two voices;
 - the volume envelope: delay is silent and holds the sample back, the attack rises
@@ -246,11 +245,10 @@ and velocity still choose the zones.
   10 dB above the Butterworth response's, 7 dB above DC where the specification's
   text says 10. The gain at DC falls by half the decibels, as the specification
   says, so it is unity at 0 cB; FluidSynth's is 1.5 dB higher at every Q. Its
-  cutoff in cents is
-  `initialFilterFc`, plus the velocity-to-cutoff default modulator, plus
-  `modEnvToFilterFc` times the modulation envelope, plus `modLfoToFilterFc` times
-  the modulation LFO. The filter follows it frame by frame in whole cents, and keeps
-  it below 0.45 of the graph's rate;
+  cutoff in cents is `initialFilterFc`, plus its modulators, the velocity-to-cutoff
+  default among them, plus `modEnvToFilterFc` times the modulation envelope, plus
+  `modLfoToFilterFc` times the modulation LFO. The filter follows it frame by frame
+  in whole cents, and keeps it below 0.45 of the graph's rate;
 - the modulation envelope: the volume envelope's stage timing, with its own
   generators. Its level rises linearly from 0 to 1 in the attack, holds at 1, and its
   decay and release move linearly, a stage's time being a full change between 1 and
@@ -265,23 +263,71 @@ and velocity still choose the zones.
   a positive depth raises each as the LFO rises. The vibrato LFO moves only the
   pitch, by `vibLfoToPitch` cents. Neither decides when a voice ends.
 
-**Default modulators.** The node follows no controller, so the specification's
-default modulators read every controller at General MIDI's power-on value:
+**Modulators.** A voice's modulators are evaluated once, at its note-on (map ticket
+09, D2). The node follows no controller, so every source is constant for a note's
+life, and each modulator is a fixed offset to its destination generator: nothing is
+evaluated per frame. A note-on adds each modulator's output to the zone's generator
+and derives the voice from the sums.
+
+- *Sources:* the note's velocity and key number (the zone's, where `velocity` or
+  `keynum` replaces them), no controller, which is the constant 1, and controllers
+  held at General MIDI's power-on value: CC7 at 100, CC10 at 64, CC11 at 127, the
+  pitch wheel centred, its sensitivity at 2 semitones, and every other one at 0,
+  the sustain pedal included. Controllers in the MIDI stream change nothing.
+- *Curves:* linear, concave, convex or switch, each unipolar (0 to 1) or bipolar
+  (-1 to 1), rising or falling. Concave and convex are the specification's 96 dB
+  curves: concave is `-20/96 log10((1 - x)^2)` and convex `1 + 20/96 log10(x^2)`,
+  each reaching 1 at the top. A linear or switch source is normalized by its range
+  (128 values, or the pitch wheel's 16384), as FluidSynth does, so a centred
+  controller is exactly half and the switch is on from 64. A unipolar concave or
+  convex curve runs over a 7-bit source's values 0 to 127, so 127 gives 1. A
+  bipolar one runs from the centre out each way.
+- *Output:* the amount times the source and the amount source, each on its curve,
+  then the transform: linear, or 2, the absolute value.
+- *Levels:* a zone takes its global zone's modulators, each superseded by an
+  identical one of its own (the same source, destination, amount source and
+  transform); of identical modulators in one zone the last is kept. Preset-level
+  modulators add to instrument-level ones.
+- *Default modulators* (below) run through the same evaluation. An instrument-level
+  modulator replaces a default one when their source, destination and transform
+  match, **whatever their amount sources**. So FluidR3's amount-0 modulators, note-on
+  velocity to `initialFilterFc` with a velocity switch as their amount source, switch
+  the velocity-to-cutoff default off. A preset-level modulator never replaces one.
+- *Ranges:* each sum is kept within its generator's range, as the reader keeps a
+  generator, and rounded to a whole number for a generator that counts whole things
+  (address offsets, `sampleModes`, `exclusiveClass` and `overridingRootKey`). The
+  cutoff is not clamped: its modulators sum with its envelope and LFO terms, and the
+  filter keeps the total below 0.45 of the graph's rate.
+- *Address offsets:* a note-on places the voice's points from its sample header and
+  its offsets, modulated or not. A modulated loop outside the points played plays
+  unlooped, unlisted, since the list is built at load.
+- *Ignored, unlisted:* a modulator the specification calls illegal: a source or
+  amount source that is a MIDI controller it forbids (0, 6, 32 to 63, 98 to 101 and
+  120 to 127), a general controller it does not list, or a curve type past switch;
+  the link as an amount source; a transform other than 0 and 2. Also one that moves
+  nothing in a voice: to an unused, reserved or unknown generator, to one that
+  chooses zones or names what they play (`instrument`, `keyRange`, `velRange`,
+  `sampleID`), to `keynum` or `velocity`, which modulators read, and, at the preset
+  level, to one valid only in an instrument. A link is ignored and listed, and so is
+  a modulator with an amount to an effects send.
+
+**Default modulators.** The specification's defaults, read at the held controllers:
 
 - velocity to attenuation, 960 cB on a concave curve: a gain of
   `40 log10(velocity / 127)` dB, so -3.3 dB at 105, -7.0 at 85 and -11.9 at 64;
 - velocity to cutoff, -2400 cents times `(128 - velocity) / 128`: linear at every
   velocity, with no velocity switch, so a softer note is never brighter;
 - the controller defaults: CC7 at 100 attenuates every voice by a constant 4.2 dB on
-  the same concave curve. CC11 at 127, CC10 at 64, the pitch wheel centred and every
-  other source at 0, the sustain pedal included, add nothing. Controllers in the MIDI
-  stream change nothing.
+  the same concave curve. CC11 to attenuation, CC10 to pan, and CC1 and channel
+  pressure to the vibrato LFO add nothing at their power-on values. The defaults to
+  the effects sends, which the node does not have, and the pitch wheel's, whose
+  destination is the pitch itself and which adds nothing with the wheel centred, are
+  left out.
 
 A voice ends once its volume envelope has fallen 96 dB below its peak after its
 attack, held or released, or when, with no loop left, it passes its sample's end. A
 voice on a mode 1 loop ends only by its envelope. After the last voice the output is
-exact zeros, and its slot is free from the frame after its last sound. The file's
-own modulators and exclusive class come in ticket 05.
+exact zeros, and its slot is free from the frame after its last sound.
 
 **Notes.** Every channel, channel 10 included, plays the one preset. Velocity is the
 note-on's byte, and velocity 0 is a note-off. Program changes, controllers, pitch
@@ -313,8 +359,17 @@ loses one side.
   does not count against the limit. A slot taken again within 6 ms stops its older
   tail at once.
 
-Taking depends only on the event stream, so the output stays bit-identical at every
-block size while the pool turns over.
+**Exclusive class** (map ticket 09, D8). When a note starts a zone whose
+`exclusiveClass` is not 0, every other sounding voice of that class ends, held or
+released, on any channel: the scope is the whole node. The note's own voices are
+spared, so a pair's two sides survive, and a hi-hat struck again ends the one before
+it. An ended voice fades as a taken voice does, linearly to zero over 6 ms from the
+new note's frame, in its slot's tail, and its slot is free at once: the class ends
+its voices before the pool takes any note for the new one.
+
+Taking and ending depend only on the event stream, so the output stays bit-identical
+at every block size while the pool turns over, also when a class's end and a take
+land on one slot.
 
 **Known limitation: `MidiBlockNode`'s held flag.** `MidiBlockNode`, and
 `MidiFileNode` with it, keeps one held flag per channel and key. So at Stop,
@@ -325,9 +380,10 @@ the file: it bites only under a realtime transport. The ticket that first gives 
 node one, such as the editor's, counts held notes per channel and key in
 `MidiBlockNode`.
 
-`process()` allocates nothing: `prepare()` allocates the voices, their tails and the
-counts of held notes, 16 channels of 128 keys. Voices and tails render in slot order
-between events, so the output is bit-identical at every block size.
+`process()` allocates nothing: `prepare()` allocates the voices, their tails, room
+for the most voices one note starts, each zone's list of modulators and the counts of
+held notes, 16 channels of 128 keys. Voices and tails render in slot order between
+events, so the output is bit-identical at every block size.
 
 **Portable maths.** The node computes its output without the platform's maths
 library. Maths libraries disagree on `exp2`, `pow`, `log10`, `sin` and `cos` in the
@@ -347,9 +403,10 @@ fails when any other soundfont node source calls a maths-library transcendental
 (`exp`, `exp2`, `pow`, `log`, `log10`, `sin`, `cos`, `tan` and their kin, in `std::`
 or C form); `floor`, `ceil`, `fmod`, `llround`, `isfinite`, `ldexp`, `frexp` and
 `sqrt` are exact or correctly rounded, and allowed. Golden tests in `soundfont_tests`
-pin the bits: two clips that between them take every maths path the node has (the
-second the LFOs, resonance, tuning and key scaling), at 44.1, 48 and 22.05 kHz, as
-each render's frame count and a hash of every 4,096 frames (`tests/GoldenRender.h`).
+pin the bits: three clips that between them take every maths path the node has (the
+second the LFOs, resonance, tuning and key scaling, the third file modulators and
+exclusive classes), at 44.1, 48 and 22.05 kHz, as each render's frame count and a
+hash of every 4,096 frames (`tests/GoldenRender.h`).
 A change that alters them, such as a new maths path, updates their values in the
 same commit, so review sees every change to the node's rendered bits. The web render
 surface's [golden clips](web.md#golden-clips) pin the node's output through the render

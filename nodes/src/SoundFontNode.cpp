@@ -16,8 +16,9 @@ namespace maths = soundfont_maths;
 constexpr double kPi = std::numbers::pi;
 // A voice has ended once its envelope has fallen this far below its peak.
 constexpr double kFloorDb = 96;
-// A voice taken for a new note ramps linearly to zero over this long, SFZ's
-// off_mode=fast, so taking it does not click (map ticket 06, D5).
+// A voice taken for a new note, or ended by its exclusive class, ramps
+// linearly to zero over this long, SFZ's off_mode=fast, so ending it does not
+// click (map ticket 06, D5; map ticket 09, D8).
 constexpr double kFadeSeconds = 0.006;
 
 using Modulator = SoundFont::Modulator;
@@ -111,9 +112,12 @@ Fraction mapped(std::uint16_t source, int key, int velocity) {
                    : belowFull(static_cast<double>(top - position) / top),
             960};
   }
-  const int distance = std::abs(2 * value - range); // from the centre, over the range
-  const double centibels = convex ? 960 - belowFull(static_cast<double>(distance) / range)
-                                  : belowFull(static_cast<double>(range - distance) / range);
+  // Twice the distance from the centre, so over the range it is the distance
+  // over half the range.
+  const int distance = std::abs(2 * value - range);
+  const double centibels =
+      convex ? 960 - belowFull(static_cast<double>(distance) / range)
+             : belowFull(static_cast<double>(range - distance) / range);
   const bool upper = (2 * value > range) != down;
   return {upper ? centibels : -centibels, 960};
 }
@@ -225,6 +229,8 @@ void SoundFontNode::prepare(const PrepareInfo& info) {
     PreparedZone plan;
     plan.zone = zone;
     plan.rateRatio = zone.sampleRate / rate;
+    // The default modulators no instrument modulator replaces come first, so
+    // the default ones sum as ticket 02's did, then the file's.
     for (const auto& fallback : kDefaultModulators)
       if (std::none_of(zone.instrumentModulators.begin(), zone.instrumentModulators.end(),
                        [&](const Modulator& m) { return replaces(m, fallback); }))

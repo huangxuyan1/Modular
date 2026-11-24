@@ -206,7 +206,8 @@ bool identical(const SoundFont::Modulator& a, const SoundFont::Modulator& b) {
 }
 
 // Adds a modulator to a list, in place of an identical one if it has one.
-void supersede(std::vector<SoundFont::Modulator>& list, const SoundFont::Modulator& modulator) {
+void supersede(std::vector<SoundFont::Modulator>& list,
+               const SoundFont::Modulator& modulator) {
   const auto same = std::find_if(list.begin(), list.end(), [&](const auto& m) {
     return identical(m, modulator);
   });
@@ -517,7 +518,9 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
 // The generators read here are whole numbers, as bounded() keeps a modulated
 // one, so their conversions are exact.
 SoundFont::Points SoundFont::place(const Header& header, const Values& generators) {
-  const auto value = [&](Generator g) { return static_cast<std::int64_t>(generators[g]); };
+  const auto value = [&](Generator g) {
+    return static_cast<std::int64_t>(generators[g]);
+  };
   const auto address = [&](std::uint32_t point, Generator fine, Generator coarse) {
     return std::int64_t{point} + value(fine) + std::int64_t{32768} * value(coarse);
   };

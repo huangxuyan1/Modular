@@ -21,17 +21,20 @@ namespace modular::nodes {
 // preset of it on every MIDI channel, from a fixed pool of internal voices.
 //
 // A voice is one sounding sample: every instrument zone a note matches plays
-// as its own mono voice, placed by its pan. A note-off starts a voice's
-// release and frees nothing; a voice ends by itself, when its envelope has
-// fallen 96 dB after its attack or its sample has run out with no loop left.
-// When too few voices are free, a note-on takes whole notes, released before
-// held and oldest first, each fading out over 6 ms. A key struck again starts
-// a new note beside the old one, and its note-offs end its held notes oldest
+// as its own mono voice, placed by its pan. Its generators are its zone's plus
+// its modulators' outputs (the default ones and the file's), evaluated once at
+// its note-on. A note-off starts a voice's release and frees nothing; a voice
+// ends by itself, when its envelope has fallen 96 dB after its attack or its
+// sample has run out with no loop left. A note in an exclusive class ends
+// every other sounding voice of that class, each fading out over 6 ms. When
+// too few voices are free, a note-on takes whole notes, released before held
+// and oldest first, each fading out the same way. A key struck again starts a
+// new note beside the old one, and its note-offs end its held notes oldest
 // first, whatever has become of their voices.
 //
 // Loading parses the whole file at authoring time. prepare() never reads the
-// file again: it derives what depends on the sample rate and resets the pool,
-// so a fresh Engine on the same graph renders from a clean start.
+// file again: it lists each zone's modulators and resets the pool for the
+// sample rate, so a fresh Engine on the same graph renders from a clean start.
 class SoundFontNode : public Node {
 public:
   static constexpr std::uint32_t kDefaultVoiceLimit = 256;
