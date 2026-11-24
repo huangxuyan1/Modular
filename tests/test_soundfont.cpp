@@ -1007,11 +1007,14 @@ TEST_CASE("a key struck again sounds beside its earlier note and note-offs end t
   CHECK(std::abs(static_cast<double>(lastSounding(out.left) + 1) - (30011 + 23040)) <= 1);
 }
 
-TEST_CASE("a note-off with no held note on its key does nothing") {
+TEST_CASE("a note-off with no held note on its key does nothing and leaves no credit") {
+  // The first stray comes before the note-on on its key, which its own
+  // note-off still releases.
   const auto font = twoVelocities();
   const auto reference = play(font, {{13, noteOn(0, 60, 100)}, {1009, noteOff(0, 60)}},
                               {48000, 128, 30000});
-  const auto strays = play(font, {{13, noteOn(0, 60, 100)}, {503, noteOff(0, 61)},
+  const auto strays = play(font, {{7, noteOff(0, 60)}, {13, noteOn(0, 60, 100)},
+                                  {503, noteOff(0, 61)},
                                   {601, noteOff(1, 60)}, {1009, noteOff(0, 60)},
                                   {1511, noteOff(0, 60)}},
                            {48000, 128, 30000});
@@ -1149,6 +1152,51 @@ TEST_CASE("a taken voice fades linearly to zero over 6 ms as the new note starts
   }
 }
 
+TEST_CASE("a full pool takes every voice of a stereo note together") {
+  // A stereo pair needs two voices. With three, the second note finds one free
+  // and takes the whole first note: both its sides fade out, and then only the
+  // second note sounds, on both sides.
+  File file;
+  file.samples = {{"left", steady(8000, 60000)}, {"right", steady(-4000, 60000)}};
+  file.instruments.push_back({"pair", {{{set(gen::kPan, -500), set(gen::kSampleId, 0)}},
+                                       {{set(gen::kPan, 500), set(gen::kSampleId, 1)}}}});
+  file.presets.push_back({"p", 0, 0, {{{set(gen::kInstrument, 0)}}}});
+  const auto font = build(file);
+  const Timed taking{2003, noteOn(0, 62, 90)};
+  const auto out = play(font, {{13, noteOn(0, 60, 100)}, taking}, {}, voiceLimit(3));
+  const auto alone = play(font, {taking});
+  const auto fading = 2003 + kFade - 1;
+  CHECK(out.left[fading] != alone.left[fading]);
+  CHECK(out.right[fading] != alone.right[fading]);
+  CHECK(agreeFrom(out, alone, 2003 + kFade));
+}
+
+TEST_CASE("a taken note's note-off is dropped and releases no other note") {
+  // One voice. The second note on key 60 takes the first, so the first
+  // note-off belongs to the taken note: it is dropped, and the second note
+  // holds until the second note-off.
+  const auto font = twoVelocities();
+  const Run run{48000, 128, 30000};
+  const Timed second{2003, noteOn(0, 60, 30)}, last{20011, noteOff(0, 60)};
+  const auto out = play(font, {{13, noteOn(0, 60, 100)}, second, {3001, noteOff(0, 60)}, last},
+                        run, voiceLimit(1));
+  CHECK(agreeFrom(out, play(font, {second, last}, run), 2003 + kFade));
+}
+
+TEST_CASE("a unison on one channel sounds and is taken note by note") {
+  // Two notes on key 60 of channel 0 both sound. With two voices, a third
+  // note takes only the first of them. The first note-off is spent on the
+  // taken note, and the second releases the one still sounding.
+  const auto font = twoVelocities();
+  const Run run{48000, 128, 30000};
+  const Timed first{13, noteOn(0, 60, 100)}, second{503, noteOn(0, 60, 90)},
+      third{2003, noteOn(0, 64, 30)}, last{5003, noteOff(0, 60)};
+  const auto out = play(font, {first, second, third, {3001, noteOff(0, 60)}, last}, run,
+                        voiceLimit(2));
+  CHECK(levelAt(out, 1500) == doctest::Approx(2000 * (noteGain(100) + noteGain(90))));
+  CHECK(agreeFrom(out, play(font, {second, third, last}, run), 2003 + kFade));
+}
+
 TEST_CASE("a slot taken again within 6 ms stops its older tail at once") {
   // One voice. The note at 2003 takes the left note, and the note 101 frames
   // later takes it in turn, so the left note's fade stops there.
@@ -1162,16 +1210,16 @@ TEST_CASE("a slot taken again within 6 ms stops its older tail at once") {
 }
 
 TEST_CASE("a voice's slot is free from the frame after its last sound") {
-  // With one voice, a note-on on the frame after a note's sample has run out
-  // starts at once.
-  const auto font = build(oneZone(steady(4000, 600)));
-  const auto limit = [](SoundFontNode& node) { node.setVoiceLimit(1); };
-  const auto first = play(font, {{13, noteOn(0, 60, 100)}}, {48000, 128, 2000}, limit);
-  const auto last = lastSounding(first.left);
-  REQUIRE(last < first.left.size());
-  const auto both = play(font, {{13, noteOn(0, 60, 100)}, {last + 1, noteOn(0, 62, 100)}},
-                         {48000, 128, 2000}, limit);
-  CHECK(firstSounding(both.left, last + 1) < both.left.size());
+  // Two voices: a long loud note, then a soft one whose sample runs out. A
+  // note-on on the frame after the soft note's last sound finds its slot free,
+  // so the loud note is not taken.
+  const auto font = shortSoftNotes();
+  const Timed loud{13, noteOn(0, 60, 100)};
+  const auto last = lastSounding(play(font, {{101, noteOn(0, 62, 30)}}).left);
+  REQUIRE(last < 4800);
+  const Timed next{last + 1, noteOn(0, 64, 100)};
+  const auto out = play(font, {loud, {101, noteOn(0, 62, 30)}, next}, {}, voiceLimit(2));
+  CHECK(agreeFrom(out, play(font, {loud, next}), last + 1));
 }
 
 namespace {
@@ -1600,42 +1648,49 @@ Bytes busyFont() {
   return build(file);
 }
 
-// Overlapping notes on four channels: a retrigger, releases, a velocity-0
-// note-off, a stray note-off, and with ten voices, a note the pool refuses.
+// Overlapping notes on six channels: a retrigger, releases, a velocity-0
+// note-off, a stray note-off and a layer that ends while held. A note at 60
+// or above starts three voices and one below starts two, so a pool of four or
+// ten turns over: held notes are taken, slots are taken again within 6 ms,
+// a released note is taken at 9103, and taken notes' note-offs are dropped.
 const std::vector<Timed> kBusy{
-    {1, noteOn(0, 60, 100)},   {3, noteOn(1, 64, 90)},     {3, noteOn(0, 48, 70)},
-    {131, noteOn(0, 60, 110)}, {509, noteOff(0, 60)},      {1021, noteOn(9, 67, 1)},
-    {2053, noteOff(1, 64)},    {2053, noteOn(1, 64, 0)},   {3001, noteOn(2, 72, 127)},
-    {4093, noteOff(0, 60)},    {5003, noteOff(0, 48)},     {6007, noteOn(0, 60, 100)},
-    {7919, noteOff(9, 67)},    {9001, noteOff(2, 72)},     {9001, noteOff(0, 60)},
-    {12011, noteOn(3, 50, 64)}, {17389, noteOff(3, 50)}};
-
-const auto kTenVoices = [](SoundFontNode& node) { node.setVoiceLimit(10); };
+    {1, noteOn(0, 60, 100)},    {3, noteOn(1, 64, 90)},     {3, noteOn(0, 48, 70)},
+    {131, noteOn(0, 60, 110)},  {509, noteOff(0, 60)},      {1021, noteOn(9, 67, 1)},
+    {2053, noteOff(1, 64)},     {2053, noteOn(1, 64, 0)},   {3001, noteOn(2, 72, 127)},
+    {4093, noteOff(0, 60)},     {5003, noteOff(0, 48)},     {6007, noteOn(0, 60, 100)},
+    {7919, noteOff(9, 67)},     {9001, noteOff(2, 72)},     {9001, noteOff(0, 60)},
+    {9103, noteOn(4, 55, 80)},  {9203, noteOn(5, 70, 90)},  {11003, noteOff(4, 55)},
+    {11003, noteOff(5, 70)},    {12011, noteOn(3, 50, 64)}, {17389, noteOff(3, 50)}};
 
 } // namespace
 
-TEST_CASE("output is bit-identical at any block size and rate") {
-  for (const double rate : {44100.0, 48000.0}) {
-    CAPTURE(rate);
-    const auto reference = play(busyFont(), kBusy, {rate, 512, 20000}, kTenVoices);
-    CHECK(firstSounding(reference.left) < reference.left.size());
-    for (const std::uint32_t block : {1u, 7u, 127u, 509u}) {
-      CAPTURE(block);
-      const auto out = play(busyFont(), kBusy, {rate, block, 20000}, kTenVoices);
-      CHECK(out.left == reference.left);
-      CHECK(out.right == reference.right);
+TEST_CASE("output is bit-identical at any block size and rate while the pool turns over") {
+  for (const std::uint32_t limit : {4u, 10u})
+    for (const double rate : {44100.0, 48000.0}) {
+      CAPTURE(limit);
+      CAPTURE(rate);
+      const auto reference = play(busyFont(), kBusy, {rate, 512, 20000}, voiceLimit(limit));
+      CHECK(firstSounding(reference.left) < reference.left.size());
+      // Notes were taken: with room for every note, the render differs.
+      CHECK(reference.left != play(busyFont(), kBusy, {rate, 512, 20000}).left);
+      for (const std::uint32_t block : {1u, 7u, 127u, 509u}) {
+        CAPTURE(block);
+        const auto out = play(busyFont(), kBusy, {rate, block, 20000}, voiceLimit(limit));
+        CHECK(out.left == reference.left);
+        CHECK(out.right == reference.right);
+      }
     }
-  }
 }
 
 TEST_CASE("process allocates nothing") {
-  for (const std::uint32_t block : {7u, 509u}) {
+  for (const auto& [limit, block] : {std::pair{4u, 7u}, std::pair{10u, 509u}}) {
+    CAPTURE(limit);
     CAPTURE(block);
     Graph graph;
     const auto source = graph.addNode<MidiAt>(kBusy);
     const auto synth = graph.addNode<CountingSoundFontNode>(SoundFont::parse(busyFont()));
     auto& node = static_cast<SoundFontNode&>(graph.node(synth));
-    node.setVoiceLimit(10);
+    node.setVoiceLimit(limit);
     const auto sink = graph.addNode<CaptureSinkNode>(2);
     auto& capture = static_cast<CaptureSinkNode&>(graph.node(sink));
     graph.connect(source, static_cast<MidiAt&>(graph.node(source)).out, synth, node.midiIn());
