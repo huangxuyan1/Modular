@@ -21,6 +21,17 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   endif()
 endif()
 
+# The web build (docs/web.md). Every target compiles and links with native WebAssembly
+# exceptions, in the legacy encoding Emscripten 6.0.13 uses by default: MIDI parsing and the
+# nodes throw inside the module, and its exports catch. Release optimizes at -O2, the level
+# the WebAssembly probe measured, rather than CMake's -O3. No threads, fast maths or relaxed
+# SIMD, all of which are off unless asked for.
+if(EMSCRIPTEN)
+  add_compile_options(-fwasm-exceptions)
+  add_link_options(-fwasm-exceptions)
+  string(REPLACE "-O3" "-O2" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
+endif()
+
 # --- kernel: pure graph runtime, no framework dependencies ---
 add_library(modular_kernel
   kernel/src/Node.cpp
@@ -68,6 +79,23 @@ target_link_libraries(modular_primitive_persistence PUBLIC modular_soundfont)
 add_library(modular_web_core apps/web/Instrument.cpp)
 target_include_directories(modular_web_core PUBLIC apps/web)
 target_link_libraries(modular_web_core PUBLIC modular_kernel modular_midi modular_soundfont)
+
+# The web module and its loader, built only under Emscripten. A client takes the files in
+# dist/: the hand-written loader and its declarations, and the module's glue and .wasm.
+if(EMSCRIPTEN)
+  set(MODULAR_WEB_DIST "${CMAKE_CURRENT_BINARY_DIR}/dist")
+  add_executable(modular_web apps/web/Exports.cpp)
+  target_link_libraries(modular_web PRIVATE modular_web_core)
+  set_target_properties(modular_web PROPERTIES
+    SUFFIX ".mjs"
+    RUNTIME_OUTPUT_DIRECTORY "${MODULAR_WEB_DIST}")
+  target_link_options(modular_web PRIVATE
+    -sMODULARIZE=1 -sEXPORT_ES6=1 -sENVIRONMENT=web,node -sALLOW_MEMORY_GROWTH=1
+    -sEXPORTED_FUNCTIONS=_malloc,_free
+    -sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPF32,UTF8ToString)
+  configure_file(apps/web/modular.mjs "${MODULAR_WEB_DIST}/modular.mjs" COPYONLY)
+  configure_file(apps/web/modular.d.mts "${MODULAR_WEB_DIST}/modular.d.mts" COPYONLY)
+endif()
 
 if(WIN32)
   add_library(modular_windows_audio nodes/src/AudioOutputNode.cpp)
@@ -164,6 +192,22 @@ add_executable(web_core_tests tests/test_web_core.cpp)
 target_include_directories(web_core_tests PRIVATE third_party/doctest)
 target_link_libraries(web_core_tests PRIVATE modular_web_core)
 add_test(NAME web_core_tests COMMAND web_core_tests)
+
+# The web module's smoke test: the loader and module, driven from Node. Its soundfont comes
+# from the test-side builder, written into the build tree first by a writer that links
+# Node's raw file system; CTest runs the writer under Node, the toolchain's emulator.
+if(EMSCRIPTEN)
+  add_executable(web_smoke_fixture tests/web_smoke_fixture.cpp)
+  target_link_options(web_smoke_fixture PRIVATE -sNODERAWFS=1)
+  set(MODULAR_WEB_SMOKE_SOUNDFONT "${CMAKE_CURRENT_BINARY_DIR}/web-smoke.sf2")
+  add_test(NAME web_smoke_fixture
+    COMMAND web_smoke_fixture "${MODULAR_WEB_SMOKE_SOUNDFONT}")
+  add_test(NAME web_smoke COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR}
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_web_smoke.mjs"
+    "${MODULAR_WEB_DIST}/modular.mjs" "${MODULAR_WEB_SMOKE_SOUNDFONT}")
+  set_tests_properties(web_smoke_fixture PROPERTIES FIXTURES_SETUP web_smoke_soundfont)
+  set_tests_properties(web_smoke PROPERTIES FIXTURES_REQUIRED web_smoke_soundfont)
+endif()
 
 add_test(NAME midi_cli_smoke COMMAND "${CMAKE_COMMAND}"
   "-DCLI=$<TARGET_FILE:midi_cli>"
