@@ -7,6 +7,7 @@
 #include <iomanip>
 #include <limits>
 #include <locale>
+#include <optional>
 #include <sstream>
 #include <typeinfo>
 
@@ -116,8 +117,7 @@ void requirePorts(const Node& node, std::span<const PortType> inputs,
 // modular.soundfont/1 SETTINGS: "loaded bank program voiceLimit", or "empty
 // voiceLimit" for a node with no soundfont, in classic-locale decimal.
 struct SoundFontSettings {
-  bool loaded = false;
-  std::uint16_t bank = 0, program = 0;
+  std::optional<SoundFont::PresetNumber> preset; // none for an empty node
   std::uint32_t voiceLimit = 0;
 };
 
@@ -137,11 +137,12 @@ SoundFontSettings soundFontSettings(const std::string& text) {
   SoundFontSettings settings;
   std::string state;
   input >> state;
-  settings.loaded = state == "loaded";
-  if (!settings.loaded && state != "empty") throw invalid();
-  if (settings.loaded) {
-    read(settings.bank);
-    read(settings.program);
+  if (state == "loaded") {
+    settings.preset.emplace();
+    read(settings.preset->bank);
+    read(settings.preset->program);
+  } else if (state != "empty") {
+    throw invalid();
   }
   read(settings.voiceLimit);
   input >> std::ws;
@@ -377,7 +378,7 @@ std::span<const NodeCodec> soundFontCodecs() {
      },
      [](Graph& g, NodeId id, const NodePorts& ports, const NodeContent& content) {
        const auto settings = soundFontSettings(content.settings);
-       if (!settings.loaded) {
+       if (!settings.preset) {
          if (!content.stored.empty())
            throw std::invalid_argument("open: empty soundfont node has content");
          g.restoreNode<SoundFontNode>(id, ports);
@@ -387,10 +388,10 @@ std::span<const NodeCodec> soundFontCodecs() {
                         [](std::byte b) { return std::to_integer<std::uint8_t>(b); });
          // The same parser as a load, so a file that no longer parses fails here.
          g.restoreNode<SoundFontNode>(id, ports, SoundFont::parse(bytes));
+         static_cast<SoundFontNode&>(g.node(id))
+             .setPreset(settings.preset->bank, settings.preset->program);
        }
-       auto& node = static_cast<SoundFontNode&>(g.node(id));
-       if (settings.loaded) node.setPreset(settings.bank, settings.program);
-       node.setVoiceLimit(settings.voiceLimit);
+       static_cast<SoundFontNode&>(g.node(id)).setVoiceLimit(settings.voiceLimit);
        return id;
      }},
   };

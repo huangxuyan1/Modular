@@ -613,25 +613,25 @@ sf2test::Bytes twoPresetSoundFont() {
 // until a test loads it. Every node has a codec, so the graph saves as authored.
 struct SoundFontGraph {
   Workspace workspace;
-  NodeId start = kNoNode, block = kNoNode, synth = kNoNode;
+  NodeId start = kNoNode, notes = kNoNode, synth = kNoNode;
   SoundFontGraph() {
     auto& graph = workspace.graph();
     start = graph.addNode<ManualTriggerNode>();
-    block = graph.addNode<MidiBlockNode>(std::vector<MidiBlockNode::Entry>{
+    notes = graph.addNode<MidiBlockNode>(std::vector<MidiBlockNode::Entry>{
         {7, {0x90, 60, 100}}, {13, {0x91, 67, 90}}, {1031, {0x80, 60, 0}},
         {1307, {0x81, 67, 0}}});
     synth = graph.addNode<SoundFontNode>();
-    auto& midi = static_cast<MidiBlockNode&>(graph.node(block));
+    auto& midi = static_cast<MidiBlockNode&>(graph.node(notes));
     graph.connect(start, static_cast<ManualTriggerNode&>(graph.node(start)).trigger(),
-                  block, midi.trigger());
-    graph.connect(block, midi.midi(), synth, node().midiIn());
+                  notes, midi.trigger());
+    graph.connect(notes, midi.midi(), synth, synthNode().midiIn());
   }
-  SoundFontNode& node() {
+  SoundFontNode& synthNode() {
     return static_cast<SoundFontNode&>(workspace.graph().node(synth));
   }
 };
 
-// Starts the block on frame 101 at every block size and captures the stereo
+// Starts the notes on frame 101 at every block size and captures the stereo
 // output, interleaved, to frame 3001.
 std::vector<float> renderSoundFont(Workspace& workspace, const SoundFontGraph& ids,
                                    double rate, std::uint32_t block) {
@@ -670,8 +670,8 @@ TEST_CASE("a saved soundfont node reopens with its whole file preset and voice l
     node.setVoiceLimit(1); // the second, overlapping note meets a full pool
   };
   SoundFontGraph authored;
-  authored.node().load(source);
-  author(authored.node());
+  authored.synthNode().load(source);
+  author(authored.synthNode());
   const auto codecs = soundFontClientCodecs();
   const auto saved = files.directory / "instrument.modular";
   saveGraphFile(authored.workspace, saved, codecs);
@@ -683,8 +683,8 @@ TEST_CASE("a saved soundfont node reopens with its whole file preset and voice l
 
   for (const double rate : {44100.0, 48000.0}) {
     SoundFontGraph reference;
-    reference.node().load(font);
-    author(reference.node());
+    reference.synthNode().load(font);
+    author(reference.synthNode());
     const auto expected = renderSoundFont(reference.workspace, reference, rate, 17);
     REQUIRE(sounds(expected));
     for (const std::uint32_t block : {1u, 17u, 127u, 512u}) {
@@ -703,9 +703,9 @@ TEST_CASE("a saved soundfont node reopens with its whole file preset and voice l
 
 TEST_CASE("saving a soundfont node during a run writes only its authored content") {
   SoundFontGraph authored;
-  authored.node().load(twoPresetSoundFont());
-  authored.node().setPreset(1, 5);
-  authored.node().setVoiceLimit(3);
+  authored.synthNode().load(twoPresetSoundFont());
+  authored.synthNode().setPreset(1, 5);
+  authored.synthNode().setVoiceLimit(3);
   const auto codecs = soundFontClientCodecs();
   std::stringstream idle;
   saveGraph(authored.workspace, idle, codecs);
@@ -720,7 +720,7 @@ TEST_CASE("saving a soundfont node during a run writes only its authored content
 
 TEST_CASE("an empty soundfont node saves and reopens empty with its voice limit and a load makes it ready") {
   SoundFontGraph authored;
-  authored.node().setVoiceLimit(9);
+  authored.synthNode().setVoiceLimit(9);
   const auto codecs = soundFontClientCodecs();
   std::stringstream saved;
   saveGraph(authored.workspace, saved, codecs);
@@ -741,7 +741,7 @@ TEST_CASE("an empty soundfont node saves and reopens empty with its voice limit 
 
 TEST_CASE("the primitive codecs alone refuse a graph holding a soundfont node") {
   SoundFontGraph authored;
-  authored.node().load(twoPresetSoundFont());
+  authored.synthNode().load(twoPresetSoundFont());
   std::stringstream saved;
   saveGraph(authored.workspace, saved, soundFontClientCodecs());
   Workspace current;
@@ -763,7 +763,8 @@ TEST_CASE("corrupt saved soundfont content fails open without replacing the curr
                           const std::string& out = "PORT 2 0 2 \"out\"") {
     return "MODULAR_GRAPH 1\nNEXT 4\nNODES 1\nNODE 3 \"modular.soundfont/1\"\n"
         "SETTINGS \"" + settings + "\"\nCONTENT \"" + bytesHex(content) + "\"\n"
-        "POSITION 0 0\nINPUTS 1\nPORT 1 2 2 \"midi\"\nOUTPUTS 1\n" + out + "\nWIRES 0\nEND\n";
+        "POSITION 0 0\nINPUTS 1\nPORT 1 2 2 \"midi\"\nOUTPUTS 1\n" + out +
+        "\nWIRES 0\nEND\n";
   };
   const auto codecs = soundFontClientCodecs();
   const auto font = twoPresetSoundFont();
