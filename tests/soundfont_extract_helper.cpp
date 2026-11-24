@@ -41,7 +41,6 @@ namespace {
 
 namespace more {
 // Generators the shared builder does not name.
-inline constexpr std::uint16_t kInitialFilterFc = 8;
 inline constexpr std::uint16_t kFineTune = 52;
 inline constexpr std::uint16_t kUnknown = 99; // no such generator: kept as it is
 } // namespace more
@@ -62,10 +61,10 @@ Modulator modulator(std::uint16_t source, std::uint16_t destination, int amount)
 
 // Samples, by index: 0 "shared" (both presets below), 1 "other-only" (only
 // preset 0:0), 2 and 3 a left/right pair linked to each other, 4 a left sample
-// linked to "other-only", 5 "unused" (no preset).
+// linked to "other-only", 5 "unused" (no preset). Each has a loop inside it.
 // Instruments: 0 plays "other-only"; 1 has a global zone and plays "shared"
 // and "linked-away"; 2 plays the pair, then holds a zone with no sample, which
-// a reader ignores.
+// a reader ignores. Most zones loop, so the node reads the relinked loops.
 // Presets, in file order: "low" 0:0, the extracted "target" 1:5 with global
 // zones at both levels and modulators, "high" 2:7, and a second 1:5.
 File source() {
@@ -81,6 +80,10 @@ File source() {
   file.samples[2].type = 4; // left
   file.samples[3].type = 2; // right
   file.samples[4].type = 4;
+  for (std::size_t s = 0; s < file.samples.size(); ++s) {
+    const auto i = static_cast<std::int64_t>(s);
+    file.samples[s].loop = Loop{101 + 3 * i, 803 + 5 * i};
+  }
 
   file.instruments = {
       {"other-inst",
@@ -95,11 +98,15 @@ File source() {
          {modulator(0x0081, 6, 40)}},
         {{range(gen::kKeyRange, 64, 127), set(more::kFineTune, -13),
           set(gen::kDecayVolEnv, -1500), set(gen::kSustainVolEnv, 300),
-          set(gen::kSampleId, 4), set(gen::kPan, 77)}, // after the terminal: ignored
+          set(gen::kSampleModes, 1), set(gen::kSampleId, 4),
+          set(gen::kPan, 77)}, // after the terminal: ignored
          {}}}},
       {"inst-stereo",
-       {{{set(gen::kPan, -500), set(more::kUnknown, 1234), set(gen::kSampleId, 2)}, {}},
-        {{set(gen::kPan, 500), set(gen::kSampleId, 3)}, {modulator(0x0587, 48, 960)}},
+       {{{set(gen::kPan, -500), set(more::kUnknown, 1234), set(gen::kSampleModes, 1),
+          set(gen::kSampleId, 2)},
+         {}},
+        {{set(gen::kPan, 500), set(gen::kSampleModes, 3), set(gen::kSampleId, 3)},
+         {modulator(0x0587, 48, 960)}},
         {{set(gen::kPan, 0)}, {}}}}, // no sampleID and not first: ignored
   };
 
@@ -109,7 +116,7 @@ File source() {
         {{range(gen::kVelRange, 0, 90), set(gen::kInstrument, 1)}, {}}}},
       {"target", 5, 1,
        {// Global zone: no instrument.
-        {{set(gen::kInitialAttenuation, 40), set(more::kInitialFilterFc, -300),
+        {{set(gen::kInitialAttenuation, 40), set(gen::kInitialFilterFc, -300),
           set(gen::kReverbEffectsSend, 100)},
          {modulator(0x0502, 48, 900), modulator(0x020E, 52, 12700)}},
         {{range(gen::kVelRange, 0, 99), set(gen::kReleaseVolEnv, -300),
@@ -124,25 +131,15 @@ File source() {
   return file;
 }
 
-// Sample header fields the builder leaves at fixed values: loops inside each
-// sample, a pitch correction and the links named above.
+// Sample header fields the builder leaves at fixed values: a pitch correction
+// and the links named above.
 void editSampleHeaders(Parts& parts) {
   for (auto& chunk : parts.pdta) {
     if (chunk.tag != "shdr") continue;
     auto& headers = chunk.data;
-    const auto field = [&](std::size_t sample, std::size_t offset) {
+    const auto field = [](std::size_t sample, std::size_t offset) {
       return sample * 46 + offset;
     };
-    const auto start = [&](std::size_t sample) {
-      const auto at = field(sample, 20);
-      std::uint32_t value = 0;
-      for (int i = 0; i < 4; ++i) value |= std::uint32_t{headers[at + i]} << (8 * i);
-      return value;
-    };
-    for (std::size_t s = 0; s < 6; ++s) {
-      put32(headers, field(s, 28), start(s) + 101 + 3 * static_cast<std::uint32_t>(s));
-      put32(headers, field(s, 32), start(s) + 803 + 5 * static_cast<std::uint32_t>(s));
-    }
     headers[field(0, 41)] = static_cast<std::uint8_t>(-7); // pitch correction
     headers[field(3, 41)] = 9;
     put16(headers, field(2, 42), 3); // left -> right
