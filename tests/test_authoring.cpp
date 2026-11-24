@@ -516,16 +516,18 @@ std::string contentHex(const std::string& text) {
   }
   return result;
 }
+
+// A saved graph holding one MIDI block or MIDI file node, id 4, with the given content.
+std::string midiNodeGraph(const std::string& kind, const std::string& settings,
+                          const std::string& content) {
+  return "MODULAR_GRAPH 1\nNEXT 5\nNODES 1\nNODE 4 \"modular." + kind +
+      "/1\"\nSETTINGS \"" + settings + "\"\nCONTENT \"" + contentHex(content) +
+      "\"\nPOSITION 0 0\nINPUTS 2\nPORT 1 2 1 \"start\"\n"
+      "PORT 2 2 1 \"stop\"\nOUTPUTS 1\nPORT 3 2 2 \"midi\"\nWIRES 0\nEND\n";
+}
 }
 
 TEST_CASE("malformed stored MIDI is rejected without replacing the current authored graph") {
-  const auto encoded = [](const std::string& kind, const std::string& settings,
-                          const std::string& content) {
-    return "MODULAR_GRAPH 1\nNEXT 5\nNODES 1\nNODE 4 \"modular." + kind +
-        "/1\"\nSETTINGS \"" + settings + "\"\nCONTENT \"" + contentHex(content) +
-        "\"\nPOSITION 0 0\nINPUTS 2\nPORT 1 2 1 \"start\"\n"
-        "PORT 2 2 1 \"stop\"\nOUTPUTS 1\nPORT 3 2 2 \"midi\"\nWIRES 0\nEND\n";
-  };
   Workspace current;
   const auto id = current.graph().addNode<ConstFloatNode>(0.625f);
   for (const auto& content : {
@@ -536,7 +538,7 @@ TEST_CASE("malformed stored MIDI is rejected without replacing the current autho
        "1 0 1 0 256 60 100", "1 0 1 0 240 60 100", "1 0 1 0 127 60 100",
        "1 0 1 0 144 128 100", "1 0 1 0 144 60 128", "1 0 1 0 192 9 1"}) {
     INFO(content);
-    std::istringstream input(encoded("midi-file", "loaded", content));
+    std::istringstream input(midiNodeGraph("midi-file", "loaded", content));
     CHECK_THROWS_AS(current = openGraph(input, primitiveCodecs()), std::invalid_argument);
     CHECK(current.graph().nodeIds() == std::vector<NodeId>{id});
     CHECK(static_cast<ConstFloatNode&>(current.graph().node(id)).constant() == 0.625f);
@@ -544,14 +546,45 @@ TEST_CASE("malformed stored MIDI is rejected without replacing the current autho
   for (const auto& content : {"-1", "99999999999", "1 -1 144 60 100",
        "1 18446744073709551616 144 60 100", "2 7 144 60 100 6 128 60 0",
        "1 7 144 128 100", "0 junk"}) {
-    std::istringstream input(encoded("midi-block", "", content));
+    std::istringstream input(midiNodeGraph("midi-block", "", content));
     CHECK_THROWS_AS(current = openGraph(input, primitiveCodecs()), std::invalid_argument);
     CHECK(current.graph().nodeIds() == std::vector<NodeId>{id});
   }
   for (const auto& settings : {"empty", "missing", "loaded/2"}) {
-    std::istringstream input(encoded("midi-file", settings, "1 0 0"));
+    std::istringstream input(midiNodeGraph("midi-file", settings, "1 0 0"));
     CHECK_THROWS_AS(openGraph(input, primitiveCodecs()), std::invalid_argument);
   }
+}
+
+TEST_CASE("stored MIDI file times keep the digits that recover each double as earlier saves wrote them") {
+  // Q:1/4=90 (666,667 us per quarter) at 480 ticks per quarter, a note from tick 40 to
+  // tick 15,000: neither time is a short decimal. The expected text is what Save wrote
+  // while MIDI times were long doubles, MSVC's 64-bit ones, so a graph saved then
+  // reopens to the same times and saves the same bytes.
+  const std::vector<std::uint8_t> bytes{
+      'M','T','h','d', 0,0,0,6, 0,0, 0,1, 1,224,
+      'M','T','r','k', 0,0,0,20,
+      0,0xff,0x51,3,0x0a,0x2c,0x2b, 40,0x90,60,100, 0xf4,0x70,0x80,60,0, 0,0xff,0x2f,0};
+  const auto file = MidiFile::parse(bytes);
+  Workspace authored;
+  authored.graph().addNode<MidiFileNode>(file);
+  const auto earlier = midiNodeGraph("midi-file", "loaded",
+      "20.833343750000001 0 2\n0.055555583333333332 144 60 100\n"
+      "20.833343750000001 128 60 0\n");
+  std::stringstream saved;
+  saveGraph(authored, saved, primitiveCodecs());
+  CHECK(saved.str() == earlier);
+  std::istringstream input(earlier);
+  const auto reopened = openGraph(input, primitiveCodecs());
+  const auto& reopenedFile =
+      static_cast<const MidiFileNode&>(reopened.graph().node(4)).file();
+  CHECK(reopenedFile.durationSeconds() == file.durationSeconds());
+  REQUIRE(reopenedFile.entries().size() == 2);
+  for (std::size_t i = 0; i < 2; ++i)
+    CHECK(reopenedFile.entries()[i].seconds == file.entries()[i].seconds);
+  std::stringstream resaved;
+  saveGraph(reopened, resaved, primitiveCodecs());
+  CHECK(resaved.str() == earlier);
 }
 
 TEST_CASE("an unready MIDI import can be reopened and repaired and failed replacement keeps content") {

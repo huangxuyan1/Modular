@@ -38,10 +38,10 @@ public:
     if (!ready()) throw std::invalid_argument("midi file: select and load a MIDI file first");
     if (!std::isfinite(info.sampleRate) || info.sampleRate <= 0)
       throw std::invalid_argument("midi file: invalid sample rate");
-    const auto frameAt = [&](long double seconds) {
-      const long double frame = std::round(seconds * info.sampleRate);
+    const auto frameAt = [&](double seconds) {
+      const double frame = std::round(seconds * info.sampleRate);
       if (!std::isfinite(frame) || frame < 0 ||
-          frame >= static_cast<long double>(std::numeric_limits<std::uint64_t>::max()))
+          frame >= static_cast<double>(std::numeric_limits<std::uint64_t>::max()))
         throw std::invalid_argument("midi file: frame count overflow");
       return static_cast<std::uint64_t>(frame);
     };
