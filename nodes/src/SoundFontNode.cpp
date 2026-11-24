@@ -186,7 +186,8 @@ void SoundFontNode::prepare(const PrepareInfo& info) {
     plan.modLfoStep = hertz(g[SoundFont::kFreqModLfo]) / rate;
     plan.vibLfo.delay = frames(g[SoundFont::kDelayVibLfo], rate);
     plan.vibLfoStep = hertz(g[SoundFont::kFreqVibLfo]) / rate;
-    plan.pitchMoves = g[SoundFont::kModEnvToPitch] != 0 || g[SoundFont::kModLfoToPitch] != 0 ||
+    plan.pitchMoves = g[SoundFont::kModEnvToPitch] != 0 ||
+                      g[SoundFont::kModLfoToPitch] != 0 ||
                       g[SoundFont::kVibLfoToPitch] != 0;
     plans_.push_back(plan);
   }
@@ -254,7 +255,8 @@ void SoundFontNode::noteOn(std::uint8_t channel, std::uint8_t key, std::uint8_t 
     // Within the zone, keynum and velocity, when set, replace the note's own.
     const auto& g = plan.zone.generators;
     const int zoneKey = g[SoundFont::kKeynum] >= 0 ? g[SoundFont::kKeynum] : key;
-    const int zoneVelocity = g[SoundFont::kVelocity] >= 0 ? g[SoundFont::kVelocity] : velocity;
+    const int zoneVelocity =
+        g[SoundFont::kVelocity] >= 0 ? g[SoundFont::kVelocity] : velocity;
     voice.pitch = g[SoundFont::kScaleTuning] * (zoneKey - plan.root) + plan.tuning;
     voice.increment = maths::exp2(voice.pitch / 1200) * plan.rateRatio;
     // The default velocity-to-attenuation modulator adds to the zone's.
@@ -285,8 +287,8 @@ void SoundFontNode::scaleToKey(Voice& voice, const PreparedZone& plan, int key) 
     return std::clamp(g[stage] + g[perKey] * (60 - key), std::int32_t{-12000}, longest);
   };
   auto& volume = voice.volume.timeline;
-  volume.hold = frames(atKey(SoundFont::kHoldVolEnv, SoundFont::kKeynumToVolEnvHold, 5000),
-                       rate_);
+  volume.hold =
+      frames(atKey(SoundFont::kHoldVolEnv, SoundFont::kKeynumToVolEnvHold, 5000), rate_);
   const double decayFramesPerDb =
       seconds(atKey(SoundFont::kDecayVolEnv, SoundFont::kKeynumToVolEnvDecay, 8000)) *
       rate_ / 100;
@@ -302,7 +304,8 @@ void SoundFontNode::scaleToKey(Voice& voice, const PreparedZone& plan, int key) 
       seconds(atKey(SoundFont::kDecayModEnv, SoundFont::kKeynumToModEnvDecay, 8000)) *
       rate_;
   const double sustainFall = g[SoundFont::kSustainModEnv] / 1000.0;
-  modulation.decay = static_cast<std::uint64_t>(std::ceil(sustainFall * voice.modDecayFrames));
+  modulation.decay =
+      static_cast<std::uint64_t>(std::ceil(sustainFall * voice.modDecayFrames));
 }
 
 // Ends the key's oldest held note: it releases every voice of that note still
@@ -477,7 +480,8 @@ void SoundFontNode::Lfo::advance(double step) {
 // rate, as FluidSynth keeps it, so a high one cannot reach Nyquist.
 void SoundFontNode::Filter::tune(std::int64_t cutoff, double rate, double damping) {
   cents = cutoff;
-  const double angle = kPi * std::min(hertz(static_cast<double>(cutoff)), 0.45 * rate) / rate;
+  const double angle =
+      kPi * std::min(hertz(static_cast<double>(cutoff)), 0.45 * rate) / rate;
   const double g = maths::sin(angle) / maths::cos(angle);
   a1 = 1 / (1 + g * (g + damping));
   a2 = g * a1;
@@ -513,10 +517,10 @@ void SoundFontNode::render(Voice& voice, float* left, float* right, std::uint32_
       const double modLfo = voice.modLfo.value();
       // The cutoff in whole cents: the voice's base, plus the modulation
       // envelope's and the modulation LFO's terms.
-      if (const auto cents = std::llround(voice.baseCutoff + g[SoundFont::kModEnvToFilterFc] * modEnv +
-                                          g[SoundFont::kModLfoToFilterFc] * modLfo);
-          cents != voice.filter.cents)
-        voice.filter.tune(cents, rate_, plan.damping);
+      const auto cents =
+          std::llround(voice.baseCutoff + g[SoundFont::kModEnvToFilterFc] * modEnv +
+                       g[SoundFont::kModLfoToFilterFc] * modLfo);
+      if (cents != voice.filter.cents) voice.filter.tune(cents, rate_, plan.damping);
       // Linear interpolation. While looping, the loop's last point is followed
       // by its first, so no point past the loop is read; past the sample's
       // last point the sample is silent.

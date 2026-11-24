@@ -128,7 +128,8 @@ private:
   struct Points {
     std::uint32_t start = 0, end = 0, loopStart = 0, loopEnd = 0;
     // Why a zone that would loop plays unlooped, if it does.
-    enum class Fault : std::uint8_t { kNone, kLoopOutside, kLoopEmpty } fault = Fault::kNone;
+    enum class Fault : std::uint8_t { kNone, kLoopOutside, kLoopEmpty };
+    Fault fault = Fault::kNone;
   };
   struct ParsedZone {
     std::array<std::int16_t, kGeneratorCount> amounts{};

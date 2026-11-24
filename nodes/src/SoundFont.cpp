@@ -247,8 +247,8 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
       sample.loopEnd = list.integer(4);
       sample.rate = list.integer(4);
       sample.originalPitch = static_cast<std::uint8_t>(list.integer(1));
-      sample.correction = static_cast<std::int8_t>(static_cast<std::uint8_t>(list.integer(1)));
-      list.take(2); // link
+      sample.correction = static_cast<std::int8_t>(list.integer(1)); // signed cents
+      list.take(2);                                                  // link
       const auto type = list.integer(2);
       if ((type & 0x10) != 0) invalid("compressed samples (sf3) are not supported");
       sample.rom = (type & 0x8000) != 0;
@@ -424,15 +424,18 @@ SoundFont::Points SoundFont::place(const ParsedZone& zone,
     return std::int64_t{header} + value(fine) + std::int64_t{32768} * value(coarse);
   };
   const auto withinSample = [&](std::int64_t point) {
-    return static_cast<std::uint32_t>(std::clamp<std::int64_t>(point, sample.start, sample.end));
+    return static_cast<std::uint32_t>(
+        std::clamp<std::int64_t>(point, sample.start, sample.end));
   };
   Points points;
-  points.start = withinSample(address(sample.start, kStartAddrsOffset, kStartAddrsCoarseOffset));
-  points.end = std::max(points.start,
-                        withinSample(address(sample.end, kEndAddrsOffset, kEndAddrsCoarseOffset)));
+  points.start =
+      withinSample(address(sample.start, kStartAddrsOffset, kStartAddrsCoarseOffset));
+  points.end = std::max(points.start, withinSample(address(sample.end, kEndAddrsOffset,
+                                                           kEndAddrsCoarseOffset)));
   const auto loopStart =
       address(sample.loopStart, kStartloopAddrsOffset, kStartloopAddrsCoarseOffset);
-  const auto loopEnd = address(sample.loopEnd, kEndloopAddrsOffset, kEndloopAddrsCoarseOffset);
+  const auto loopEnd =
+      address(sample.loopEnd, kEndloopAddrsOffset, kEndloopAddrsCoarseOffset);
   const auto played = [&](std::int64_t point) {
     return points.start <= point && point <= points.end;
   };
