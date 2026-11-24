@@ -569,3 +569,104 @@ TEST_CASE("a second Engine on the same graph renders the same samples as the fir
   CHECK(first.left == second.left);
   CHECK(first.right == second.right);
 }
+
+namespace {
+
+// Two velocity zones, full left, told apart by level: soft notes play 1000
+// and loud ones 2000. Each releases 100 dB in 0.5 s.
+Bytes twoVelocities() {
+  File file;
+  file.samples = {{"soft", steady(1000, 60000)}, {"loud", steady(2000, 60000)}};
+  file.instruments.push_back({"i", {{{set(gen::kPan, -500), set(gen::kReleaseVolEnv, -1200)}},
+                                    {{range(gen::kVelRange, 0, 63), set(gen::kSampleId, 0)}},
+                                    {{range(gen::kVelRange, 64, 127), set(gen::kSampleId, 1)}}}});
+  file.presets.push_back({"p", 0, 0, {{{set(gen::kInstrument, 0)}}}});
+  return build(file);
+}
+
+double levelAt(const Stereo& out, std::size_t frame) { return out.left.at(frame) * 32768.0; }
+
+} // namespace
+
+TEST_CASE("a note-on with velocity 0 is a note-off and note-off velocity is ignored") {
+  const auto font = twoVelocities();
+  const auto withZero = play(font, {{0, noteOn(0, 60, 100)}, {2003, MidiMsg{0x90, 60, 0}}},
+                             {48000, 128, 30000});
+  const auto withOff = play(font, {{0, noteOn(0, 60, 100)}, {2003, MidiMsg{0x80, 60, 64}}},
+                            {48000, 128, 30000});
+  CHECK(withZero.left == withOff.left);
+  // From full level the release ends 96 dB down, 0.48 s later.
+  CHECK(std::abs(static_cast<double>(lastSounding(withZero.left) + 1) - (2003 + 23040)) <= 1);
+}
+
+TEST_CASE("every channel plays the preset and other channel messages change nothing") {
+  const auto font = twoVelocities();
+  const auto reference = play(font, {{0, noteOn(0, 60, 100)}, {1500, noteOff(0, 60)}},
+                              {48000, 128, 30000});
+  // Channel 10 (status nibble 9), with a program change, volume, the sustain
+  // pedal, pitch bend and pressure among its notes.
+  const auto drums = play(font, {{0, MidiMsg{0xc9, 40, 0}},
+                                 {0, noteOn(9, 60, 100)},
+                                 {300, MidiMsg{0xb9, 7, 20}},
+                                 {500, MidiMsg{0xe9, 0, 127}},
+                                 {700, MidiMsg{0xc9, 1, 0}},
+                                 {900, MidiMsg{0xd9, 100, 0}},
+                                 {1000, MidiMsg{0xb9, 64, 127}},
+                                 {1200, MidiMsg{0xa9, 60, 90}},
+                                 {1500, noteOff(9, 60)}},
+                          {48000, 128, 30000});
+  CHECK(levelAt(reference, 1000) == doctest::Approx(2000));
+  CHECK(drums.left == reference.left);
+  CHECK(drums.right == reference.right);
+}
+
+TEST_CASE("a key struck again sounds beside its earlier note and note-offs end the oldest first") {
+  const auto out = play(twoVelocities(),
+                        {{0, noteOn(0, 60, 100)}, {1000, noteOn(0, 60, 30)},
+                         {2000, noteOff(0, 60)}, {30000, noteOff(0, 60)}},
+                        {48000, 128, 54000});
+  CHECK(levelAt(out, 1500) == doctest::Approx(3000));
+  // The loud note, struck first, is released first: 0.1 s later it is 20 dB
+  // down, while the soft one still holds.
+  CHECK(levelAt(out, 2000 + 4800) == doctest::Approx(1000 + 200).epsilon(1e-4));
+  CHECK(levelAt(out, 29000) == doctest::Approx(1000));
+  CHECK(std::abs(static_cast<double>(lastSounding(out.left) + 1) - (30000 + 23040)) <= 1);
+}
+
+TEST_CASE("a note-off with no held note on its key does nothing") {
+  const auto font = twoVelocities();
+  const auto reference = play(font, {{0, noteOn(0, 60, 100)}, {1000, noteOff(0, 60)}},
+                              {48000, 128, 30000});
+  const auto strays = play(font, {{0, noteOn(0, 60, 100)}, {500, noteOff(0, 61)},
+                                  {600, noteOff(1, 60)}, {1000, noteOff(0, 60)},
+                                  {1500, noteOff(0, 60)}},
+                           {48000, 128, 30000});
+  CHECK(strays.left == reference.left);
+}
+
+TEST_CASE("two parts in unison on two channels both sound and end separately") {
+  const auto out = play(twoVelocities(),
+                        {{0, noteOn(0, 60, 100)}, {0, noteOn(1, 60, 100)},
+                         {1000, noteOff(1, 60)}},
+                        {48000, 128, 30000});
+  CHECK(levelAt(out, 900) == doctest::Approx(4000));
+  CHECK(levelAt(out, 1000 + 4800) == doctest::Approx(2000 + 200).epsilon(1e-4));
+  CHECK(levelAt(out, 29000) == doctest::Approx(2000));
+}
+
+TEST_CASE("for now a note-on that finds too few free voices is not started") {
+  // Interim rule until voices are taken (ticket 03). A stereo pair needs two
+  // voices; with three, a second note finds one free and does not start.
+  File file;
+  file.samples = {{"s", steady(1000, 60000)}};
+  file.instruments.push_back({"pair", {{{set(gen::kPan, -500), set(gen::kSampleId, 0)}},
+                                       {{set(gen::kPan, 500), set(gen::kSampleId, 0)}}}});
+  file.presets.push_back({"p", 0, 0, {{{set(gen::kInstrument, 0)}}}});
+  const auto font = build(file);
+  const auto limit = [](SoundFontNode& node) { node.setVoiceLimit(3); };
+  const auto alone = play(font, {{0, noteOn(0, 60, 100)}}, {48000, 128, 3000}, limit);
+  const auto crowded = play(font, {{0, noteOn(0, 60, 100)}, {500, noteOn(0, 62, 100)}},
+                            {48000, 128, 3000}, limit);
+  CHECK(crowded.left == alone.left);
+  CHECK(crowded.right == alone.right);
+}

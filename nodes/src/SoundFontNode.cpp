@@ -143,13 +143,16 @@ void SoundFontNode::process(ProcessContext& ctx) {
 void SoundFontNode::noteOn(std::uint8_t channel, std::uint8_t key, std::uint8_t velocity) {
   std::size_t needed = 0;
   for (const auto& plan : plans_) needed += matches(plan.zone, key, velocity) ? 1 : 0;
-  if (needed == 0) return;
+  // Interim, until a full pool takes whole notes (ticket 03): a note that
+  // finds too few free voices for all its zones does not start.
+  const auto free = std::count_if(voices_.begin(), voices_.end(),
+                                  [](const Voice& voice) { return !voice.active; });
+  if (needed == 0 || static_cast<std::size_t>(free) < needed) return;
   ++notes_;
   std::size_t slot = 0;
   for (std::uint32_t p = 0; p < plans_.size(); ++p) {
     if (!matches(plans_[p].zone, key, velocity)) continue;
-    while (slot < voices_.size() && voices_[slot].active) ++slot;
-    if (slot == voices_.size()) return;
+    while (voices_[slot].active) ++slot;
     auto& voice = voices_[slot];
     voice = Voice{};
     voice.active = voice.held = true;
