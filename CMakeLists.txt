@@ -345,3 +345,10 @@ endif()
 add_test(NAME kernel_purity
          COMMAND "${CMAKE_COMMAND}" -P
                  "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_kernel_purity.cmake")
+
+# The soundfont node's portable maths: no soundfont node source but its maths
+# header calls a maths-library transcendental, so native and WebAssembly builds
+# render the same bits. Checked on the source, like kernel purity.
+add_test(NAME soundfont_portable_maths
+         COMMAND "${CMAKE_COMMAND}" -P
+                 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_soundfont_maths.cmake")
