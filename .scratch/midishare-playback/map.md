@@ -87,6 +87,9 @@ build, as roadmap ticket 04's did. Research findings live under `research/` here
   file, so the site ships a single-preset extract. Recommended default: FluidR3_GM's acoustic
   grand piano (MIT, today's sound), fallback FreePats' Upright Piano KW small (CC0); the extract's
   size needs the file, so measuring it is a new task.
+- [Measure the FluidR3_GM piano before it becomes the default](issues/10-measure-the-fluidr3-piano.md)
+  — it fits: the full piano preset extracts to a 7.45 MiB SF2 (5.13 MiB for notes 36–95);
+  one velocity layer of 32 kHz stereo pairs played as panned mono zones, with an audible filter.
 
 ## Not yet specified
 
