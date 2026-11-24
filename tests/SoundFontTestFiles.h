@@ -254,7 +254,8 @@ inline void put16(Bytes& bytes, std::size_t offset, std::uint16_t value) {
 }
 
 inline void put32(Bytes& bytes, std::size_t offset, std::uint32_t value) {
-  for (int i = 0; i < 4; ++i) bytes.at(offset + i) = static_cast<std::uint8_t>(value >> (8 * i));
+  for (int i = 0; i < 4; ++i)
+    bytes.at(offset + i) = static_cast<std::uint8_t>(value >> (8 * i));
 }
 
 } // namespace sf2test

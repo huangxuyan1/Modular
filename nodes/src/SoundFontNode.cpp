@@ -34,9 +34,13 @@ SoundFontNode::SoundFontNode(Graph& graph, SoundFont soundFont) : SoundFontNode(
   adopt(std::move(soundFont));
 }
 
-void SoundFontNode::load(std::span<const std::uint8_t> bytes) { adopt(SoundFont::parse(bytes)); }
+void SoundFontNode::load(std::span<const std::uint8_t> bytes) {
+  adopt(SoundFont::parse(bytes));
+}
 
-void SoundFontNode::load(const std::filesystem::path& path) { adopt(SoundFont::read(path)); }
+void SoundFontNode::load(const std::filesystem::path& path) {
+  adopt(SoundFont::read(path));
+}
 
 void SoundFontNode::adopt(SoundFont soundFont) {
   const auto preset = soundFont.lowestPreset();
@@ -57,7 +61,8 @@ void SoundFontNode::setVoiceLimit(std::uint32_t limit) {
   voice_limit_ = limit;
 }
 
-void SoundFontNode::select(SoundFont::PresetNumber preset, std::vector<SoundFont::Zone> zones) {
+void SoundFontNode::select(SoundFont::PresetNumber preset,
+                           std::vector<SoundFont::Zone> zones) {
   // The most zones any one key and velocity match: the voices one note starts.
   std::uint32_t most = 0;
   for (int key = 0; key < 128; ++key)
@@ -79,7 +84,8 @@ void SoundFontNode::prepare(const PrepareInfo& info) {
   if (!std::isfinite(rate) || rate <= 0)
     throw std::invalid_argument("soundfont: invalid sample rate");
   if (voice_limit_ < voices_per_note_)
-    throw std::invalid_argument("soundfont: voice limit is below the voices one note starts");
+    throw std::invalid_argument(
+        "soundfont: voice limit is below the voices one note starts");
   const auto frames = [&](std::int32_t timecents) {
     return static_cast<std::uint64_t>(std::llround(seconds(timecents) * rate));
   };
@@ -87,7 +93,7 @@ void SoundFontNode::prepare(const PrepareInfo& info) {
   plans_.reserve(zones_.size());
   for (const auto& zone : zones_) {
     const auto& g = zone.generators;
-    Plan plan;
+    PreparedZone plan;
     plan.zone = zone;
     plan.root = g[SoundFont::kOverridingRootKey] >= 0 ? g[SoundFont::kOverridingRootKey]
               : zone.originalPitch <= 127 ? zone.originalPitch : 60;
@@ -113,7 +119,7 @@ void SoundFontNode::prepare(const PrepareInfo& info) {
     plans_.push_back(plan);
   }
   voices_.assign(voice_limit_, Voice{});
-  notes_ = 0;
+  note_ons_ = 0;
 }
 
 void SoundFontNode::process(ProcessContext& ctx) {
@@ -145,10 +151,10 @@ void SoundFontNode::noteOn(std::uint8_t channel, std::uint8_t key, std::uint8_t 
   for (const auto& plan : plans_) needed += matches(plan.zone, key, velocity) ? 1 : 0;
   // Interim, until a full pool takes whole notes (ticket 03): a note that
   // finds too few free voices for all its zones does not start.
-  const auto free = std::count_if(voices_.begin(), voices_.end(),
+  const auto idle = std::count_if(voices_.begin(), voices_.end(),
                                   [](const Voice& voice) { return !voice.active; });
-  if (needed == 0 || static_cast<std::size_t>(free) < needed) return;
-  ++notes_;
+  if (needed == 0 || static_cast<std::size_t>(idle) < needed) return;
+  ++note_ons_;
   std::size_t slot = 0;
   for (std::uint32_t p = 0; p < plans_.size(); ++p) {
     if (!matches(plans_[p].zone, key, velocity)) continue;
@@ -157,10 +163,11 @@ void SoundFontNode::noteOn(std::uint8_t channel, std::uint8_t key, std::uint8_t 
     voice = Voice{};
     voice.active = voice.held = true;
     voice.plan = p;
-    voice.note = notes_;
+    voice.note = note_ons_;
     voice.channel = channel;
     voice.key = key;
     voice.increment = maths::exp2((key - plans_[p].root) / 12.0) * plans_[p].rateRatio;
+    voice.active = sounds(voice, plans_[p]);
   }
 }
 
@@ -196,7 +203,7 @@ void SoundFontNode::startRelease(Voice& voice) {
 
 // Passes over the envelope's finished stages, so the voice's stage holds its
 // next frame. False once its envelope has ended.
-bool SoundFontNode::settle(Voice& voice, const Plan& plan) {
+bool SoundFontNode::settle(Voice& voice, const PreparedZone& plan) {
   for (;;) {
     switch (voice.stage) {
     case Stage::kDelay:
@@ -228,7 +235,7 @@ bool SoundFontNode::settle(Voice& voice, const Plan& plan) {
 }
 
 // The envelope's level for the voice's next frame, once settled.
-double SoundFontNode::level(const Voice& voice, const Plan& plan) {
+double SoundFontNode::level(const Voice& voice, const PreparedZone& plan) {
   switch (voice.stage) {
   case Stage::kDelay:
     return 0;
@@ -241,36 +248,39 @@ double SoundFontNode::level(const Voice& voice, const Plan& plan) {
   }
 }
 
+// Settles a voice for its next frame. False once it has ended: a voice ends
+// on the frame after its last sound, so a note-on there finds its slot free.
+bool SoundFontNode::sounds(Voice& voice, const PreparedZone& plan) {
+  if (!settle(voice, plan)) return false;
+  const std::uint64_t points = plan.zone.sampleEnd - plan.zone.sampleStart;
+  return static_cast<std::uint64_t>(voice.position) < points;
+}
+
 void SoundFontNode::render(Voice& voice, float* left, float* right, std::uint32_t from,
                            std::uint32_t to) {
   const auto& plan = plans_[voice.plan];
   const auto& zone = plan.zone;
   const std::uint64_t points = zone.sampleEnd - zone.sampleStart;
   for (std::uint32_t i = from; i < to; ++i) {
-    if (!settle(voice, plan)) {
-      voice.active = false;
-      return;
+    if (voice.stage != Stage::kDelay) { // in the delay, silent, and the sample waits
+      // Linear interpolation; past the last point the sample is silent.
+      const auto index = static_cast<std::uint64_t>(voice.position);
+      const double a = sound_font_->point(zone.sampleStart + index);
+      const double b =
+          index + 1 < points ? sound_font_->point(zone.sampleStart + index + 1) : 0.0;
+      const double sample =
+          (a + (b - a) * (voice.position - index)) / 32768.0 * level(voice, plan);
+      left[i] += static_cast<float>(sample * plan.gainLeft);
+      right[i] += static_cast<float>(sample * plan.gainRight);
+      voice.position += voice.increment;
+      if (voice.stage == Stage::kDecay) voice.level *= plan.decayFactor;
+      else if (voice.stage == Stage::kRelease) voice.level *= plan.releaseFactor;
     }
-    if (voice.stage == Stage::kDelay) { // silent, and the sample waits
-      ++voice.frame;
-      continue;
-    }
-    const auto index = static_cast<std::uint64_t>(voice.position);
-    if (index >= points) {
-      voice.active = false;
-      return;
-    }
-    // Linear interpolation; past the last point the sample is silent.
-    const double a = sound_font_->point(zone.sampleStart + index);
-    const double b = index + 1 < points ? sound_font_->point(zone.sampleStart + index + 1) : 0.0;
-    const double sample =
-        (a + (b - a) * (voice.position - index)) / 32768.0 * level(voice, plan);
-    left[i] += static_cast<float>(sample * plan.gainLeft);
-    right[i] += static_cast<float>(sample * plan.gainRight);
-    voice.position += voice.increment;
     ++voice.frame;
-    if (voice.stage == Stage::kDecay) voice.level *= plan.decayFactor;
-    else if (voice.stage == Stage::kRelease) voice.level *= plan.releaseFactor;
+    if (!sounds(voice, plan)) {
+      voice.active = false;
+      return;
+    }
   }
 }
 

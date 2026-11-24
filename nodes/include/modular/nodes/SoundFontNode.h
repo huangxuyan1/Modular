@@ -58,7 +58,7 @@ private:
   enum class Stage : std::uint8_t { kDelay, kAttack, kHold, kDecay, kSustain, kRelease };
 
   // One zone of the selected preset, with what depends on the sample rate.
-  struct Plan {
+  struct PreparedZone {
     SoundFont::Zone zone;
     int root = 60;
     double rateRatio = 1;  // sample rate over graph rate
@@ -89,9 +89,11 @@ private:
   void noteOn(std::uint8_t channel, std::uint8_t key, std::uint8_t velocity);
   void noteOff(std::uint8_t channel, std::uint8_t key);
   void startRelease(Voice& voice);
-  void render(Voice& voice, float* left, float* right, std::uint32_t from, std::uint32_t to);
-  static bool settle(Voice& voice, const Plan& plan);
-  static double level(const Voice& voice, const Plan& plan);
+  void render(Voice& voice, float* left, float* right, std::uint32_t from,
+              std::uint32_t to);
+  static bool settle(Voice& voice, const PreparedZone& plan);
+  static bool sounds(Voice& voice, const PreparedZone& plan);
+  static double level(const Voice& voice, const PreparedZone& plan);
 
   PortId midi_ = kNoPort, out_ = kNoPort;
   std::optional<SoundFont> sound_font_;
@@ -101,10 +103,9 @@ private:
   std::uint32_t voice_limit_ = kDefaultVoiceLimit;
 
   // Execution state, built by prepare().
-  double sample_rate_ = 0;
-  std::vector<Plan> plans_;
+  std::vector<PreparedZone> plans_;
   std::vector<Voice> voices_;
-  std::uint64_t notes_ = 0;
+  std::uint64_t note_ons_ = 0; // note-ons started, which numbers each note
 };
 
 } // namespace modular::nodes

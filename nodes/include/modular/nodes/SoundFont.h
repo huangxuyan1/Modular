@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -36,6 +37,7 @@ public:
   struct PresetNumber {
     std::uint16_t bank = 0;
     std::uint16_t program = 0;
+    bool operator==(const PresetNumber&) const = default;
   };
 
   // One instrument zone as a preset plays it. Generators hold the final values:
@@ -54,7 +56,6 @@ public:
   static SoundFont parse(std::span<const std::uint8_t> bytes);
   static SoundFont read(const std::filesystem::path& path);
 
-  bool hasPreset(PresetNumber preset) const;
   // The lowest bank, then the lowest program in it.
   PresetNumber lowestPreset() const;
   // Every instrument zone the preset can play. Throws if the file lacks it.
@@ -72,16 +73,14 @@ private:
     std::array<bool, kGeneratorCount> given{};
     std::uint16_t target = 0; // instrument or sample index
   };
+  // A preset's or instrument's zones, and its global zone if it has one.
+  struct Zones {
+    std::optional<ParsedZone> global;
+    std::vector<ParsedZone> local;
+  };
   struct Preset {
     PresetNumber number;
-    bool hasGlobal = false;
-    ParsedZone global;
-    std::vector<ParsedZone> zones;
-  };
-  struct Instrument {
-    bool hasGlobal = false;
-    ParsedZone global;
-    std::vector<ParsedZone> zones;
+    Zones zones;
   };
   struct Sample {
     std::uint32_t start = 0, end = 0, rate = 0;
@@ -92,7 +91,7 @@ private:
   std::vector<std::uint8_t> bytes_;
   std::size_t sample_data_ = 0; // byte offset of the first point
   std::vector<Preset> presets_;
-  std::vector<Instrument> instruments_;
+  std::vector<Zones> instruments_;
   std::vector<Sample> samples_;
 };
 

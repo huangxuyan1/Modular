@@ -152,7 +152,9 @@ double frequency(const std::vector<float>& s, std::size_t from, std::size_t to, 
   return (crossings - 1) * rate / (last - first);
 }
 
-double cents(double measured, double expected) { return 1200 * std::log2(measured / expected); }
+double cents(double measured, double expected) {
+  return 1200 * std::log2(measured / expected);
+}
 
 std::size_t firstSounding(const std::vector<float>& samples, std::size_t from = 0) {
   for (std::size_t i = from; i < samples.size(); ++i)
@@ -219,7 +221,7 @@ TEST_CASE("a sample played between its points is interpolated") {
   for (std::size_t i = 0; i < ramp.size(); ++i)
     ramp[i] = static_cast<std::int16_t>(64 * i + 64);
   auto file = oneZone(ramp, {set(gen::kPan, -500), set(gen::kOverridingRootKey, 72)});
-  const auto out = play(build(file), {{0, noteOn(0, 60, 100)}}, {48000, 128, 1200});
+  const auto out = play(build(file), {{13, noteOn(0, 60, 100)}}, {48000, 128, 1200});
   const auto onset = firstSounding(out.left);
   // Past the attack and hold, frame k of the voice reads point k / 2.
   for (std::size_t k = 200; k < 600; ++k) {
@@ -254,7 +256,8 @@ TEST_CASE("the volume envelope's delay attack hold decay and sustain take their 
   // Delay -4800 timecents is 62.5 ms, attack -6000 is 31.25 ms and hold -7200
   // is 15.625 ms: 3000, 1500 and 750 frames at 48 kHz. Decay -1200 falls
   // 100 dB in 0.5 s, so reaching a 200 cB (20 dB) sustain takes 0.1 s.
-  const auto font = envelopeFont({set(gen::kDelayVolEnv, -4800), set(gen::kAttackVolEnv, -6000),
+  const auto font = envelopeFont({set(gen::kDelayVolEnv, -4800),
+                                  set(gen::kAttackVolEnv, -6000),
                                   set(gen::kHoldVolEnv, -7200), set(gen::kDecayVolEnv, -1200),
                                   set(gen::kSustainVolEnv, 200)});
   const auto out = play(font, {{7, noteOn(0, 60, 100)}}, {48000, 128, 16000});
@@ -314,7 +317,7 @@ TEST_CASE("equal-power pan puts a centred zone 3 dB down on each side and +-500 
   for (const int pan : {-500, 0, 500}) {
     CAPTURE(pan);
     const auto out = play(build(oneZone(steady(16384, 2000), {set(gen::kPan, pan)})),
-                          {{0, noteOn(0, 60, 100)}}, {48000, 128, 1000});
+                          {{13, noteOn(0, 60, 100)}}, {48000, 128, 1000});
     const double left = out.left[500] / 0.5, right = out.right[500] / 0.5;
     if (pan == 0) {
       CHECK(db(left) == doctest::Approx(-3.0103).epsilon(1e-4));
@@ -329,7 +332,7 @@ TEST_CASE("equal-power pan puts a centred zone 3 dB down on each side and +-500 
 TEST_CASE("initialAttenuation lowers a voice by its centibels") {
   // 60 cB is 6 dB.
   const auto out = play(envelopeFont({set(gen::kInitialAttenuation, 60)}),
-                        {{0, noteOn(0, 60, 100)}}, {48000, 128, 1000});
+                        {{13, noteOn(0, 60, 100)}}, {48000, 128, 1000});
   CHECK(db(level(out, 500)) == doctest::Approx(-6).epsilon(1e-5));
 }
 
@@ -339,7 +342,7 @@ TEST_CASE("a stereo pair plays as two voices and keeps its image") {
   file.instruments.push_back({"pair", {{{set(gen::kPan, -500), set(gen::kSampleId, 0)}},
                                        {{set(gen::kPan, 500), set(gen::kSampleId, 1)}}}});
   file.presets.push_back({"preset", 0, 0, {{{set(gen::kInstrument, 0)}}}});
-  const auto out = play(build(file), {{0, noteOn(0, 60, 100)}}, {48000, 128, 1000});
+  const auto out = play(build(file), {{13, noteOn(0, 60, 100)}}, {48000, 128, 1000});
   for (std::size_t i = 300; i < 1000; ++i) {
     CHECK(out.left[i] == doctest::Approx(8000.0 / 32768));
     CHECK(out.right[i] == doctest::Approx(-4000.0 / 32768));
@@ -350,7 +353,7 @@ namespace {
 
 // The left level once a note's envelope is flat, in sample-data units.
 double plays(const Bytes& font, int key, int velocity) {
-  const auto out = play(font, {{0, noteOn(0, key, velocity)}}, {48000, 128, 400});
+  const auto out = play(font, {{13, noteOn(0, key, velocity)}}, {48000, 128, 400});
   return out.left[300] * 32768.0;
 }
 
@@ -394,7 +397,7 @@ TEST_CASE("preset-level values add to instrument-level ones and instrument-only 
   file.presets[0].zones.insert(file.presets[0].zones.begin(),
                                {{set(gen::kInitialAttenuation, 140),
                                  set(gen::kOverridingRootKey, 72)}});
-  const auto out = play(build(file), {{0, noteOn(0, 60, 100)}}, {48000, 128, 2000});
+  const auto out = play(build(file), {{13, noteOn(0, 60, 100)}}, {48000, 128, 2000});
   CHECK(db(level(out, 400)) == doctest::Approx(-24).epsilon(1e-5));
   CHECK(lastSounding(out.left) - firstSounding(out.left) == 599);
 }
@@ -412,7 +415,7 @@ TEST_CASE("a preset-level release per velocity zone adds to the instrument's rel
   const auto font = build(file);
   for (const auto& [velocity, seconds] : {std::pair{40, 0.24}, std::pair{100, 0.48}}) {
     CAPTURE(velocity);
-    const auto out = play(font, {{0, noteOn(0, 60, velocity)}, {1009, noteOff(0, 60)}},
+    const auto out = play(font, {{13, noteOn(0, 60, velocity)}, {1009, noteOff(0, 60)}},
                           {48000, 128, 30000});
     CHECK(std::abs(static_cast<double>(lastSounding(out.left) + 1) -
                    (1009 + seconds * 48000)) <= 1);
@@ -424,11 +427,11 @@ TEST_CASE("generator values outside the specification's ranges are clamped once 
   File file = oneZone(steady(16384, 2000), {set(gen::kPan, 400)});
   file.presets[0].zones[0].generators.insert(file.presets[0].zones[0].generators.begin(),
                                              set(gen::kPan, 300));
-  auto out = play(build(file), {{0, noteOn(0, 60, 100)}}, {48000, 128, 1000});
+  auto out = play(build(file), {{13, noteOn(0, 60, 100)}}, {48000, 128, 1000});
   CHECK(out.left[500] == 0);
   CHECK(out.right[500] == 0.5f);
   // FluidR3's attack of -32768 timecents is clamped to -12000: 46.875 frames.
-  out = play(envelopeFont({set(gen::kAttackVolEnv, -32768)}), {{0, noteOn(0, 60, 100)}},
+  out = play(envelopeFont({set(gen::kAttackVolEnv, -32768)}), {{13, noteOn(0, 60, 100)}},
              {48000, 128, 1000});
   const auto onset = firstSounding(out.left);
   std::size_t peak = onset;
@@ -452,7 +455,7 @@ Bytes threePresets() {
   return build(file);
 }
 
-const std::vector<Timed> kOneNote{{0, noteOn(0, 60, 100)}};
+const std::vector<Timed> kOneNote{{13, noteOn(0, 60, 100)}};
 
 double steadyLevel(const Stereo& out) { return out.left.at(300) * 32768.0; }
 
@@ -497,7 +500,8 @@ TEST_CASE("a failed load throws and keeps the previous soundfont and preset") {
   auto truncated = threePresets();
   truncated.pop_back();
   CHECK_THROWS_AS(rig.node().load(truncated), std::invalid_argument);
-  CHECK_THROWS_AS(rig.node().load(std::filesystem::path("missing.sf2")), std::invalid_argument);
+  CHECK_THROWS_AS(rig.node().load(std::filesystem::path("missing.sf2")),
+                  std::invalid_argument);
   CHECK(rig.node().program() == 5);
   CHECK(steadyLevel(rig.run()) == doctest::Approx(2000));
 }
@@ -579,9 +583,10 @@ namespace {
 Bytes twoVelocities() {
   File file;
   file.samples = {{"soft", steady(1000, 60000)}, {"loud", steady(2000, 60000)}};
-  file.instruments.push_back({"i", {{{set(gen::kPan, -500), set(gen::kReleaseVolEnv, -1200)}},
-                                    {{range(gen::kVelRange, 0, 63), set(gen::kSampleId, 0)}},
-                                    {{range(gen::kVelRange, 64, 127), set(gen::kSampleId, 1)}}}});
+  file.instruments.push_back(
+      {"i", {{{set(gen::kPan, -500), set(gen::kReleaseVolEnv, -1200)}},
+             {{range(gen::kVelRange, 0, 63), set(gen::kSampleId, 0)}},
+             {{range(gen::kVelRange, 64, 127), set(gen::kSampleId, 1)}}}});
   file.presets.push_back({"p", 0, 0, {{{set(gen::kInstrument, 0)}}}});
   return build(file);
 }
@@ -592,9 +597,9 @@ double levelAt(const Stereo& out, std::size_t frame) { return out.left.at(frame)
 
 TEST_CASE("a note-on with velocity 0 is a note-off and note-off velocity is ignored") {
   const auto font = twoVelocities();
-  const auto withZero = play(font, {{0, noteOn(0, 60, 100)}, {2003, MidiMsg{0x90, 60, 0}}},
+  const auto withZero = play(font, {{13, noteOn(0, 60, 100)}, {2003, MidiMsg{0x90, 60, 0}}},
                              {48000, 128, 30000});
-  const auto withOff = play(font, {{0, noteOn(0, 60, 100)}, {2003, MidiMsg{0x80, 60, 64}}},
+  const auto withOff = play(font, {{13, noteOn(0, 60, 100)}, {2003, MidiMsg{0x80, 60, 64}}},
                             {48000, 128, 30000});
   CHECK(withZero.left == withOff.left);
   // From full level the release ends 96 dB down, 0.48 s later.
@@ -603,19 +608,19 @@ TEST_CASE("a note-on with velocity 0 is a note-off and note-off velocity is igno
 
 TEST_CASE("every channel plays the preset and other channel messages change nothing") {
   const auto font = twoVelocities();
-  const auto reference = play(font, {{0, noteOn(0, 60, 100)}, {1500, noteOff(0, 60)}},
+  const auto reference = play(font, {{13, noteOn(0, 60, 100)}, {1511, noteOff(0, 60)}},
                               {48000, 128, 30000});
   // Channel 10 (status nibble 9), with a program change, volume, the sustain
   // pedal, pitch bend and pressure among its notes.
-  const auto drums = play(font, {{0, MidiMsg{0xc9, 40, 0}},
-                                 {0, noteOn(9, 60, 100)},
-                                 {300, MidiMsg{0xb9, 7, 20}},
-                                 {500, MidiMsg{0xe9, 0, 127}},
-                                 {700, MidiMsg{0xc9, 1, 0}},
-                                 {900, MidiMsg{0xd9, 100, 0}},
-                                 {1000, MidiMsg{0xb9, 64, 127}},
-                                 {1200, MidiMsg{0xa9, 60, 90}},
-                                 {1500, noteOff(9, 60)}},
+  const auto drums = play(font, {{13, MidiMsg{0xc9, 40, 0}},
+                                 {13, noteOn(9, 60, 100)},
+                                 {307, MidiMsg{0xb9, 7, 20}},
+                                 {503, MidiMsg{0xe9, 0, 127}},
+                                 {701, MidiMsg{0xc9, 1, 0}},
+                                 {907, MidiMsg{0xd9, 100, 0}},
+                                 {1009, MidiMsg{0xb9, 64, 127}},
+                                 {1201, MidiMsg{0xa9, 60, 90}},
+                                 {1511, noteOff(9, 60)}},
                           {48000, 128, 30000});
   CHECK(levelAt(reference, 1000) == doctest::Approx(2000));
   CHECK(drums.left == reference.left);
@@ -624,35 +629,35 @@ TEST_CASE("every channel plays the preset and other channel messages change noth
 
 TEST_CASE("a key struck again sounds beside its earlier note and note-offs end the oldest first") {
   const auto out = play(twoVelocities(),
-                        {{0, noteOn(0, 60, 100)}, {1000, noteOn(0, 60, 30)},
-                         {2000, noteOff(0, 60)}, {30000, noteOff(0, 60)}},
+                        {{13, noteOn(0, 60, 100)}, {1009, noteOn(0, 60, 30)},
+                         {2003, noteOff(0, 60)}, {30011, noteOff(0, 60)}},
                         {48000, 128, 54000});
   CHECK(levelAt(out, 1500) == doctest::Approx(3000));
   // The loud note, struck first, is released first: 0.1 s later it is 20 dB
   // down, while the soft one still holds.
-  CHECK(levelAt(out, 2000 + 4800) == doctest::Approx(1000 + 200).epsilon(1e-4));
+  CHECK(levelAt(out, 2003 + 4800) == doctest::Approx(1000 + 200).epsilon(1e-4));
   CHECK(levelAt(out, 29000) == doctest::Approx(1000));
-  CHECK(std::abs(static_cast<double>(lastSounding(out.left) + 1) - (30000 + 23040)) <= 1);
+  CHECK(std::abs(static_cast<double>(lastSounding(out.left) + 1) - (30011 + 23040)) <= 1);
 }
 
 TEST_CASE("a note-off with no held note on its key does nothing") {
   const auto font = twoVelocities();
-  const auto reference = play(font, {{0, noteOn(0, 60, 100)}, {1000, noteOff(0, 60)}},
+  const auto reference = play(font, {{13, noteOn(0, 60, 100)}, {1009, noteOff(0, 60)}},
                               {48000, 128, 30000});
-  const auto strays = play(font, {{0, noteOn(0, 60, 100)}, {500, noteOff(0, 61)},
-                                  {600, noteOff(1, 60)}, {1000, noteOff(0, 60)},
-                                  {1500, noteOff(0, 60)}},
+  const auto strays = play(font, {{13, noteOn(0, 60, 100)}, {503, noteOff(0, 61)},
+                                  {601, noteOff(1, 60)}, {1009, noteOff(0, 60)},
+                                  {1511, noteOff(0, 60)}},
                            {48000, 128, 30000});
   CHECK(strays.left == reference.left);
 }
 
 TEST_CASE("two parts in unison on two channels both sound and end separately") {
   const auto out = play(twoVelocities(),
-                        {{0, noteOn(0, 60, 100)}, {0, noteOn(1, 60, 100)},
-                         {1000, noteOff(1, 60)}},
+                        {{13, noteOn(0, 60, 100)}, {13, noteOn(1, 60, 100)},
+                         {1009, noteOff(1, 60)}},
                         {48000, 128, 30000});
   CHECK(levelAt(out, 900) == doctest::Approx(4000));
-  CHECK(levelAt(out, 1000 + 4800) == doctest::Approx(2000 + 200).epsilon(1e-4));
+  CHECK(levelAt(out, 1009 + 4800) == doctest::Approx(2000 + 200).epsilon(1e-4));
   CHECK(levelAt(out, 29000) == doctest::Approx(2000));
 }
 
@@ -666,11 +671,37 @@ TEST_CASE("for now a note-on that finds too few free voices is not started") {
   file.presets.push_back({"p", 0, 0, {{{set(gen::kInstrument, 0)}}}});
   const auto font = build(file);
   const auto limit = [](SoundFontNode& node) { node.setVoiceLimit(3); };
-  const auto alone = play(font, {{0, noteOn(0, 60, 100)}}, {48000, 128, 3000}, limit);
-  const auto crowded = play(font, {{0, noteOn(0, 60, 100)}, {500, noteOn(0, 62, 100)}},
+  const auto alone = play(font, {{13, noteOn(0, 60, 100)}}, {48000, 128, 3000}, limit);
+  const auto crowded = play(font, {{13, noteOn(0, 60, 100)}, {503, noteOn(0, 62, 100)}},
                             {48000, 128, 3000}, limit);
   CHECK(crowded.left == alone.left);
   CHECK(crowded.right == alone.right);
+}
+
+TEST_CASE("a voice's slot is free from the frame after its last sound") {
+  // With one voice, a note-on on the frame after a note's sample has run out
+  // starts at once.
+  const auto font = build(oneZone(steady(4000, 600)));
+  const auto limit = [](SoundFontNode& node) { node.setVoiceLimit(1); };
+  const auto first = play(font, {{13, noteOn(0, 60, 100)}}, {48000, 128, 2000}, limit);
+  const auto last = lastSounding(first.left);
+  REQUIRE(last < first.left.size());
+  const auto both = play(font, {{13, noteOn(0, 60, 100)}, {last + 1, noteOn(0, 62, 100)}},
+                         {48000, 128, 2000}, limit);
+  CHECK(firstSounding(both.left, last + 1) < both.left.size());
+}
+
+TEST_CASE("for now every zone plays its sample once to its end, whatever its sampleModes") {
+  // Interim rule until loops (ticket 02). The test file's loop spans the
+  // whole sample, so a looping zone would sound past its 600 points.
+  const auto once = play(build(oneZone(steady(4000, 600))), kOneNote);
+  REQUIRE(lastSounding(once.left) - firstSounding(once.left) == 599);
+  for (const int mode : {1, 3}) {
+    CAPTURE(mode);
+    const auto out = play(build(oneZone(steady(4000, 600), {set(gen::kSampleModes, mode)})),
+                          {{13, noteOn(0, 60, 100)}, {1201, noteOff(0, 60)}});
+    CHECK(out.left == once.left);
+  }
 }
 
 namespace {
@@ -737,7 +768,6 @@ TEST_CASE("a malformed RIFF structure is refused") {
     const auto at = find(bytes, "pgen") + 4;
     put32(bytes, at, bytes[at] + 4);
   }
-  SUBCASE("data after the RIFF chunk") { bytes.push_back(0); }
   SUBCASE("lists missing") {
     auto parts = sf2test::parts(richFile());
     SUBCASE("no ifil version") { parts.info.erase(parts.info.begin()); }
@@ -747,6 +777,12 @@ TEST_CASE("a malformed RIFF structure is refused") {
     bytes = assemble(parts);
   }
   CHECK(refused(bytes));
+}
+
+TEST_CASE("bytes after the RIFF chunk are ignored") {
+  auto bytes = build(richFile());
+  bytes.insert(bytes.end(), {0, 'J', 'U', 'N', 'K'});
+  CHECK(loadError(bytes).empty());
 }
 
 TEST_CASE("a hydra list of the wrong size is refused") {
@@ -781,6 +817,20 @@ TEST_CASE("an index or a sample pointing outside its list or the sample data is 
   }
   SUBCASE("a sample ending before it starts") { put32(list(parts, "shdr").data, 46 + 24, 3); }
   CHECK(refused(assemble(parts)));
+}
+
+TEST_CASE("a load checks every preset, not only the one it selects") {
+  // The rich file's one preset, bank 0 program 0, is the one a load selects.
+  auto file = richFile();
+  SUBCASE("a later preset's instrument index past the instruments") {
+    file.presets.push_back({"later", 7, 3, {{{set(gen::kInstrument, 2)}}}});
+  }
+  SUBCASE("a later preset's instrument playing a ROM sample") {
+    file.samples.push_back({"rom", {}, 48000, 60, kRomSample});
+    file.instruments.push_back({"rom", {{{set(gen::kSampleId, 3)}}}});
+    file.presets.push_back({"later", 7, 3, {{{set(gen::kInstrument, 2)}}}});
+  }
+  CHECK(refused(build(file)));
 }
 
 TEST_CASE("a file with no preset is refused") {
@@ -901,9 +951,9 @@ Bytes busyFont() {
 // Overlapping notes on four channels: a retrigger, releases, a velocity-0
 // note-off, a stray note-off, and with ten voices, a note the pool refuses.
 const std::vector<Timed> kBusy{
-    {0, noteOn(0, 60, 100)},   {3, noteOn(1, 64, 90)},     {3, noteOn(0, 48, 70)},
-    {129, noteOn(0, 60, 110)}, {509, noteOff(0, 60)},      {1021, noteOn(9, 67, 1)},
-    {2048, noteOff(1, 64)},    {2048, noteOn(1, 64, 0)},   {3001, noteOn(2, 72, 127)},
+    {1, noteOn(0, 60, 100)},   {3, noteOn(1, 64, 90)},     {3, noteOn(0, 48, 70)},
+    {131, noteOn(0, 60, 110)}, {509, noteOff(0, 60)},      {1021, noteOn(9, 67, 1)},
+    {2053, noteOff(1, 64)},    {2053, noteOn(1, 64, 0)},   {3001, noteOn(2, 72, 127)},
     {4093, noteOff(0, 60)},    {5003, noteOff(0, 48)},     {6007, noteOn(0, 60, 100)},
     {7919, noteOff(9, 67)},    {9001, noteOff(2, 72)},     {9001, noteOff(0, 60)},
     {12011, noteOn(3, 50, 64)}, {17389, noteOff(3, 50)}};
@@ -935,8 +985,9 @@ TEST_CASE("process allocates nothing") {
     auto& node = static_cast<SoundFontNode&>(graph.node(synth));
     node.setVoiceLimit(10);
     const auto sink = graph.addNode<CaptureSinkNode>(2);
+    auto& capture = static_cast<CaptureSinkNode&>(graph.node(sink));
     graph.connect(source, static_cast<MidiAt&>(graph.node(source)).out, synth, node.midiIn());
-    graph.connect(synth, node.out(), sink, static_cast<CaptureSinkNode&>(graph.node(sink)).in());
+    graph.connect(synth, node.out(), sink, capture.in());
     Engine engine(graph, 48000, block);
     allocations = 0;
     while (engine.streamTime() < 20000) engine.process(block);

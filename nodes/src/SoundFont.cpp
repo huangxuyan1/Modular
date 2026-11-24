@@ -65,7 +65,9 @@ Chunk chunk(Reader& parent) {
 
 // The hydra's nine lists in the specification's order, each a run of
 // fixed-size records that ends with a terminal record.
-enum HydraList : std::size_t { kPhdr, kPbag, kPmod, kPgen, kInst, kIbag, kImod, kIgen, kShdr };
+enum HydraList : std::size_t {
+  kPhdr, kPbag, kPmod, kPgen, kInst, kIbag, kImod, kIgen, kShdr
+};
 constexpr std::size_t kHydraLists = 9;
 constexpr std::string_view kListTags[kHydraLists] = {"phdr", "pbag", "pmod", "pgen", "inst",
                                                      "ibag", "imod", "igen", "shdr"};
@@ -149,8 +151,8 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
   result.bytes_.assign(bytes.begin(), bytes.end());
   Reader file(result.bytes_, 0);
   auto riff = chunk(file);
+  // Bytes after the RIFF chunk are not part of the file, and are ignored.
   if (riff.tag != "RIFF") invalid("missing RIFF header");
-  if (!file.empty()) invalid("data after the RIFF chunk");
   if (riff.data.tag() != "sfbk") invalid("not a soundfont");
 
   // The form's three lists, by type. Other chunks are skipped by their sizes.
@@ -259,13 +261,14 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
     }
     return generators;
   };
-  // A preset's or instrument's header: where its bags start.
-  const auto readHeaders = [&](HydraList headerList, std::size_t size, HydraList bagList,
+  // A preset's or instrument's header: where its bags start. `each` reads
+  // what comes before that index in the record.
+  const auto readHeaders = [&](HydraList headerList, HydraList bagList,
                                std::string_view level, auto&& each) {
     Reader list = *lists[headerList];
     std::vector<std::uint16_t> bags(counts[headerList]);
     for (auto& bag : bags) {
-      auto record = list.take(size);
+      auto record = list.take(kRecordSizes[headerList]);
       each(record);
       bag = static_cast<std::uint16_t>(record.integer(2));
     }
@@ -278,8 +281,8 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
   // after the terminal one are ignored; a repeated one keeps its last value.
   const auto readZones = [](const Bags& bags, const Generators& generators,
                             std::size_t first, std::size_t last, std::uint16_t terminal,
-                            std::size_t targets, std::string_view target, bool& hasGlobal,
-                            ParsedZone& global, std::vector<ParsedZone>& zones) {
+                            std::size_t targets, std::string_view target) {
+    Zones zones;
     for (std::size_t bag = first; bag < last; ++bag) {
       ParsedZone zone;
       bool terminated = false;
@@ -295,26 +298,23 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
           zone.given[oper] = true;
         }
       }
-      if (terminated) zones.push_back(zone);
-      else if (bag == first) {
-        hasGlobal = true;
-        global = zone;
-      }
+      if (terminated) zones.local.push_back(zone);
+      else if (bag == first) zones.global = zone;
     }
+    return zones;
   };
 
   {
     const auto bags = readBags(kIbag, kImod, kIgen, "instrument");
     const auto generators = readGenerators(kIgen);
-    const auto starts = readHeaders(kInst, 22, kIbag, "instrument",
+    const auto starts = readHeaders(kInst, kIbag, "instrument",
                                     [](Reader& record) { record.take(20); }); // name
     for (std::size_t i = 0; i + 1 < starts.size(); ++i) {
-      Instrument instrument;
-      readZones(bags, generators, starts[i], starts[i + 1], kSampleId,
-                result.samples_.size(), "sample", instrument.hasGlobal, instrument.global,
-                instrument.zones);
-      // Interim: refused until ticket 04 skips such zones and lists them.
-      for (const auto& zone : instrument.zones) {
+      auto instrument = readZones(bags, generators, starts[i], starts[i + 1], kSampleId,
+                                  result.samples_.size(), "sample");
+      // Interim: ticket 04 skips and lists ROM and empty samples instead. A
+      // rate of 0 is this ticket's own guard, left for ticket 04 to settle.
+      for (const auto& zone : instrument.local) {
         const auto& sample = result.samples_[zone.target];
         if (sample.rom) invalid("a zone's sample is in rom");
         if (sample.start == sample.end) invalid("a zone's sample is empty");
@@ -327,7 +327,7 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
     const auto bags = readBags(kPbag, kPmod, kPgen, "preset");
     const auto generators = readGenerators(kPgen);
     std::vector<PresetNumber> numbers;
-    const auto starts = readHeaders(kPhdr, 38, kPbag, "preset", [&](Reader& record) {
+    const auto starts = readHeaders(kPhdr, kPbag, "preset", [&](Reader& record) {
       record.take(20); // name
       PresetNumber number;
       number.program = static_cast<std::uint16_t>(record.integer(2));
@@ -336,21 +336,13 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
     });
     if (starts.size() < 2) invalid("no preset");
     for (std::size_t p = 0; p + 1 < starts.size(); ++p) {
-      Preset preset;
-      preset.number = numbers[p];
-      readZones(bags, generators, starts[p], starts[p + 1], kInstrument,
-                result.instruments_.size(), "instrument", preset.hasGlobal, preset.global,
-                preset.zones);
-      result.presets_.push_back(std::move(preset));
+      result.presets_.push_back({numbers[p], readZones(bags, generators, starts[p],
+                                                       starts[p + 1], kInstrument,
+                                                       result.instruments_.size(),
+                                                       "instrument")});
     }
   }
   return result;
-}
-
-bool SoundFont::hasPreset(PresetNumber preset) const {
-  return std::any_of(presets_.begin(), presets_.end(), [&](const Preset& p) {
-    return p.number.bank == preset.bank && p.number.program == preset.program;
-  });
 }
 
 SoundFont::PresetNumber SoundFont::lowestPreset() const {
@@ -363,18 +355,17 @@ SoundFont::PresetNumber SoundFont::lowestPreset() const {
 }
 
 std::vector<SoundFont::Zone> SoundFont::zones(PresetNumber number) const {
-  const auto preset = std::find_if(presets_.begin(), presets_.end(), [&](const Preset& p) {
-    return p.number.bank == number.bank && p.number.program == number.program;
-  });
+  const auto preset = std::find_if(presets_.begin(), presets_.end(),
+                                   [&](const Preset& p) { return p.number == number; });
   if (preset == presets_.end())
     invalid("no preset at bank " + std::to_string(number.bank) + " program " +
             std::to_string(number.program));
 
   // A local zone's value, else its global zone's, else none.
-  const auto given = [](const ParsedZone& local, bool hasGlobal, const ParsedZone& global,
+  const auto given = [](const ParsedZone& local, const std::optional<ParsedZone>& global,
                         std::size_t g) -> std::optional<std::int16_t> {
     if (local.given[g]) return local.amounts[g];
-    if (hasGlobal && global.given[g]) return global.amounts[g];
+    if (global && global->given[g]) return global->amounts[g];
     return std::nullopt;
   };
   // A range's low and high bytes, intersected with another range.
@@ -384,13 +375,13 @@ std::vector<SoundFont::Zone> SoundFont::zones(PresetNumber number) const {
   };
 
   std::vector<Zone> result;
-  for (const auto& presetZone : preset->zones) {
+  for (const auto& presetZone : preset->zones.local) {
     const auto& instrument = instruments_[presetZone.target];
-    for (const auto& instrumentZone : instrument.zones) {
+    for (const auto& instrumentZone : instrument.local) {
       Zone zone;
       for (std::size_t g = 0; g < kGeneratorCount; ++g) {
-        const auto value = given(instrumentZone, instrument.hasGlobal, instrument.global, g);
-        const auto offset = given(presetZone, preset->hasGlobal, preset->global, g);
+        const auto value = given(instrumentZone, instrument.global, g);
+        const auto offset = given(presetZone, preset->zones.global, g);
         if (g == kKeyRange || g == kVelRange) {
           auto& low = g == kKeyRange ? zone.keyLow : zone.velocityLow;
           auto& high = g == kKeyRange ? zone.keyHigh : zone.velocityHigh;

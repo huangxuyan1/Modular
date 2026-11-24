@@ -84,9 +84,10 @@ The file rules follow the [Standard MIDI Files specification](https://midi.org/s
 
 ## SoundFontNode
 
-Status: soundfont-node ticket 01, the tracer. Tickets 02 to 05 add loops, the voice
-policy, the ignored list and persistence. The rules marked *interim* below change
-then. See `.scratch/soundfont-node/spec.md` for the end state.
+Status: soundfont-node ticket 01, the tracer. Ticket 02 adds loops and the piano's
+tone, 03 the full voice policy, 04 the rest of the voice and the ignored list, 05 file
+modulators and exclusive class, and 06 persistence. The rules marked *interim* below
+change then. See `.scratch/soundfont-node/spec.md` for the end state.
 
 Include `modular/nodes/SoundFontNode.h` and link `modular_soundfont`. That library
 holds the SoundFont 2 reader (`SoundFont`) and the node, and links only the
@@ -123,16 +124,18 @@ the most voices one note of the preset can start.
 **Errors.** Authoring errors throw `std::invalid_argument` with a short
 `soundfont: ...` message. A load refuses:
 
-- a malformed RIFF structure, a truncated chunk, data after the RIFF chunk, a
-  missing or duplicate list, and a missing or wrong-size `ifil` version;
+- a malformed RIFF structure, a truncated chunk, a missing or duplicate list, and a
+  missing or wrong-size `ifil` version. Bytes after the RIFF chunk are ignored;
 - a hydra list of the wrong size, including one with records no index reaches;
 - an index or a sample pointing outside its list or the sample data;
 - a file with no preset;
 - `ifil` major version 3, or a sample with the compressed bit:
   `soundfont: compressed samples (sf3) are not supported`. Other versions than 2
   are refused too;
-- *interim (ticket 04 skips and lists them):* a zone whose sample is in ROM, empty,
-  or has a sample rate of 0. A ROM sample no zone plays does not stop a load.
+- *interim (ticket 04 skips and lists them):* a zone whose sample is in ROM or
+  empty. A ROM sample no zone plays does not stop a load. A zone whose sample has a
+  sample rate of 0 is refused too, a guard of this ticket's own for ticket 04 to
+  settle beside them.
 
 The reader reads 16-bit sample data. An `sm24` chunk is skipped, so a 24-bit file
 plays at 16 bits.
@@ -160,8 +163,10 @@ generator are ignored, and a repeated generator keeps its last value.
 
 A voice ends once its envelope has fallen 96 dB below its peak after its attack,
 held or released, or when it passes its sample's end. After the last voice the
-output is exact zeros. Key scaling, tuning generators, the modulation envelope,
-the LFOs, the filter and modulators come in ticket 02.
+output is exact zeros, and its slot is free from the frame after its last sound.
+The filter, the modulation envelope on its cutoff and the velocity modulators come
+in ticket 02; tuning (`modEnvToPitch` included), key scaling and the LFOs in ticket
+04; the file's own modulators in ticket 05.
 
 **Notes.** Every channel, channel 10 included, plays the one preset. Velocity is the
 note-on's byte, and velocity 0 is a note-off. Program changes, controllers, pitch
@@ -182,8 +187,9 @@ its key's oldest held note; with none held, it does nothing.
 `process()` allocates nothing. Voices render in slot order between events, so the
 output is bit-identical at every block size. Every transcendental function whose
 result reaches the output goes through one internal header,
-`nodes/src/SoundFontMaths.h`, which wraps the standard library for now, so a later
-portable implementation can replace it for browser-against-native identity.
+`nodes/src/SoundFontMaths.h`, which wraps the standard library for now. If map
+ticket 08 rules that a browser render must match a native one bit for bit, a
+portable implementation replaces it there.
 
 ## AudioOutputNode
 
