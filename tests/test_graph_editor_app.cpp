@@ -379,6 +379,22 @@ void persistenceChecks(const RunningApp& app) {
   waitContains(window, kStatus, L"unsupported graph version");
   contains(window, kValue, L"0.875");
   dirty(window, true);
+  // The editor has no presentation for a soundfont node, and its Open passes
+  // only the primitive codecs, so it refuses the node's kind.
+  const auto soundFont = directory / L"soundfont.modular";
+  {
+    std::ofstream output(soundFont);
+    output << "MODULAR_GRAPH 1\nNEXT 4\nNODES 1\n"
+        "NODE 3 \"modular.soundfont/1\"\nSETTINGS \"empty 256\"\nCONTENT \"\"\n"
+        "POSITION 48 50\nINPUTS 1\nPORT 1 2 2 \"midi\"\n"
+        "OUTPUTS 1\nPORT 2 0 2 \"out\"\nWIRES 0\nEND\n";
+  }
+  requestTransition(window, kOpen);
+  chooseUnsaved(app, IDNO);
+  chooseFile(app, L"Open graph", soundFont);
+  waitContains(window, kStatus, L"open: unsupported node kind modular.soundfont/1");
+  contains(window, kValue, L"0.875");
+  dirty(window, true);
   requestTransition(window, kOpen);
   chooseUnsaved(app, IDNO);
   PostMessageW(waitDialog(app, L"Open graph"), WM_COMMAND, IDCANCEL, 0);

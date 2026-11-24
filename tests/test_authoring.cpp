@@ -1,6 +1,8 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
 
+#include <algorithm>
+#include <cmath>
 #include <limits>
 #include <chrono>
 #include <thread>
@@ -18,6 +20,8 @@
 #include "modular/nodes/PrimitivePersistence.h"
 #include "modular/nodes/MidiFileNode.h"
 #include "modular/nodes/WavRecorderNode.h"
+#include "modular/nodes/SoundFontNode.h"
+#include "SoundFontTestFiles.h"
 #include "WavTestFiles.h"
 #ifdef _WIN32
 #include "modular/nodes/AudioOutputNode.h"
@@ -573,6 +577,279 @@ TEST_CASE("an unready MIDI import can be reopened and repaired and failed replac
   saveGraph(repaired, after, primitiveCodecs());
   CHECK(after.str() == before.str());
   CHECK_NOTHROW(Engine(repaired.graph(), 48000, 17));
+}
+
+namespace {
+// What a client that saves soundfont nodes passes: the primitives' codecs and,
+// beside them, the soundfont node's, which primitiveCodecs() leaves out.
+std::vector<NodeCodec> soundFontClientCodecs() {
+  std::vector<NodeCodec> codecs(primitiveCodecs().begin(), primitiveCodecs().end());
+  codecs.insert(codecs.end(), soundFontCodecs().begin(), soundFontCodecs().end());
+  return codecs;
+}
+
+std::string bytesHex(const sf2test::Bytes& bytes) {
+  return contentHex(std::string(bytes.begin(), bytes.end()));
+}
+
+// Two presets, each one zone of a 32 kHz sample: a steady level at bank 0
+// program 0, the file's lowest preset, and a sine at bank 1 program 5.
+sf2test::Bytes twoPresetSoundFont() {
+  using namespace sf2test;
+  File file;
+  std::vector<std::int16_t> sine(1500);
+  for (std::size_t i = 0; i < sine.size(); ++i)
+    sine[i] = static_cast<std::int16_t>(std::lround(12000 * std::sin(0.05 * i)));
+  file.samples.push_back({"steady", std::vector<std::int16_t>(1500, 3000), 32000});
+  file.samples.push_back({"sine", std::move(sine), 32000});
+  file.instruments.push_back({"steady", {{{set(gen::kSampleId, 0)}}}});
+  file.instruments.push_back({"sine", {{{set(gen::kSampleId, 1)}}}});
+  file.presets.push_back({"steady", 0, 0, {{{set(gen::kInstrument, 0)}}}});
+  file.presets.push_back({"sine", 5, 1, {{{set(gen::kInstrument, 1)}}}});
+  return build(file);
+}
+
+// Start -> a MIDI block of two overlapping notes -> a soundfont node, empty
+// until a test loads it. Every node has a codec, so the graph saves as authored.
+struct SoundFontGraph {
+  Workspace workspace;
+  NodeId start = kNoNode, notes = kNoNode, synth = kNoNode;
+  SoundFontGraph() {
+    auto& graph = workspace.graph();
+    start = graph.addNode<ManualTriggerNode>();
+    notes = graph.addNode<MidiBlockNode>(std::vector<MidiBlockNode::Entry>{
+        {7, {0x90, 60, 100}}, {13, {0x91, 67, 90}}, {1031, {0x80, 60, 0}},
+        {1307, {0x81, 67, 0}}});
+    synth = graph.addNode<SoundFontNode>();
+    auto& midi = static_cast<MidiBlockNode&>(graph.node(notes));
+    graph.connect(start, static_cast<ManualTriggerNode&>(graph.node(start)).trigger(),
+                  notes, midi.trigger());
+    graph.connect(notes, midi.midi(), synth, synthNode().midiIn());
+  }
+  SoundFontNode& synthNode() {
+    return static_cast<SoundFontNode&>(workspace.graph().node(synth));
+  }
+};
+
+// Starts the notes on frame 101 at every block size and captures the stereo
+// output, interleaved, to frame 3001.
+std::vector<float> renderSoundFont(Workspace& workspace, const SoundFontGraph& ids,
+                                   double rate, std::uint32_t block) {
+  auto& graph = workspace.graph();
+  const auto sinkId = graph.addNode<CaptureSinkNode>(2);
+  auto& sink = static_cast<CaptureSinkNode&>(graph.node(sinkId));
+  graph.connect(ids.synth, static_cast<SoundFontNode&>(graph.node(ids.synth)).out(),
+                sinkId, sink.in());
+  Engine engine(graph, rate, block);
+  const auto runTo = [&](std::uint64_t end) {
+    while (engine.streamTime() < end)
+      engine.process(static_cast<std::uint32_t>(
+          std::min<std::uint64_t>(block, end - engine.streamTime())));
+  };
+  runTo(101);
+  static_cast<ManualTriggerNode&>(graph.node(ids.start)).press();
+  runTo(3001);
+  return sink.samples();
+}
+
+bool sounds(const std::vector<float>& samples) {
+  return std::any_of(samples.begin(), samples.end(), [](float s) { return s != 0; });
+}
+} // namespace
+
+TEST_CASE("a saved soundfont node reopens with its whole file preset and voice limit after the file is deleted") {
+  GraphFiles files;
+  auto font = twoPresetSoundFont();
+  font.insert(font.end(), {7, 0, 9}); // after the RIFF chunk, but part of the file
+  const auto source = files.directory / "instrument.sf2";
+  std::ofstream(source, std::ios::binary)
+      .write(reinterpret_cast<const char*>(font.data()),
+             static_cast<std::streamsize>(font.size()));
+  const auto author = [](SoundFontNode& node) {
+    node.setPreset(1, 5);
+    node.setVoiceLimit(1); // the second, overlapping note meets a full pool
+  };
+  SoundFontGraph authored;
+  authored.synthNode().load(source);
+  author(authored.synthNode());
+  const auto codecs = soundFontClientCodecs();
+  const auto saved = files.directory / "instrument.modular";
+  saveGraphFile(authored.workspace, saved, codecs);
+  REQUIRE(std::filesystem::remove(source));
+  std::stringstream text;
+  text << std::ifstream(saved, std::ios::binary).rdbuf();
+  const auto content = "SETTINGS \"loaded 1 5 1\"\nCONTENT \"" + bytesHex(font) + "\"\n";
+  CHECK(text.str().find(content) != std::string::npos);
+
+  for (const double rate : {44100.0, 48000.0}) {
+    SoundFontGraph reference;
+    reference.synthNode().load(font);
+    author(reference.synthNode());
+    const auto expected = renderSoundFont(reference.workspace, reference, rate, 17);
+    REQUIRE(sounds(expected));
+    for (const std::uint32_t block : {1u, 17u, 127u, 512u}) {
+      CAPTURE(rate);
+      CAPTURE(block);
+      auto reopened = openGraphFile(saved, codecs);
+      auto& node = static_cast<SoundFontNode&>(reopened.graph().node(authored.synth));
+      REQUIRE(node.ready());
+      CHECK(node.bank() == 1);
+      CHECK(node.program() == 5);
+      CHECK(node.voiceLimit() == 1);
+      CHECK(renderSoundFont(reopened, authored, rate, block) == expected);
+    }
+  }
+}
+
+TEST_CASE("saving a soundfont node during a run writes only its authored content") {
+  SoundFontGraph authored;
+  authored.synthNode().load(twoPresetSoundFont());
+  authored.synthNode().setPreset(1, 5);
+  authored.synthNode().setVoiceLimit(3);
+  const auto codecs = soundFontClientCodecs();
+  std::stringstream idle;
+  saveGraph(authored.workspace, idle, codecs);
+  auto& graph = authored.workspace.graph();
+  Engine engine(graph, 48000, 127);
+  static_cast<ManualTriggerNode&>(graph.node(authored.start)).press();
+  engine.process(127); // both notes sounding, with their note-offs still ahead
+  std::stringstream running;
+  saveGraph(authored.workspace, running, codecs);
+  CHECK(running.str() == idle.str());
+}
+
+TEST_CASE("an empty soundfont node saves and reopens empty with its voice limit and a load makes it ready") {
+  SoundFontGraph authored;
+  authored.synthNode().setVoiceLimit(9);
+  const auto codecs = soundFontClientCodecs();
+  std::stringstream saved;
+  saveGraph(authored.workspace, saved, codecs);
+  CHECK(saved.str().find("SETTINGS \"empty 9\"\nCONTENT \"\"\n") != std::string::npos);
+  auto reopened = openGraph(saved, codecs);
+  auto& node = static_cast<SoundFontNode&>(reopened.graph().node(authored.synth));
+  CHECK(!node.ready());
+  CHECK(node.voiceLimit() == 9);
+  CHECK_THROWS_WITH_AS(Engine(reopened.graph(), 48000, 17),
+                       "soundfont: load a soundfont first", std::invalid_argument);
+  node.load(twoPresetSoundFont());
+  CHECK(node.ready());
+  CHECK(node.bank() == 0);
+  CHECK(node.program() == 0);
+  CHECK(node.voiceLimit() == 9);
+  CHECK(sounds(renderSoundFont(reopened, authored, 48000, 127)));
+}
+
+TEST_CASE("the primitive codecs alone refuse a graph holding a soundfont node") {
+  SoundFontGraph authored;
+  authored.synthNode().load(twoPresetSoundFont());
+  std::stringstream saved;
+  saveGraph(authored.workspace, saved, soundFontClientCodecs());
+  Workspace current;
+  const auto id = current.graph().addNode<ConstFloatNode>(0.625f);
+  CHECK_THROWS_WITH_AS(current = openGraph(saved, primitiveCodecs()),
+                       "open: unsupported node kind modular.soundfont/1",
+                       std::invalid_argument);
+  CHECK(current.graph().nodeIds() == std::vector<NodeId>{id});
+  std::ostringstream unsaved;
+  CHECK_THROWS_WITH_AS(saveGraph(authored.workspace, unsaved, primitiveCodecs()),
+                       "save: unsupported node kind; graph was not saved",
+                       std::invalid_argument);
+  CHECK(unsaved.str().empty());
+}
+
+TEST_CASE("corrupt saved soundfont content fails open without replacing the current graph") {
+  using sf2test::Bytes;
+  const auto encoded = [](const std::string& settings, const Bytes& content,
+                          const std::string& out = "PORT 2 0 2 \"out\"") {
+    return "MODULAR_GRAPH 1\nNEXT 4\nNODES 1\nNODE 3 \"modular.soundfont/1\"\n"
+        "SETTINGS \"" + settings + "\"\nCONTENT \"" + bytesHex(content) + "\"\n"
+        "POSITION 0 0\nINPUTS 1\nPORT 1 2 2 \"midi\"\nOUTPUTS 1\n" + out +
+        "\nWIRES 0\nEND\n";
+  };
+  const auto codecs = soundFontClientCodecs();
+  const auto font = twoPresetSoundFont();
+  for (const auto& [settings, content] : std::vector<std::pair<std::string, Bytes>>{
+       {"loaded 1 5 7", font}, {"loaded 0 0 65535", font}, {"empty 1", {}}}) {
+    std::istringstream input(encoded(settings, content));
+    CHECK_NOTHROW(openGraph(input, codecs));
+  }
+
+  auto truncated = font;
+  truncated.pop_back();
+  auto renamed = font;
+  renamed[3] = 'X';
+  Workspace current;
+  const auto id = current.graph().addNode<ConstFloatNode>(0.625f);
+  struct Corrupt {
+    std::string settings;
+    Bytes content;
+    std::string error;
+  };
+  for (const auto& corrupt : std::vector<Corrupt>{
+       // Bytes that no longer parse.
+       {"loaded 0 0 256", truncated, "soundfont: truncated chunk"},
+       {"loaded 0 0 256", renamed, "soundfont: missing RIFF header"},
+       {"loaded 0 0 256", {}, "soundfont: truncated chunk"},
+       // A preset the file lacks, and voice limits outside 1 to 65535.
+       {"loaded 0 5 256", font, "soundfont: no preset at bank 0 program 5"},
+       {"loaded 1 5 0", font, "soundfont: voice limit must be 1 to 65535"},
+       {"loaded 1 5 65536", font, "soundfont: voice limit must be 1 to 65535"},
+       {"empty 0", {}, "soundfont: voice limit must be 1 to 65535"},
+       // Malformed and trailing settings.
+       {"", font, "open: invalid soundfont settings"},
+       {"loaded", font, "open: invalid soundfont settings"},
+       {"loaded 1 5", font, "open: invalid soundfont settings"},
+       {"loaded 1 x 256", font, "open: invalid soundfont settings"},
+       {"loaded -1 5 256", font, "open: invalid soundfont settings"},
+       {"loaded 65536 5 256", font, "open: invalid soundfont settings"},
+       {"loaded 1 5 2.5", font, "open: invalid soundfont settings"},
+       {"loaded 1 5 4294967296", font, "open: invalid soundfont settings"},
+       {"loaded 1 5 256 junk", font, "open: invalid soundfont settings"},
+       {"ready 1 5 256", font, "open: invalid soundfont settings"},
+       {"empty", {}, "open: invalid soundfont settings"},
+       {"empty 0 0 256", {}, "open: invalid soundfont settings"},
+       // An empty node carrying content.
+       {"empty 256", font, "open: empty soundfont node has content"}}) {
+    CAPTURE(corrupt.settings);
+    CAPTURE(corrupt.content.size());
+    std::istringstream input(encoded(corrupt.settings, corrupt.content));
+    CHECK_THROWS_WITH_AS(current = openGraph(input, codecs), corrupt.error.c_str(),
+                         std::invalid_argument);
+    CHECK(current.graph().nodeIds() == std::vector<NodeId>{id});
+    CHECK(static_cast<ConstFloatNode&>(current.graph().node(id)).constant() == 0.625f);
+  }
+  // Ports other than midi in and audio<2> out.
+  for (const auto& out : {"PORT 2 0 1 \"out\"", "PORT 2 2 2 \"out\""}) {
+    std::istringstream input(encoded("loaded 1 5 7", font, out));
+    CHECK_THROWS_AS(current = openGraph(input, codecs), std::invalid_argument);
+    CHECK(current.graph().nodeIds() == std::vector<NodeId>{id});
+  }
+}
+
+namespace {
+// A derived node may own more than its base's codec would save.
+class DerivedSoundFontNode : public SoundFontNode {
+public:
+  using SoundFontNode::SoundFontNode;
+};
+} // namespace
+
+TEST_CASE("the soundfont codec saves only an exact soundfont node with its own ports") {
+  const auto codecs = soundFontClientCodecs();
+  std::ostringstream output;
+  Workspace derived;
+  derived.graph().addNode<DerivedSoundFontNode>();
+  CHECK_THROWS_WITH_AS(saveGraph(derived, output, codecs),
+                       "save: unsupported node kind; graph was not saved",
+                       std::invalid_argument);
+  Workspace deaf;
+  const auto id = deaf.graph().addNode<SoundFontNode>();
+  auto& node = static_cast<SoundFontNode&>(deaf.graph().node(id));
+  deaf.graph().removePort(id, node.midiIn());
+  CHECK_THROWS_WITH_AS(saveGraph(deaf, output, codecs),
+                       "save: unsupported primitive port configuration",
+                       std::invalid_argument);
+  CHECK(output.str().empty());
 }
 
 #ifdef _WIN32

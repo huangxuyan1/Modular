@@ -84,10 +84,10 @@ The file rules follow the [Standard MIDI Files specification](https://midi.org/s
 
 ## SoundFontNode
 
-Status: soundfont-node ticket 01, the tracer. Ticket 02 adds loops and the piano's
-tone, 03 the full voice policy, 04 the rest of the voice and the ignored list, 05 file
-modulators and exclusive class, and 06 persistence. The rules marked *interim* below
-change then. See `.scratch/soundfont-node/spec.md` for the end state.
+Status: soundfont-node ticket 01, the tracer, and ticket 06, persistence. Ticket 02
+adds loops and the piano's tone, 03 the full voice policy, 04 the rest of the voice
+and the ignored list, and 05 file modulators and exclusive class. The rules marked
+*interim* below change then. See `.scratch/soundfont-node/spec.md` for the end state.
 
 Include `modular/nodes/SoundFontNode.h` and link `modular_soundfont`. That library
 holds the SoundFont 2 reader (`SoundFont`) and the node, and links only the
@@ -106,6 +106,7 @@ voice's *release*.
 | Construction | Empty and not ready, or holding an already parsed `SoundFont` |
 | `load(bytes)` / `load(path)` | Edit-only; parses and checks the whole file |
 | `ready()` | Whether the node holds a soundfont |
+| `soundFont()` | The loaded file, whose `bytes()` are the node's content; throws while empty |
 | `midiIn()` input | `midi`, `event<midi>`: notes on every channel |
 | `out()` output | `out`, `audio<2>`: the voices' sum, dry |
 | `setPreset(bank, program)` | Edit-only; throws for a preset the file lacks |
@@ -120,6 +121,14 @@ the node renders after the file is deleted. `prepare()` never reads the soundfon
 again, so a fresh `Engine` on the same graph renders from a clean start. It throws
 `soundfont: load a soundfont first` while empty, and when the voice limit is below
 the most voices one note of the preset can start.
+
+**Saving.** A graph saves the node with its codec, `modular.soundfont/1`, from
+`soundFontCodecs()` in `modular_primitive_persistence`, which a client passes
+beside `primitiveCodecs()`. It keeps the file's bytes whole, the preset and the
+voice limit, so the graph reopens and plays after the file is deleted. An empty node
+reopens empty. The Windows editor passes only `primitiveCodecs()`, so its Open
+refuses a graph holding the node. See
+[graph-persistence.md](graph-persistence.md#owned-soundfont-representation).
 
 **Errors.** Authoring errors throw `std::invalid_argument` with a short
 `soundfont: ...` message. A load refuses:

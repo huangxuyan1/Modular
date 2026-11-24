@@ -45,6 +45,9 @@ target_link_libraries(modular_primitive_persistence PUBLIC modular_midi)
 # node library is linked, so a pipeline with no music in it links none of this.
 add_library(modular_soundfont nodes/src/SoundFont.cpp nodes/src/SoundFontNode.cpp)
 target_link_libraries(modular_soundfont PUBLIC modular_nodes)
+# Graph persistence, which already carries the MIDI codecs, carries the soundfont
+# codec too, behind soundFontCodecs() rather than primitiveCodecs().
+target_link_libraries(modular_primitive_persistence PUBLIC modular_soundfont)
 
 if(WIN32)
   add_library(modular_windows_audio nodes/src/AudioOutputNode.cpp)

@@ -61,6 +61,9 @@ public:
   // Every instrument zone the preset can play. Throws if the file lacks it.
   std::vector<Zone> zones(PresetNumber preset) const;
 
+  // The file's bytes as loaded, whole: what a soundfont node saves.
+  std::span<const std::uint8_t> bytes() const { return bytes_; }
+
   // One 16-bit point of the sample data.
   std::int16_t point(std::size_t index) const {
     const auto* p = bytes_.data() + sample_data_ + 2 * index;
