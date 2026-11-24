@@ -813,6 +813,62 @@ TEST_CASE("shared save and open preserve authored identities and later minting")
   for (const auto sample : capture.samples()) CHECK(sample == 0.1875f);
 }
 
+TEST_CASE("a graph saved by the version 1 writer opens with its identities port types and wires") {
+  // Saved once by the version-1 Save and never edited; tests/fixtures/README.md
+  // records how. Expected values are literal, not recomputed: an audio port by
+  // its channel count, a value or event port by its subtype (event 1 trigger,
+  // event 2 MIDI, value 3 float).
+  const auto path =
+      std::filesystem::path(MODULAR_TEST_FIXTURES) / "graph-version-1.modular";
+  {
+    std::ifstream header(path, std::ios::binary);
+    std::string version;
+    std::getline(header, version);
+    REQUIRE(version == "MODULAR_GRAPH 1");
+  }
+  const auto loaded = openGraphFile(path, primitiveCodecs());
+  const auto& graph = loaded.graph();
+  CHECK(graph.nextIdentity() == 25); // 23 and 24 belonged to a deleted node
+  REQUIRE(graph.nodeIds() == std::vector<NodeId>{2, 6, 9, 11, 15, 19, 22});
+
+  using Ports = std::vector<std::tuple<PortId, std::string, PortType>>;
+  const std::vector<std::tuple<NodeId, Ports, Ports>> expected{
+      {2, {}, {{1, "trigger", PortType::event(1)}}},
+      {6, {{3, "start", PortType::event(1)}, {4, "stop", PortType::event(1)}},
+          {{5, "midi", PortType::event(2)}}},
+      {9, {{7, "midi", PortType::event(2)}}, {{8, "out", PortType::audio(1)}}},
+      {11, {}, {{10, "value", PortType::value(3)}}},
+      {15, {{12, "in", PortType::audio(1)}, {13, "gain", PortType::value(3)}},
+           {{14, "out", PortType::audio(1)}}},
+      {19, {{16, "in", PortType::audio(2)}, {17, "gain", PortType::value(3)}},
+           {{18, "out", PortType::audio(2)}}},
+      {22, {{20, "in0", PortType::audio(2)}}, {{21, "out", PortType::audio(2)}}}};
+  for (const auto& [id, inputs, outputs] : expected) {
+    for (const auto input : {true, false}) {
+      const auto& want = input ? inputs : outputs;
+      const auto got = input ? graph.node(id).inputs() : graph.node(id).outputs();
+      INFO("node ", id, input ? " inputs" : " outputs");
+      REQUIRE(got.size() == want.size());
+      for (std::size_t i = 0; i < want.size(); ++i) {
+        const auto& [port, name, type] = want[i];
+        CHECK(got[i].id == port);
+        CHECK(got[i].name == name);
+        CHECK(got[i].type == type);
+      }
+    }
+  }
+
+  std::vector<std::tuple<NodeId, PortId, NodeId, PortId>> wires;
+  for (const auto& wire : graph.connections())
+    wires.emplace_back(wire.srcNode, wire.srcPort, wire.dstNode, wire.dstPort);
+  CHECK(wires == decltype(wires){
+      {2, 1, 6, 3},       // event 1: trigger to MIDI block start
+      {6, 5, 9, 7},       // event 2: MIDI block to synth
+      {9, 8, 15, 12},     // mono audio: synth to gain
+      {11, 10, 15, 13},   // value 3: constant to gain level
+      {19, 18, 22, 20}}); // stereo audio: gain to mixer
+}
+
 TEST_CASE("recording graphs reopen with owned MIDI and settings but no transient take") {
   WavTestFiles files;
   const auto imported = files.directory / "import.mid";
