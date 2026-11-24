@@ -85,10 +85,10 @@ The file rules follow the [Standard MIDI Files specification](https://midi.org/s
 ## SoundFontNode
 
 Status: soundfont-node ticket 01, the tracer, ticket 02, loops and the piano's tone,
-ticket 03, the voice policy, ticket 06, persistence, and ticket 08, portable maths.
-Ticket 04 adds the rest of the voice and the ignored list, and 05 file modulators and
-exclusive class. The rules marked *interim* below change then. See
-`.scratch/soundfont-node/spec.md` for the end state.
+ticket 03, the voice policy, ticket 04, the rest of the voice and the ignored list,
+ticket 06, persistence, and ticket 08, portable maths. Ticket 05 adds the file's own
+modulators and exclusive class. See `.scratch/soundfont-node/spec.md` for the end
+state.
 
 Include `modular/nodes/SoundFontNode.h` and link `modular_soundfont`. That library
 holds the SoundFont 2 reader (`SoundFont`) and the node, and links only the
@@ -114,6 +114,7 @@ voice's *release*.
 | `setPreset(bank, program)` | Edit-only; throws for a preset the file lacks |
 | `bank()` / `program()` | The selected preset; zero while empty |
 | `setVoiceLimit(n)` / `voiceLimit()` | 1 to 65535, default 256; throws otherwise |
+| `ignored()` | What the loaded file uses that the node ignores or skips; empty while empty |
 | `prepare()` | Derives rate-dependent values and resets the pool |
 
 A load reads the file into the node, which keeps it whole as its content. A failed
@@ -142,14 +143,37 @@ refuses a graph holding the node. See
 - a file with no preset;
 - `ifil` major version 3, or a sample with the compressed bit:
   `soundfont: compressed samples (sf3) are not supported`. Other versions than 2
-  are refused too;
-- *interim (ticket 04 skips and lists them):* a zone whose sample is in ROM or
-  empty. A ROM sample no zone plays does not stop a load. A zone whose sample has a
-  sample rate of 0 is refused too, a guard of this ticket's own for ticket 04 to
-  settle beside them.
+  are refused too.
 
 The reader reads 16-bit sample data. An `sm24` chunk is skipped, so a 24-bit file
 plays at 16 bits.
+
+**What a load skips, ignores and lists.** A file the node only partly reads still
+loads. The load leaves a read-only list, `ignored()`, of what the file uses that the
+node ignores or skips, each kind once, in the errors' short form and in this order:
+
+| Entry | When |
+| --- | --- |
+| `soundfont: reverb and chorus sends are ignored` | A zone at either level sets `chorusEffectsSend` or `reverbEffectsSend` above 0. The output is dry; reverb is wiring after the node |
+| `soundfont: link modulators are ignored` | A modulator's source is another modulator's output (the link source, 127), or its output feeds another modulator (a destination with bit 15 set) |
+| `soundfont: zones playing a sample in rom are skipped` | An instrument zone's sample has the ROM bit (`0x8000`) |
+| `soundfont: zones playing an empty sample are skipped` | An instrument zone's sample starts where it ends |
+| `soundfont: zones playing a sample with no sample rate are skipped` | An instrument zone's sample has a sample rate of 0 |
+| `soundfont: loops outside their sample play unlooped` | A zone that would loop (`sampleModes` 1 or 3) has a loop with a point outside the points it plays |
+| `soundfont: empty loops play unlooped` | A zone that would loop has a loop whose end is not after its start |
+
+- A skipped zone is left out of every preset that plays it, and the rest of the file
+  plays. A ROM sample that no zone plays is neither refused nor listed.
+- A loop is checked against the points the zone plays, after its address offsets. A
+  zone that does not loop plays its sample to its end, so its loop is not listed.
+- The list covers the whole file, every preset and instrument, not only the selected
+  preset. A failed load keeps the previous content and its list. `process()` never
+  reads it.
+- Ignored as the specification says, and not listed: unknown, unused and reserved
+  generators (14, 18 to 20, 42, 49, 55, 59, 60 and from 61 up), instrument-only
+  generators at the preset level, and modulators the specification calls illegal,
+  such as a link as an amount source. The file's other modulators are ticket 05's;
+  until then the node does not read them.
 
 **Zones.** The first zone at either level without a terminal generator is that
 level's global zone. A note plays every instrument zone whose key and velocity
@@ -158,11 +182,36 @@ ones, and instrument-only generators at the preset level are ignored. Each final
 value is clamped to the specification's range. Generators after a zone's terminal
 generator are ignored, and a repeated generator keeps its last value.
 
-**The voice honours so far:**
+**Generators.** The node honours every generator that shapes one voice's sound
+(map ticket 09, D1):
+
+| Group | Generators | The node |
+| --- | --- | --- |
+| Zone selection | `instrument` 41, `keyRange` 43, `velRange` 44, `sampleID` 53 | Honoured at both levels |
+| Sample addressing and loops | offsets 0 to 4, 12, 45 and 50; `sampleModes` 54 | Honoured |
+| Pitch | `overridingRootKey` 58, `coarseTune` 51, `fineTune` 52, `scaleTuning` 56, `keynum` 46; the header's pitch, correction and rate | Honoured |
+| Volume envelope | 33 to 38, and their key scaling, `keynumToVolEnvHold` 39 and `keynumToVolEnvDecay` 40 | Honoured |
+| Modulation envelope | 25 to 30, `keynumToModEnvHold` 31, `keynumToModEnvDecay` 32; `modEnvToPitch` 7, `modEnvToFilterFc` 11 | Honoured |
+| Modulation LFO | `delayModLFO` 21, `freqModLFO` 22, `modLfoToPitch` 5, `modLfoToFilterFc` 10, `modLfoToVolume` 13 | Honoured |
+| Vibrato LFO | `delayVibLFO` 23, `freqVibLFO` 24, `vibLfoToPitch` 6 | Honoured |
+| Filter | `initialFilterFc` 8, `initialFilterQ` 9 | Honoured |
+| Level and placement | `initialAttenuation` 48, `pan` 17, `velocity` 47 | Honoured |
+| Exclusive class | `exclusiveClass` 57 | Ticket 05 |
+| Effects sends | `chorusEffectsSend` 15, `reverbEffectsSend` 16 | Ignored and listed |
+| Unused, reserved and unknown | 14, 18 to 20, 42, 49, 55, 59, 60, and 61 up | Ignored, not listed |
+
+`keynum` and `velocity`, when set, replace the note's key and velocity within the
+zone: in its pitch, its key scaling and its default modulators. The note's own key
+and velocity still choose the zones.
+
+**The voice:**
 
 - pitch from the root key (`overridingRootKey`, else the header's original pitch,
-  where 255 or an illegal value means 60) and the sample's rate against the graph's:
-  `2^((key - root) / 12) * sample rate / graph rate` points per frame;
+  where 255 or an illegal value means 60) and the sample's rate against the graph's.
+  In cents it is `scaleTuning * (key - root) + 100 * coarseTune + fineTune` plus the
+  header's pitch correction, plus the modulation envelope's and the LFOs' terms
+  below, and the sample is read at `2^(cents / 1200) * sample rate / graph rate`
+  points per frame. A modulated pitch is recomputed every frame;
 - linear interpolation, with the sample silent past its last point;
 - the points played: the sample header's start, end and loop points, each plus the
   zone's address offsets, the fine offset plus 32768 times the coarse one. The start
@@ -173,9 +222,10 @@ generator are ignored, and a repeated generator keeps its last value.
   to the sample's end. While a voice loops, interpolation follows the loop's last
   point with its first, so no point past the loop is read. Loops shorter than 32
   points, or closer than 8 points to an end of the sample, play as given. A loop that
-  is empty or lies outside the points the zone plays plays unlooped;
+  is empty or lies outside the points the zone plays plays unlooped, and is listed;
 - `initialAttenuation` plus the default modulators' attenuation, in centibels, the
-  total clamped to 0 to 1440 cB, so no voice is louder than its sample;
+  total clamped to 0 to 1440 cB, so no voice is louder than its sample. The
+  modulation LFO's volume term and the filter's gain at DC come on top;
 - equal-power `pan`: a centred zone is 3 dB down on each side, and +-500 is fully
   one-sided. A stereo pair is two voices;
 - the volume envelope: delay is silent and holds the sample back, the attack rises
@@ -183,16 +233,37 @@ generator are ignored, and a repeated generator keeps its last value.
   in decibels, a stage's time being a full 100 dB fall. Sustain is an attenuation in
   centibels. A release starts from the current level, so it ends sooner the lower it
   starts;
+- key scaling, for both envelopes: `keynumTo...Hold` and `keynumTo...Decay` take
+  their timecents off the hold or the decay for every key above 60 and add them for
+  every key below, so 100 halves the stage an octave up. The result stays within the
+  stage's own range, -12000 to 5000 for a hold and -12000 to 8000 for a decay;
 - the filter: the specification's two-pole low-pass, before the volume envelope as
-  in its synthesis model. At Q 0 cB it is a Butterworth response, 3 dB down at the
-  cutoff. Its cutoff in cents is `initialFilterFc`, plus the velocity-to-cutoff
-  default modulator, plus `modEnvToFilterFc` times the modulation envelope. The
-  filter follows it frame by frame in whole cents, and keeps it below 0.45 of the
-  graph's rate. `initialFilterQ` is not read yet;
+  in its synthesis model. At `initialFilterQ` 0 cB it is a Butterworth response,
+  3 dB down at the cutoff, as FluidSynth reads the specification's "not resonant".
+  Each centibel of `initialFilterQ` raises the gain at the cutoff a tenth of a
+  decibel above that: its Q is `10^(dB / 20) / sqrt(2)`, FluidSynth's, so the
+  response has FluidSynth's shape at every Q. 100 cB puts the gain at the cutoff
+  10 dB above the Butterworth response's, 7 dB above DC where the specification's
+  text says 10. The gain at DC falls by half the decibels, as the specification
+  says, so it is unity at 0 cB; FluidSynth's is 1.5 dB higher at every Q. Its
+  cutoff in cents is
+  `initialFilterFc`, plus the velocity-to-cutoff default modulator, plus
+  `modEnvToFilterFc` times the modulation envelope, plus `modLfoToFilterFc` times
+  the modulation LFO. The filter follows it frame by frame in whole cents, and keeps
+  it below 0.45 of the graph's rate;
 - the modulation envelope: the volume envelope's stage timing, with its own
   generators. Its level rises linearly from 0 to 1 in the attack, holds at 1, and its
   decay and release move linearly, a stage's time being a full change between 1 and
   0. Sustain is a decrease in 0.1 % steps. A release starts from the current level.
+  It moves the cutoff by `modEnvToFilterFc` and the pitch by `modEnvToPitch` cents at
+  its full level;
+- the two LFOs, each the specification's triangle: silent through its delay from the
+  note-on, then rising from 0 to 1, falling to -1 and rising back to 0 every period,
+  advanced every frame. Their frequencies are absolute cents, in which 0 is 8.176 Hz.
+  The modulation LFO moves the pitch by `modLfoToPitch` cents, the cutoff by
+  `modLfoToFilterFc` cents and the volume by `modLfoToVolume` centibels at its peak:
+  a positive depth raises each as the LFO rises. The vibrato LFO moves only the
+  pitch, by `vibLfoToPitch` cents. Neither decides when a voice ends.
 
 **Default modulators.** The node follows no controller, so the specification's
 default modulators read every controller at General MIDI's power-on value:
@@ -209,9 +280,8 @@ default modulators read every controller at General MIDI's power-on value:
 A voice ends once its volume envelope has fallen 96 dB below its peak after its
 attack, held or released, or when, with no loop left, it passes its sample's end. A
 voice on a mode 1 loop ends only by its envelope. After the last voice the output is
-exact zeros, and its slot is free from the frame after its last sound. Tuning
-(`modEnvToPitch` included), key scaling, `initialFilterQ` and the LFOs come in ticket
-04; the file's own modulators in ticket 05.
+exact zeros, and its slot is free from the frame after its last sound. The file's
+own modulators and exclusive class come in ticket 05.
 
 **Notes.** Every channel, channel 10 included, plays the one preset. Velocity is the
 note-on's byte, and velocity 0 is a note-off. Program changes, controllers, pitch
@@ -255,13 +325,6 @@ the file: it bites only under a realtime transport. The ticket that first gives 
 node one, such as the editor's, counts held notes per channel and key in
 `MidiBlockNode`.
 
-**Interim rules**, replaced by the tickets named:
-
-- *Unplayable zones (04):* refused at load, as listed under Errors.
-- *Silent ignoring (04):* generators and modulators the node does not read are
-  ignored silently, effects sends included. There is no ignored list yet, so a loop
-  that plays unlooped is not listed.
-
 `process()` allocates nothing: `prepare()` allocates the voices, their tails and the
 counts of held notes, 16 channels of 128 keys. Voices and tails render in slot order
 between events, so the output is bit-identical at every block size.
@@ -279,14 +342,19 @@ built only from operations IEEE 754 makes exact or correctly rounded (`+ - * /`,
 [project-foundations.md](project-foundations.md#implementation-conventions)). So the
 same graph, soundfont, notes and sample rate render the same bits in every build.
 The routines are within three units in the last place of the true values, far
-inside the node's tolerances. A golden test in `soundfont_tests` pins those bits: a
-clip through every maths path the node has, at 44.1, 48 and 22.05 kHz, as its frame
-count and a hash of every 4,096 frames (`tests/GoldenRender.h`). A change that alters
-them, such as a new maths path, updates its values in the same commit, so review
-sees every change to the node's rendered bits. The web render surface's
-[golden clips](web.md#golden-clips) pin the node's output through the render core too,
-in every build: a change to what the node renders updates their values in that same
-commit as well.
+inside the node's tolerances. A source check, CTest's `soundfont_portable_maths`,
+fails when any other soundfont node source calls a maths-library transcendental
+(`exp`, `exp2`, `pow`, `log`, `log10`, `sin`, `cos`, `tan` and their kin, in `std::`
+or C form); `floor`, `ceil`, `fmod`, `llround`, `isfinite`, `ldexp`, `frexp` and
+`sqrt` are exact or correctly rounded, and allowed. Golden tests in `soundfont_tests`
+pin the bits: two clips that between them take every maths path the node has (the
+second the LFOs, resonance, tuning and key scaling), at 44.1, 48 and 22.05 kHz, as
+each render's frame count and a hash of every 4,096 frames (`tests/GoldenRender.h`).
+A change that alters them, such as a new maths path, updates their values in the
+same commit, so review sees every change to the node's rendered bits. The web render
+surface's [golden clips](web.md#golden-clips) pin the node's output through the render
+core too, in every build: a change to what the node renders updates their values in
+that same commit as well.
 
 ## AudioOutputNode
 

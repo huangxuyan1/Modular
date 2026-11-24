@@ -136,6 +136,38 @@ constexpr auto kInstrumentOnly = [] {
   return only;
 }();
 
+// What a load lists as ignored or skipped, each kind once, in this order, and
+// the entry it lists for each.
+enum Listing : std::size_t {
+  kSends, kLinks, kRomZones, kEmptyZones, kRatelessZones, kLoopsOutside, kEmptyLoops,
+  kListingCount
+};
+constexpr std::string_view kListingEntries[kListingCount] = {
+    "soundfont: reverb and chorus sends are ignored",
+    "soundfont: link modulators are ignored",
+    "soundfont: zones playing a sample in rom are skipped",
+    "soundfont: zones playing an empty sample are skipped",
+    "soundfont: zones playing a sample with no sample rate are skipped",
+    "soundfont: loops outside their sample play unlooped",
+    "soundfont: empty loops play unlooped",
+};
+
+// A modulator is part of a link (2.04) when its source is another modulator's
+// output, the link controller 127, or its output is another modulator's
+// source, a destination with bit 15 set. A link as an amount source is
+// illegal, and like every illegal modulator it is ignored unlisted.
+bool isLink(std::uint16_t source, std::uint16_t destination) {
+  return (source & 0xff) == 0x7f || (destination & 0x8000) != 0;
+}
+
+// A zone's own value for a generator, else its global zone's, else none. The
+// zones are SoundFont's private ParsedZone.
+std::optional<std::int16_t> given(const auto& local, const auto& global, std::size_t g) {
+  if (local.given[g]) return local.amounts[g];
+  if (global && global->given[g]) return global->amounts[g];
+  return std::nullopt;
+}
+
 } // namespace
 
 SoundFont SoundFont::read(const std::filesystem::path& path) {
@@ -224,7 +256,8 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
       sample.loopEnd = list.integer(4);
       sample.rate = list.integer(4);
       sample.originalPitch = static_cast<std::uint8_t>(list.integer(1));
-      list.take(3); // pitch correction and link
+      sample.correction = static_cast<std::int8_t>(list.integer(1)); // signed cents
+      list.take(2);                                                  // link
       const auto type = list.integer(2);
       if ((type & 0x10) != 0) invalid("compressed samples (sf3) are not supported");
       sample.rom = (type & 0x8000) != 0;
@@ -235,9 +268,12 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
         invalid("a sample lies outside the sample data");
   }
 
+  // Which kinds of thing the file uses that the load lists.
+  std::array<bool, kListingCount> listed{};
+
   // A bag holds where its zone's generators and modulators start; zone z runs
-  // from bag z to bag z + 1. Modulators are not read yet, but their runs are
-  // checked like the generators'.
+  // from bag z to bag z + 1. Modulators' runs are checked like the
+  // generators', but a modulator is read only to find links.
   struct Bags {
     std::vector<std::uint16_t> generators, modulators;
   };
@@ -262,6 +298,17 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
     }
     return generators;
   };
+  // Whether each modulator is part of a link.
+  const auto readLinks = [&](HydraList modulatorList) {
+    Reader list = *lists[modulatorList];
+    std::vector<bool> links(counts[modulatorList]);
+    for (std::size_t i = 0; i < links.size(); ++i) {
+      auto record = list.take(kRecordSizes[modulatorList]);
+      const auto source = static_cast<std::uint16_t>(record.integer(2));
+      links[i] = isLink(source, static_cast<std::uint16_t>(record.integer(2)));
+    }
+    return links;
+  };
   // A preset's or instrument's header: where its bags start. `each` reads
   // what comes before that index in the record.
   const auto readHeaders = [&](HydraList headerList, HydraList bagList,
@@ -280,9 +327,11 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
   // Zones [first, last) of one preset or instrument. A first zone without a
   // terminal generator is the global zone; a later one is ignored. Generators
   // after the terminal one are ignored; a repeated one keeps its last value.
-  const auto readZones = [](const Bags& bags, const Generators& generators,
-                            std::size_t first, std::size_t last, std::uint16_t terminal,
-                            std::size_t targets, std::string_view target) {
+  // A zone read lists its effects sends above 0 and its link modulators.
+  const auto readZones = [&listed](const Bags& bags, const Generators& generators,
+                                   const std::vector<bool>& links, std::size_t first,
+                                   std::size_t last, std::uint16_t terminal,
+                                   std::size_t targets, std::string_view target) {
     Zones zones;
     for (std::size_t bag = first; bag < last; ++bag) {
       ParsedZone zone;
@@ -299,8 +348,13 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
           zone.given[oper] = true;
         }
       }
+      if (!terminated && bag != first) continue;
+      for (const auto send : {kChorusEffectsSend, kReverbEffectsSend})
+        if (zone.given[send] && zone.amounts[send] > 0) listed[kSends] = true;
+      for (std::size_t m = bags.modulators[bag]; m < bags.modulators[bag + 1]; ++m)
+        if (links[m]) listed[kLinks] = true;
       if (terminated) zones.local.push_back(zone);
-      else if (bag == first) zones.global = zone;
+      else zones.global = zone;
     }
     return zones;
   };
@@ -308,25 +362,40 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
   {
     const auto bags = readBags(kIbag, kImod, kIgen, "instrument");
     const auto generators = readGenerators(kIgen);
+    const auto links = readLinks(kImod);
     const auto starts = readHeaders(kInst, kIbag, "instrument",
                                     [](Reader& record) { record.take(20); }); // name
     for (std::size_t i = 0; i + 1 < starts.size(); ++i) {
-      auto instrument = readZones(bags, generators, starts[i], starts[i + 1], kSampleId,
-                                  result.samples_.size(), "sample");
-      // Interim: ticket 04 skips and lists ROM and empty samples instead. A
-      // rate of 0 is this ticket's own guard, left for ticket 04 to settle.
-      for (const auto& zone : instrument.local) {
+      auto instrument = readZones(bags, generators, links, starts[i], starts[i + 1],
+                                  kSampleId, result.samples_.size(), "sample");
+      // A zone whose sample cannot play is skipped, so the rest of the file
+      // plays; the others get the points they play.
+      std::vector<ParsedZone> playable;
+      for (auto& zone : instrument.local) {
         const auto& sample = result.samples_[zone.target];
-        if (sample.rom) invalid("a zone's sample is in rom");
-        if (sample.start == sample.end) invalid("a zone's sample is empty");
-        if (sample.rate == 0) invalid("a zone's sample has no sample rate");
+        const auto unplayable = [&]() -> std::optional<Listing> {
+          if (sample.rom) return kRomZones;
+          if (sample.start == sample.end) return kEmptyZones;
+          if (sample.rate == 0) return kRatelessZones;
+          return std::nullopt;
+        }();
+        if (unplayable) {
+          listed[*unplayable] = true;
+          continue;
+        }
+        zone.points = place(zone, instrument.global, sample);
+        if (zone.points.fault == Points::Fault::kLoopOutside) listed[kLoopsOutside] = true;
+        if (zone.points.fault == Points::Fault::kLoopEmpty) listed[kEmptyLoops] = true;
+        playable.push_back(zone);
       }
+      instrument.local = std::move(playable);
       result.instruments_.push_back(std::move(instrument));
     }
   }
   {
     const auto bags = readBags(kPbag, kPmod, kPgen, "preset");
     const auto generators = readGenerators(kPgen);
+    const auto links = readLinks(kPmod);
     std::vector<PresetNumber> numbers;
     const auto starts = readHeaders(kPhdr, kPbag, "preset", [&](Reader& record) {
       record.take(20); // name
@@ -337,13 +406,57 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
     });
     if (starts.size() < 2) invalid("no preset");
     for (std::size_t p = 0; p + 1 < starts.size(); ++p) {
-      result.presets_.push_back({numbers[p], readZones(bags, generators, starts[p],
+      result.presets_.push_back({numbers[p], readZones(bags, generators, links, starts[p],
                                                        starts[p + 1], kInstrument,
                                                        result.instruments_.size(),
                                                        "instrument")});
     }
   }
+  for (std::size_t listing = 0; listing < kListingCount; ++listing)
+    if (listed[listing]) result.ignored_.emplace_back(kListingEntries[listing]);
   return result;
+}
+
+// The points a zone plays: the sample header's start, end and loop, each plus
+// the zone's address offsets, the fine offset plus 32768 times the coarse one.
+// The start and end stay within the header's sample. A loop that lies outside
+// the points played, or is empty (its end not after its start), is dropped, so
+// the zone plays unlooped; a zone that would loop (sampleModes 1 or 3) says why.
+SoundFont::Points SoundFont::place(const ParsedZone& zone,
+                                   const std::optional<ParsedZone>& global,
+                                   const Sample& sample) {
+  // Every generator here is valid only in an instrument, so the instrument's
+  // value is the zone's.
+  const auto value = [&](Generator g) -> std::int64_t {
+    return given(zone, global, g).value_or(kGeneratorDefaults[g]);
+  };
+  const auto address = [&](std::uint32_t header, Generator fine, Generator coarse) {
+    return std::int64_t{header} + value(fine) + std::int64_t{32768} * value(coarse);
+  };
+  const auto withinSample = [&](std::int64_t point) {
+    return static_cast<std::uint32_t>(
+        std::clamp<std::int64_t>(point, sample.start, sample.end));
+  };
+  Points points;
+  points.start =
+      withinSample(address(sample.start, kStartAddrsOffset, kStartAddrsCoarseOffset));
+  points.end = std::max(points.start, withinSample(address(sample.end, kEndAddrsOffset,
+                                                           kEndAddrsCoarseOffset)));
+  const auto loopStart =
+      address(sample.loopStart, kStartloopAddrsOffset, kStartloopAddrsCoarseOffset);
+  const auto loopEnd =
+      address(sample.loopEnd, kEndloopAddrsOffset, kEndloopAddrsCoarseOffset);
+  const auto played = [&](std::int64_t point) {
+    return points.start <= point && point <= points.end;
+  };
+  const bool inside = played(loopStart) && played(loopEnd);
+  if (inside && loopStart < loopEnd) {
+    points.loopStart = static_cast<std::uint32_t>(loopStart);
+    points.loopEnd = static_cast<std::uint32_t>(loopEnd);
+  } else if (const auto mode = value(kSampleModes); mode == 1 || mode == 3) {
+    points.fault = inside ? Points::Fault::kLoopEmpty : Points::Fault::kLoopOutside;
+  }
+  return points;
 }
 
 SoundFont::PresetNumber SoundFont::lowestPreset() const {
@@ -362,13 +475,6 @@ std::vector<SoundFont::Zone> SoundFont::zones(PresetNumber number) const {
     invalid("no preset at bank " + std::to_string(number.bank) + " program " +
             std::to_string(number.program));
 
-  // A local zone's value, else its global zone's, else none.
-  const auto given = [](const ParsedZone& local, const std::optional<ParsedZone>& global,
-                        std::size_t g) -> std::optional<std::int16_t> {
-    if (local.given[g]) return local.amounts[g];
-    if (global && global->given[g]) return global->amounts[g];
-    return std::nullopt;
-  };
   // A range's low and high bytes, intersected with another range.
   const auto intersect = [](std::int16_t range, std::uint8_t& low, std::uint8_t& high) {
     low = std::max(low, static_cast<std::uint8_t>(range & 0xff));
@@ -398,32 +504,14 @@ std::vector<SoundFont::Zone> SoundFont::zones(PresetNumber number) const {
       }
       if (zone.keyLow > zone.keyHigh || zone.velocityLow > zone.velocityHigh) continue;
       const auto& sample = samples_[instrumentZone.target];
-      const auto address = [&](std::uint32_t header, Generator fine, Generator coarse) {
-        return std::int64_t{header} + zone.generators[fine] +
-               std::int64_t{32768} * zone.generators[coarse];
-      };
-      const auto withinSample = [&](std::int64_t point) {
-        return static_cast<std::uint32_t>(
-            std::clamp<std::int64_t>(point, sample.start, sample.end));
-      };
-      zone.sampleStart =
-          withinSample(address(sample.start, kStartAddrsOffset, kStartAddrsCoarseOffset));
-      zone.sampleEnd = std::max(
-          zone.sampleStart,
-          withinSample(address(sample.end, kEndAddrsOffset, kEndAddrsCoarseOffset)));
-      const auto loopStart =
-          address(sample.loopStart, kStartloopAddrsOffset, kStartloopAddrsCoarseOffset);
-      const auto loopEnd =
-          address(sample.loopEnd, kEndloopAddrsOffset, kEndloopAddrsCoarseOffset);
-      // A loop that is empty or lies outside the points played plays unlooped,
-      // and ticket 04 lists it.
-      if (zone.sampleStart <= loopStart && loopStart < loopEnd &&
-          loopEnd <= zone.sampleEnd) {
-        zone.loopStart = static_cast<std::uint32_t>(loopStart);
-        zone.loopEnd = static_cast<std::uint32_t>(loopEnd);
-      }
+      const auto& points = instrumentZone.points;
+      zone.sampleStart = points.start;
+      zone.sampleEnd = points.end;
+      zone.loopStart = points.loopStart;
+      zone.loopEnd = points.loopEnd;
       zone.sampleRate = sample.rate;
       zone.originalPitch = sample.originalPitch;
+      zone.pitchCorrection = sample.correction;
       result.push_back(zone);
     }
   }

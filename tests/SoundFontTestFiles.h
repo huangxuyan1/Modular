@@ -25,32 +25,51 @@ inline constexpr std::uint16_t kEndAddrsOffset = 1;
 inline constexpr std::uint16_t kStartloopAddrsOffset = 2;
 inline constexpr std::uint16_t kEndloopAddrsOffset = 3;
 inline constexpr std::uint16_t kStartAddrsCoarseOffset = 4;
+inline constexpr std::uint16_t kModLfoToPitch = 5;
+inline constexpr std::uint16_t kVibLfoToPitch = 6;
+inline constexpr std::uint16_t kModEnvToPitch = 7;
 inline constexpr std::uint16_t kInitialFilterFc = 8;
+inline constexpr std::uint16_t kInitialFilterQ = 9;
+inline constexpr std::uint16_t kModLfoToFilterFc = 10;
 inline constexpr std::uint16_t kModEnvToFilterFc = 11;
 inline constexpr std::uint16_t kEndAddrsCoarseOffset = 12;
+inline constexpr std::uint16_t kModLfoToVolume = 13;
+inline constexpr std::uint16_t kChorusEffectsSend = 15;
 inline constexpr std::uint16_t kReverbEffectsSend = 16;
 inline constexpr std::uint16_t kPan = 17;
+inline constexpr std::uint16_t kDelayModLfo = 21;
+inline constexpr std::uint16_t kFreqModLfo = 22;
+inline constexpr std::uint16_t kDelayVibLfo = 23;
+inline constexpr std::uint16_t kFreqVibLfo = 24;
 inline constexpr std::uint16_t kDelayModEnv = 25;
 inline constexpr std::uint16_t kAttackModEnv = 26;
 inline constexpr std::uint16_t kHoldModEnv = 27;
 inline constexpr std::uint16_t kDecayModEnv = 28;
 inline constexpr std::uint16_t kSustainModEnv = 29;
 inline constexpr std::uint16_t kReleaseModEnv = 30;
+inline constexpr std::uint16_t kKeynumToModEnvHold = 31;
+inline constexpr std::uint16_t kKeynumToModEnvDecay = 32;
 inline constexpr std::uint16_t kDelayVolEnv = 33;
 inline constexpr std::uint16_t kAttackVolEnv = 34;
 inline constexpr std::uint16_t kHoldVolEnv = 35;
 inline constexpr std::uint16_t kDecayVolEnv = 36;
 inline constexpr std::uint16_t kSustainVolEnv = 37;
 inline constexpr std::uint16_t kReleaseVolEnv = 38;
+inline constexpr std::uint16_t kKeynumToVolEnvHold = 39;
+inline constexpr std::uint16_t kKeynumToVolEnvDecay = 40;
 inline constexpr std::uint16_t kInstrument = 41;
 inline constexpr std::uint16_t kKeyRange = 43;
 inline constexpr std::uint16_t kVelRange = 44;
 inline constexpr std::uint16_t kStartloopAddrsCoarseOffset = 45;
+inline constexpr std::uint16_t kKeynum = 46;
+inline constexpr std::uint16_t kVelocity = 47;
 inline constexpr std::uint16_t kInitialAttenuation = 48;
 inline constexpr std::uint16_t kEndloopAddrsCoarseOffset = 50;
 inline constexpr std::uint16_t kCoarseTune = 51;
+inline constexpr std::uint16_t kFineTune = 52;
 inline constexpr std::uint16_t kSampleId = 53;
 inline constexpr std::uint16_t kSampleModes = 54;
+inline constexpr std::uint16_t kScaleTuning = 56;
 inline constexpr std::uint16_t kOverridingRootKey = 58;
 } // namespace gen
 
@@ -114,6 +133,7 @@ struct Sample {
   std::uint8_t originalPitch = 60;
   std::uint16_t type = kMonoSample;
   std::optional<Loop> loop; // without one, the header's loop is the whole sample
+  std::int8_t correction = 0; // the header's pitch correction, in cents
 };
 
 struct File {
@@ -219,7 +239,7 @@ inline Parts parts(const File& file) {
     le(headers, static_cast<std::uint32_t>(start + loop.end), 4);
     le(headers, sample.rate, 4);
     headers.push_back(sample.originalPitch);
-    headers.push_back(0); // pitch correction
+    headers.push_back(static_cast<std::uint8_t>(sample.correction));
     le(headers, 0, 2);    // sample link
     le(headers, sample.type, 2);
   }
