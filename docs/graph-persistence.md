@@ -15,6 +15,17 @@ auto replacement = modular::openGraphFile(path, modular::nodes::primitiveCodecs(
 workspace = std::move(replacement);
 ```
 
+A client that saves soundfont nodes passes their codec beside the primitives', in
+one span:
+
+```cpp
+std::vector<modular::NodeCodec> codecs(modular::nodes::primitiveCodecs().begin(),
+                                       modular::nodes::primitiveCodecs().end());
+codecs.insert(codecs.end(), modular::nodes::soundFontCodecs().begin(),
+              modular::nodes::soundFontCodecs().end());
+modular::saveGraphFile(workspace, path, codecs);
+```
+
 `saveGraph` and `openGraph` accept standard streams and the same codec span.
 Filesystem paths use `std::filesystem::path`, including native Windows Unicode
 paths. Save encodes the complete graph before opening a temporary file, writes
@@ -107,6 +118,8 @@ MidiBlockNode, MidiFileNode, SineSynthNode, VoiceAllocatorNode, WavRecorderNode 
 AudioOutputNode. Device codecs are unavailable on other platforms and produce
 the normal unsupported-kind error there. Loading never opens an output device;
 its configured channel count is restored and readiness is checked on Run.
+The SoundFontNode codec lives in the same library behind its own accessor,
+`soundFontCodecs()`; see [Owned soundfont representation](#owned-soundfont-representation).
 
 ### Recorder settings
 
@@ -161,6 +174,41 @@ pending manual presses and device queues are excluded. Reopening creates fresh
 idle nodes. A test-only node also round-trips owned PCM through `NodeContent`,
 without extending the container or adding a production audio-block player.
 
+### Owned soundfont representation
+
+`modular.soundfont/1` saves a `SoundFontNode` inside the graph, once and whole,
+so a reopened graph plays after the original soundfont file is moved or deleted:
+
+| State | Settings | CONTENT |
+| --- | --- | --- |
+| Loaded | `loaded bank program voiceLimit` | The soundfont file's bytes exactly as loaded, whole |
+| Empty | `empty voiceLimit` | Empty; the node reopens empty, ready for a load |
+
+The numbers are classic-locale decimal. No path or URL is saved, and neither are
+the parsed zones, the values that depend on the sample rate or the voices, so
+saving during Run yields the same representation as saving idle. Reopening parses
+the bytes with the same parser as a load, selects the saved preset and restores
+the voice limit. Bytes that no longer parse, an absent preset, a voice limit
+outside 1 to 65535, malformed or trailing settings and an empty node carrying
+content each fail Open with an explicit error, and the caller's graph stays as it
+was. Like the other codecs, it matches the exact concrete type and saves only the
+node's own ports, `midi` (`event<midi>`) in and `out` (`audio<2>`).
+
+**A separate accessor.** The codec is not in `primitiveCodecs()`. If it were, the
+Windows editor's Open would accept a soundfont graph and then fail while drawing
+it, since the editor has no presentation for the node. So the editor, which passes
+only `primitiveCodecs()`, refuses such a graph with
+`open: unsupported node kind modular.soundfont/1`, as other platforms refuse a
+device codec they lack. Giving the editor the node is a later, separate ticket:
+running it under Start/Stop needs `MidiBlockNode` to count held notes per channel
+and key.
+
+**A size limit follows.** CONTENT is hex, two characters per byte, and version 1
+caps an encoded file at 256 MiB, so a soundfont over about 128 MiB cannot be saved
+in a graph: Save fails with `save: graph exceeds 256 MiB format limit`. The node
+itself sets no limit. A denser
+encoding, or sharing one soundfont between nodes, would be a container decision.
+
 ## Verification
 
 Real-graph tests exercise settings, layout, topology, all surviving IDs and names,
@@ -181,3 +229,12 @@ round trips, fresh deterministic MIDI/audio comparison at several block sizes,
 idle reload after an active/pending-control Save, stored PCM through a test codec,
 allocator identity gaps, malformed content and import repair. The app smoke path
 also closes and reopens in a fresh process after removing the import source.
+
+Soundfont coverage builds its own SoundFont 2 files in memory
+(`tests/SoundFontTestFiles.h`). It saves a node loaded from a path, deletes the
+file, and checks the saved CONTENT is the file whole, trailing bytes included.
+The reopened node keeps its preset and voice limit and renders the same samples at
+two sample rates and four block sizes. It also covers an empty node reopened and
+then loaded, saving during Run, every Open failure above, the exact-type and port
+checks, and the refusal by `primitiveCodecs()` alone, both through `openGraph`
+and through the actual editor's Open.
