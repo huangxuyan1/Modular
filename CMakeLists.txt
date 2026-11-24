@@ -292,7 +292,7 @@ if(NOT CMAKE_CROSSCOMPILING)
     -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_soundfont_extract.cmake")
 endif()
 
-add_executable(web_core_tests tests/test_web_core.cpp)
+add_executable(web_core_tests tests/test_web_core.cpp tests/test_web_golden.cpp)
 target_include_directories(web_core_tests PRIVATE third_party/doctest)
 target_link_libraries(web_core_tests PRIVATE modular_web_core)
 add_test(NAME web_core_tests COMMAND web_core_tests)
