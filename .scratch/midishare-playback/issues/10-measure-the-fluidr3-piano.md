@@ -73,3 +73,24 @@ outside the repository. Full figures, the zone table and every generator:
   same 40 samples, so adding them to an extract costs a few KB of hydra.
 
 Choosing the default is the planning hub's call.
+
+### Planning hub decision: the default soundfont (2026-11-24)
+
+Decided by the planning hub under the judgment the user delegated for this map ("All, on your
+best judgment").
+
+- **The default is FluidR3_GM's "Yamaha Grand Piano" (bank 0, program 0), with every zone**,
+  shipped as a single-preset SoundFont 2 extract of about 7.45 MiB. It loses nothing in sound,
+  plays keys outside the piano roll that a clip's ABC may still contain, and leaves 17.5 MiB of
+  headroom under the host's 25 MiB limit. Cutting it to notes 36–95 would save 2.3 MiB and
+  silence those keys; one channel per pair would change the tone. Both are rejected.
+- **FluidR3's MIT copyright and permission notice travels with the extract**, as the samples
+  research requires.
+- **Presets 0:1 and 0:3 are not decided here.** They play the same samples, so the extract can
+  carry them for a few KB. Whether the stretch goal offers them belongs to the stretch item in
+  the map's "Not yet specified" list.
+- **Making the extract is a tool's job, outside the node** (ticket 05, D5). Which tool makes
+  it, where it runs and where the file is kept are for the spec and for
+  [Where does the web build live, and how does a built module reach the site?](03-where-the-web-build-lives.md).
+  The full `FluidR3_GM.sf2` is never committed to either repository.
+- The FreePats fallback is not needed and was not downloaded.
