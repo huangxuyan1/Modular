@@ -1029,21 +1029,136 @@ TEST_CASE("two parts in unison on two channels both sound and end separately") {
   CHECK(levelAt(out, 29000) == doctest::Approx(one));
 }
 
-TEST_CASE("for now a note-on that finds too few free voices is not started") {
-  // Interim rule until voices are taken (ticket 03). A stereo pair needs two
-  // voices; with three, a second note finds one free and does not start.
+namespace {
+
+// As twoVelocities(), but a soft note's sample is 600 points long, so a held
+// soft note ends by itself soon after its onset.
+Bytes shortSoftNotes() {
   File file;
-  file.samples = {{"s", steady(1000, 60000)}};
-  file.instruments.push_back({"pair", {{{set(gen::kPan, -500), set(gen::kSampleId, 0)}},
-                                       {{set(gen::kPan, 500), set(gen::kSampleId, 0)}}}});
+  file.samples = {{"soft", steady(1000, 600)}, {"loud", steady(2000, 60000)}};
+  file.instruments.push_back(
+      {"i", {{{set(gen::kPan, -500), set(gen::kReleaseVolEnv, -1200)}},
+             {{range(gen::kVelRange, 0, 63), set(gen::kSampleId, 0)}},
+             {{range(gen::kVelRange, 64, 127), set(gen::kSampleId, 1)}}}});
   file.presets.push_back({"p", 0, 0, {{{set(gen::kInstrument, 0)}}}});
-  const auto font = build(file);
-  const auto limit = [](SoundFontNode& node) { node.setVoiceLimit(3); };
-  const auto alone = play(font, {{13, noteOn(0, 60, 100)}}, {48000, 128, 3000}, limit);
-  const auto crowded = play(font, {{13, noteOn(0, 60, 100)}, {503, noteOn(0, 62, 100)}},
-                            {48000, 128, 3000}, limit);
-  CHECK(crowded.left == alone.left);
-  CHECK(crowded.right == alone.right);
+  return build(file);
+}
+
+} // namespace
+
+TEST_CASE("a held note that ended by itself still takes its key's next note-off") {
+  // The soft note's sample runs out while it is held. The first note-off on
+  // its key is spent on it, so the loud note struck after it holds on until
+  // the second.
+  const auto font = shortSoftNotes();
+  const auto out = play(font,
+                        {{13, noteOn(0, 60, 30)}, {1009, noteOn(0, 60, 100)},
+                         {2003, noteOff(0, 60)}, {9001, noteOff(0, 60)}},
+                        {48000, 128, 40000});
+  const auto loud = play(font, {{1009, noteOn(0, 60, 100)}, {9001, noteOff(0, 60)}},
+                         {48000, 128, 40000});
+  REQUIRE(lastSounding(play(font, {{13, noteOn(0, 60, 30)}}).left) < 1009);
+  CHECK(std::equal(out.left.begin() + 1009, out.left.end(), loud.left.begin() + 1009));
+}
+
+namespace {
+
+// 6 ms at 48 kHz: how long a taken voice takes to fade out.
+constexpr std::size_t kFade = 288;
+
+std::function<void(SoundFontNode&)> voiceLimit(std::uint32_t limit) {
+  return [limit](SoundFontNode& node) { node.setVoiceLimit(limit); };
+}
+
+// Whether two renders agree on every frame from `from` on, in both channels.
+bool agreeFrom(const Stereo& a, const Stereo& b, std::size_t from) {
+  return std::equal(a.left.begin() + from, a.left.end(), b.left.begin() + from,
+                    b.left.end()) &&
+         std::equal(a.right.begin() + from, a.right.end(), b.right.begin() + from,
+                    b.right.end());
+}
+
+} // namespace
+
+TEST_CASE("a full pool takes released notes before held ones and each oldest first") {
+  // Each note is one voice and the pool holds two, so the third note, at frame
+  // 2003, takes one. Once the taken note has faded, the render matches one in
+  // which that note was never struck. Each note's velocity sets it apart, and
+  // a release lasts 0.48 s, so every released note still sounds when taken.
+  const auto font = envelopeFont({set(gen::kReleaseVolEnv, -1200)});
+  const Run run{48000, 128, 8000};
+  const auto takes = [&](const std::vector<Timed>& midi, const std::vector<Timed>& untaken) {
+    return agreeFrom(play(font, midi, run, voiceLimit(2)), play(font, untaken, run),
+                     2003 + kFade);
+  };
+  const Timed a{13, noteOn(0, 60, 100)}, b{503, noteOn(0, 62, 90)},
+      c{2003, noteOn(0, 64, 80)};
+  SUBCASE("a released note goes before an older held one") {
+    CHECK(takes({a, b, {1009, noteOff(0, 62)}, c}, {a, c}));
+  }
+  SUBCASE("the released note whose note-off came first goes first") {
+    // b was struck after a but released before it.
+    CHECK(takes({a, b, {1009, noteOff(0, 62)}, {1511, noteOff(0, 60)}, c},
+                {a, {1511, noteOff(0, 60)}, c}));
+  }
+  SUBCASE("with none released, the held note whose note-on came first goes first") {
+    CHECK(takes({a, b, c}, {b, c}));
+  }
+}
+
+namespace {
+
+// Keys up to 60 play a steady half-scale sample full left, and higher keys
+// full right, so a taken note and the note taking it are heard apart.
+Bytes splitByKey() {
+  File file;
+  file.samples = {{"s", steady(16384, 60000)}};
+  file.instruments.push_back(
+      {"split", {{{range(gen::kKeyRange, 0, 60), set(gen::kPan, -500),
+                   set(gen::kSampleId, 0)}},
+                 {{range(gen::kKeyRange, 61, 127), set(gen::kPan, 500),
+                   set(gen::kSampleId, 0)}}}});
+  file.presets.push_back({"p", 0, 0, {{{set(gen::kInstrument, 0)}}}});
+  return build(file);
+}
+
+} // namespace
+
+TEST_CASE("a taken voice fades linearly to zero over 6 ms as the new note starts at its frame") {
+  const auto font = splitByKey();
+  for (const double rate : {44100.0, 48000.0}) {
+    CAPTURE(rate);
+    const Run run{rate, 128, 6000};
+    const Timed held{13, noteOn(0, 60, 100)}, taking{2003, noteOn(0, 64, 100)};
+    const auto out = play(font, {held, taking}, run, voiceLimit(1));
+    const auto alone = play(font, {held}, run);
+    CHECK(firstDifference(out.left, alone.left, 2003) == 2003);
+    // 6 ms is 264.6 frames at 44.1 kHz and 288 at 48 kHz. From the new note's
+    // frame, the taken note falls in equal steps from its own level to zero.
+    const auto fade = lastSounding(out.left) + 1 - 2003;
+    CHECK(std::abs(static_cast<double>(fade) - 0.006 * rate) <= 1);
+    for (std::size_t j = 0; j < fade; ++j) {
+      CAPTURE(j);
+      CHECK(out.left[2003 + j] ==
+            doctest::Approx(alone.left[2003 + j] * static_cast<double>(fade - j) /
+                            static_cast<double>(fade)));
+    }
+    // The new note plays as though the pool had room: the fading voice does
+    // not count against the limit.
+    CHECK(out.right == play(font, {taking}, run).right);
+  }
+}
+
+TEST_CASE("a slot taken again within 6 ms stops its older tail at once") {
+  // One voice. The note at 2003 takes the left note, and the note 101 frames
+  // later takes it in turn, so the left note's fade stops there.
+  const auto font = splitByKey();
+  const Timed third{2104, noteOn(0, 67, 100)};
+  const auto out = play(font, {{13, noteOn(0, 60, 100)}, {2003, noteOn(0, 64, 100)}, third},
+                        {}, voiceLimit(1));
+  CHECK(out.left[2103] != 0);
+  CHECK(lastSounding(out.left) == 2103);
+  CHECK(agreeFrom(out, play(font, {third}), 2104 + kFade));
 }
 
 TEST_CASE("a voice's slot is free from the frame after its last sound") {
