@@ -96,6 +96,9 @@ build, as roadmap ticket 04's did. Research findings live under `research/` here
   — one polyphonic primitive (`event<midi>` in, `audio<2>` out) that owns the soundfont file's
   bytes as stored node content, saved once and whole inside the graph; its voices are internal,
   so release and stealing are its own policy. No kernel or workspace change, and no ADR.
+- [Measure the FluidR3_GM piano before it becomes the default](issues/10-measure-the-fluidr3-piano.md)
+  — it fits: the full piano preset extracts to a 7.45 MiB SF2 (5.13 MiB for notes 36–95);
+  one velocity layer of 32 kHz stereo pairs played as panned mono zones, with an audible filter.
 
 ## Not yet specified
 
