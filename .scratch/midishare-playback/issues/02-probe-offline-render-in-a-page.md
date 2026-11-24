@@ -154,3 +154,25 @@ was resolved while this probe ran. The probe's measurements support three of its
 
 One thing was not measured here: the one-note render with a soundfont loaded that its preview
 decision, J8, asks for. No soundfont node exists yet. With the sine voice it takes 0.3 ms.
+
+### Planning hub decisions (2026-11-24)
+
+Decided by the planning hub under the judgment the user delegated for this map ("All, on your
+best judgment").
+
+1. **Exception mode: native WebAssembly exceptions** (`-fwasm-exceptions`, the legacy encoding
+   Emscripten 6.0.13 uses by default), caught in C++ at every exported function and returned
+   as a status and message. The oldest browsers it loads in are Chrome 95, Firefox 100 and
+   Safari 15.2, well behind the map's "current desktop" browsers. It is smaller and simpler
+   than JavaScript-based exceptions. Moving to exnref later is one flag.
+2. **The `long double` patch is not taken now.** Nothing needs it, and every render was
+   bit-exact without it. It goes to the web-build spec with one note: on wasm32, persistence
+   writes `long double` values with 36 digits where native writes 17. That matters only if a
+   saved graph ever crosses between the two builds, which the page contract does not do.
+3. **The probe's numbers stand behind ticket 04's decisions 7, 10 and 12.**
+   - A growing output vector reached 256 MiB of linear memory at the 10-minute cap, which
+     justifies a preallocated or chunked sink.
+   - Catching at the export boundary works in every mode.
+   - A render on the main thread blocked for 0.36 s on the worst clip with the sine voice.
+     The soundfont voice will cost more, so whether to render in a Web Worker is midishare's
+     call, made with the soundfont node's timings when they exist.
