@@ -112,6 +112,13 @@ build, as roadmap ticket 04's did. Research findings live under `research/` here
   full, the node takes whole notes, released before held and oldest first, with a 6 ms fade. A
   key struck again gets a voice beside the old one, and note-offs end a key's held notes oldest
   first, so unisons and abcjs's overlapping slurs play right.
+- [Which part of the SoundFont format does the node read?](issues/09-soundfont-format-subset.md)
+  — every generator that shapes a voice, file modulators evaluated at note-on, and both velocity
+  defaults (velocity to cutoff linear at every velocity, unlike FluidSynth's switch at 64);
+  effects sends and controllers (the pedal too) are ignored. Malformed and SoundFont 3 files
+  throw; the rest plays as the spec's rules say, with a list of what was ignored. Velocity is
+  each note-on's byte, channel 10 plays the preset, and each stereo side is its own mono voice.
+  FluidSynth is the comparison renderer for the piano.
 
 ## Not yet specified
 
@@ -135,8 +142,11 @@ In scope, not yet sharp enough to ticket. Graduates as the frontier advances.
   parses its soundfont when it is loaded, never in `prepare()`, so a new `Engine` does not read
   it again (the node-shape decision above). Sharp once the contract ticket says what the graph
   holds.
-- **Sound parity.** How the new piano is judged against today's before the abcjs fallback goes,
-  and by whom. Sharp once the default soundfont is chosen.
+- **Sound parity.** Not a map ticket (planning hub, 2026-11-24, on
+  [Which part of the SoundFont format does the node read?](issues/09-soundfont-format-subset.md)).
+  The user judges by ear on the live site, after the node passes its FluidSynth comparison,
+  whether the abcjs fallback can go; the spec carries this as its last acceptance item. Expect a
+  dry output and a wider velocity spread than abcjs's synth.
 
 ## Out of scope
 
