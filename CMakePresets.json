@@ -37,7 +37,6 @@
       "name": "web",
       "configurePreset": "web",
       "output": { "outputOnFailure": true },
-      "filter": { "include": { "name": "^(web_core_tests|web_smoke_fixture|web_smoke)$" } },
       "execution": { "noTestsAction": "error" }
     }
   ]

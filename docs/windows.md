@@ -76,6 +76,10 @@ makes it fail rather than pass.
   target and run CTest with `--label-exclude desktop`: the kernel, node, authoring,
   MIDI-file, soundfont and web render core tests, the CLI smoke test, the soundfont
   extract tool's test and kernel purity.
+- **Build path, web:** on `ubuntu-24.04`, a `web` job installs the pinned Emscripten,
+  builds with the `web` presets, runs the web build's tests under Node and
+  uploads the built module as an artifact. [web.md](web.md#continuous-integration)
+  describes it, and [what the web build covers](web.md#what-the-web-build-covers).
 
 CI does not cover:
 
@@ -83,8 +87,8 @@ CI does not cover:
   which drive the real graph-editor window. The local script runs them by
   default (or use `ctest --preset windows -L desktop`); when a change affects the
   graph editor, record that local result as the ticket's GUI evidence;
-- whether external links resolve, audible playback through an audio device, or
-  builds on other platforms;
+- whether external links resolve, audible playback through an audio device, or native
+  builds on other platforms, such as macOS or Linux; the web build is the `web` job's;
 - releases or deployment; nothing merges automatically.
 
 ## Moving between machines

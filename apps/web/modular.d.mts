@@ -15,6 +15,12 @@ export function loadModular(options?: {
 
 export interface Modular {
   /**
+   * What built the module: the commit of the Modular tree, whether that tree had
+   * uncommitted changes to tracked files, and the Emscripten version. The manifest
+   * beside the files, `modular.manifest.json`, records the same.
+   */
+  readonly version: { commit: string; dirty: boolean; emscripten: string };
+  /**
    * Parses a soundfont's bytes once into an instrument that plays the file's lowest
    * preset. The bytes are copied when the call is made; the instrument keeps its own copy.
    * Rejects with an `Error` carrying Modular's message, such as `soundfont: ...`.

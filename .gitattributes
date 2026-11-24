@@ -2,3 +2,7 @@
 *.sh text eol=lf
 # Saved-graph fixtures are real Save output, so they stay byte-exact: no conversion.
 tests/fixtures/*.modular -text
+# The web loader and its declarations ship byte for byte, and the build's manifest records
+# their SHA-256, so every host checks them out with the same line endings.
+apps/web/*.mjs text eol=lf
+apps/web/*.d.mts text eol=lf
