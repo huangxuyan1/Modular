@@ -220,7 +220,8 @@ SoundFont SoundFont::parse(std::span<const std::uint8_t> bytes) {
       Sample sample;
       sample.start = list.integer(4);
       sample.end = list.integer(4);
-      list.take(8); // loop points: every zone plays its sample once, for now
+      sample.loopStart = list.integer(4);
+      sample.loopEnd = list.integer(4);
       sample.rate = list.integer(4);
       sample.originalPitch = static_cast<std::uint8_t>(list.integer(1));
       list.take(3); // pitch correction and link
@@ -397,8 +398,30 @@ std::vector<SoundFont::Zone> SoundFont::zones(PresetNumber number) const {
       }
       if (zone.keyLow > zone.keyHigh || zone.velocityLow > zone.velocityHigh) continue;
       const auto& sample = samples_[instrumentZone.target];
-      zone.sampleStart = sample.start;
-      zone.sampleEnd = sample.end;
+      const auto address = [&](std::uint32_t header, Generator fine, Generator coarse) {
+        return std::int64_t{header} + zone.generators[fine] +
+               std::int64_t{32768} * zone.generators[coarse];
+      };
+      const auto withinSample = [&](std::int64_t point) {
+        return static_cast<std::uint32_t>(
+            std::clamp<std::int64_t>(point, sample.start, sample.end));
+      };
+      zone.sampleStart =
+          withinSample(address(sample.start, kStartAddrsOffset, kStartAddrsCoarseOffset));
+      zone.sampleEnd = std::max(
+          zone.sampleStart,
+          withinSample(address(sample.end, kEndAddrsOffset, kEndAddrsCoarseOffset)));
+      const auto loopStart =
+          address(sample.loopStart, kStartloopAddrsOffset, kStartloopAddrsCoarseOffset);
+      const auto loopEnd =
+          address(sample.loopEnd, kEndloopAddrsOffset, kEndloopAddrsCoarseOffset);
+      // A loop that is empty or lies outside the points played plays unlooped,
+      // and ticket 04 lists it.
+      if (zone.sampleStart <= loopStart && loopStart < loopEnd &&
+          loopEnd <= zone.sampleEnd) {
+        zone.loopStart = static_cast<std::uint32_t>(loopStart);
+        zone.loopEnd = static_cast<std::uint32_t>(loopEnd);
+      }
       zone.sampleRate = sample.rate;
       zone.originalPitch = sample.originalPitch;
       result.push_back(zone);

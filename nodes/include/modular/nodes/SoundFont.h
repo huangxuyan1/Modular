@@ -18,7 +18,21 @@ class SoundFont {
 public:
   // Generator numbers from the SoundFont 2.04 specification, section 8.1.2.
   enum Generator : std::uint16_t {
+    kStartAddrsOffset = 0,
+    kEndAddrsOffset = 1,
+    kStartloopAddrsOffset = 2,
+    kEndloopAddrsOffset = 3,
+    kStartAddrsCoarseOffset = 4,
+    kInitialFilterFc = 8,
+    kModEnvToFilterFc = 11,
+    kEndAddrsCoarseOffset = 12,
     kPan = 17,
+    kDelayModEnv = 25,
+    kAttackModEnv = 26,
+    kHoldModEnv = 27,
+    kDecayModEnv = 28,
+    kSustainModEnv = 29,
+    kReleaseModEnv = 30,
     kDelayVolEnv = 33,
     kAttackVolEnv = 34,
     kHoldVolEnv = 35,
@@ -28,8 +42,11 @@ public:
     kInstrument = 41,
     kKeyRange = 43,
     kVelRange = 44,
+    kStartloopAddrsCoarseOffset = 45,
     kInitialAttenuation = 48,
+    kEndloopAddrsCoarseOffset = 50,
     kSampleId = 53,
+    kSampleModes = 54,
     kOverridingRootKey = 58,
     kGeneratorCount = 61,
   };
@@ -43,12 +60,20 @@ public:
   // One instrument zone as a preset plays it. Generators hold the final values:
   // instrument defaults, then its global and local zone, plus the preset's
   // global and local offsets, clamped to the specification's ranges.
+  //
+  // Its points, indexes into the sample data, are the sample header's plus the
+  // zone's address offsets: the fine offset plus 32768 times the coarse one.
+  // The start and end are kept within the header's sample.
   struct Zone {
     std::uint8_t keyLow = 0, keyHigh = 127;
     std::uint8_t velocityLow = 0, velocityHigh = 127;
     std::array<std::int32_t, kGeneratorCount> generators{};
-    std::uint32_t sampleStart = 0; // points into the sample data
-    std::uint32_t sampleEnd = 0;   // one past the sample's last point
+    std::uint32_t sampleStart = 0; // the first point played
+    std::uint32_t sampleEnd = 0;   // one past the last point played
+    // The loop: its first point, and the point after its last. Empty when the
+    // header's loop with its offsets is empty or lies outside the points the
+    // zone plays, so the zone plays unlooped whatever its sampleModes.
+    std::uint32_t loopStart = 0, loopEnd = 0;
     std::uint32_t sampleRate = 0;
     std::uint8_t originalPitch = 60;
   };
@@ -86,7 +111,7 @@ private:
     Zones zones;
   };
   struct Sample {
-    std::uint32_t start = 0, end = 0, rate = 0;
+    std::uint32_t start = 0, end = 0, loopStart = 0, loopEnd = 0, rate = 0;
     std::uint8_t originalPitch = 60;
     bool rom = false; // its points are in a ROM, not in the file
   };
