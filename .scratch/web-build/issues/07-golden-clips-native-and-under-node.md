@@ -127,6 +127,11 @@ fetched `origin/main` at `3c0aad4` and rebased, before its first push, onto `1fe
     (spec A 08's golden test included); smoke test 14. Under Node the render core's tests
     take 0.7 s, the 21.9 s timing clip at three rates included.
   - `python scripts/check_docs.py`: 0 problems. `git diff --check`: clean.
+- *CI* (pull request #38, run `45466321587`, head `aafccc5`): every job green and `CI gate`
+  passed. The `web` job, on `ubuntu-24.04` with Emscripten 6.0.13 and Node 24.19.0, took 67 s
+  and passed 9/9 CTest entries: `web_core_tests` with the golden clips, `soundfont_tests` with
+  spec A 08's golden test (its Node half), and `web_smoke` with the preview's hash.
+  `windows (Debug)` and `windows (Release)` each passed 9/9 headless entries.
 - *Review.* `/code-review` ran on both axes over `git diff origin/main...HEAD` at `f639fcf`, with
   a clean working tree.
   - Standards, fixed:
