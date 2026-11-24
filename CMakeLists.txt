@@ -86,7 +86,8 @@ target_include_directories(modular_web_core PUBLIC apps/web)
 target_link_libraries(modular_web_core PUBLIC modular_kernel modular_midi modular_soundfont)
 
 # The web module and its loader, built only under Emscripten. A client takes the files in
-# dist/: the hand-written loader and its declarations, and the module's glue and .wasm.
+# dist/: the hand-written loader and its declarations, the module's glue and .wasm, and the
+# manifest the build writes beside them.
 if(EMSCRIPTEN)
   set(MODULAR_WEB_DIST "${CMAKE_CURRENT_BINARY_DIR}/dist")
   # The module's version: the commit, read each time the module is built, not only when
