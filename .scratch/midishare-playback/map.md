@@ -73,10 +73,10 @@ hub, 2026-11-24, under the user's delegation). The work splits into two specs:
   codec, tests and docs. Its tickets 01 to 03 complete the website's route.
 - **(B) The web build and its render surface**, after tickets 02, 03 and 08: the Emscripten
   build, the glue (`loadModular`, `createInstrument`, `render`), where the module lives, the
-  `MidiFileNode` import from bytes, and the output sink.
+  `MidiFileNode` import from bytes, the output sink, and the extract tool (a `scripts/` script,
+  per [ticket 03](issues/03-where-the-web-build-lives.md)).
 
-Neither spec covers the midishare page or making the single-preset extract, which is a tool's
-job (B or later).
+Neither spec covers the midishare page.
 
 **Related roadmap tickets** (on `.scratch/roadmap/`):
 [How is the command/edit API cut?](../roadmap/issues/07-command-api-cut.md),
@@ -137,6 +137,14 @@ build, as roadmap ticket 04's did. Research findings live under `research/` here
   Edge bit for bit equal to native, 1.1 to 1.25 times native time (a 261 s worst-case clip in about
   0.36 s). Recommended: native WebAssembly exceptions (legacy encoding), caught at the exported
   function and returned as a message; 37.7 KB Brotli with the glue.
+- [Where does the web build live, and how does a built module reach the site?](issues/03-where-the-web-build-lives.md)
+  — the web is a supported platform: a `web` preset, a `web` CI job under `CI gate` on a
+  pinned Ubuntu with emsdk 6.0.13, and `docs/web.md`, scoped to the web surface and the tests
+  that pass under Node. The glue is a general `apps/web/` target. The CI job uploads the
+  module and a manifest of its Modular commit as an artifact, which midishare commits. The
+  extract tool is a `scripts/` Python script in spec B; the extract lives only in midishare,
+  with its MIT notice. No isolation headers. A pre-existing libc++ break in persistence goes
+  to its own fix ticket.
 
 ## Not yet specified
 
