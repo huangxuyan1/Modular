@@ -64,9 +64,9 @@ makes it fail rather than pass.
   build files, an empty diff or a base commit CI cannot find, takes the build path.
 - **Every change:** `python scripts/check_docs.py` (Python 3, also runnable
   locally) checks that each repository-internal Markdown link reaches a tracked
-  file and, for Markdown targets, an existing heading, and that `AGENTS.md` and
-  `CLAUDE.md` are byte-identical. `git diff --check` rejects whitespace errors and
-  conflict markers in the changed lines. No Markdown style linter runs.
+  file and, for Markdown targets, an existing heading, and that `CLAUDE.md` imports
+  `AGENTS.md` (a line reading `@AGENTS.md`). `git diff --check` rejects whitespace
+  errors and conflict markers in the changed lines. No Markdown style linter runs.
 - **Build path:** on the `windows-2022` image (Visual Studio 2022, the preset's
   generator), Debug and Release each configure the `windows` preset, build every
   target and run CTest with `--label-exclude desktop`: the kernel, node, authoring
@@ -111,8 +111,9 @@ database; the Windows configuration does not reference it.
 
 ## Agent context
 
-`AGENTS.md` and `CLAUDE.md` contain identical, self-contained startup rules for
-Codex and Claude Code. Keep them byte-identical when editing instructions. Detailed
+`AGENTS.md` holds the self-contained startup rules every agent shares. `CLAUDE.md`
+imports it with `@AGENTS.md`, which Claude Code inlines at startup, and adds only
+Claude Code context. Put shared rules in `AGENTS.md`. Detailed
 layer decisions and coding conventions are in `docs/project-foundations.md`; read
 that file when working in those areas. Domain vocabulary, ADRs and local tickets
 remain in `CONTEXT.md`, `docs/adr/` and `.scratch/`.
