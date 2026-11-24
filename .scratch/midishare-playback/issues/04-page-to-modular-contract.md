@@ -182,6 +182,41 @@ For the planning hub to send to the midishare session. None blocks this ticket.
 7. Whether the asset layer serves `.wasm` as `application/wasm` and caches hashed assets long;
    this may belong to ticket 03.
 
+### The midishare session's answers (2026-11-24)
+
+Received by the planning hub after the decisions above. Items 1 and 7 are facts the midishare
+session measured, and item 6 is its proposal. Items 2–5 are the user's to decide in that
+session; the midishare session has put each to the user with its own recommendation, and none
+is decided here.
+
+1. **Census.** The site stores 5 clips, all published examples. None has staccato, a tuplet, a
+   pitch below 16 or above 127, a `%%MIDI` line, a quarter tone or trailing rests. One has
+   chord symbols, and its accompaniment reaches pitch 33, below the roll's lowest row. The
+   longest clip lasts 12.3 s. So decision 3's gate is met for today's clips, and decision 7's
+   cap never binds them. Five examples say little about future clips: the editor accepts
+   staccato, septuplets, `%%MIDI program` and `drum`, quarter tones and pitches 0 to 132. abcjs's
+   `totalDuration` includes trailing rests.
+2. **The writer.** The session's recommendation, awaiting the user: don't patch abcjs's writer
+   now. The Modular engine file sends an affected clip (fast staccato, a tuplet of 7 or more, a
+   pitch below 16) to abcjs for that render, and Download .mid stays as it is. This is page
+   policy and fits decision 3; Modular's input does not change.
+3. **Clips ending in rests.** The session's recommendation, awaiting the user: keep today's end,
+   by padding to abcjs's musical end plus 200 ms.
+4. **Waits and download size.** Awaiting the user. The session recommends warming up at the
+   first gesture on a page with a transport, not at page load. Today a clip's first Play fetches
+   about 0.5 MB of mp3s. The default soundfont chosen in
+   [ticket 10](10-measure-the-fluidr3-piano.md) is about 7.45 MiB, and 16-bit PCM barely
+   compresses, so the first sound will cost roughly fifteen times that.
+5. **The fallback inside the engine file.** The session's recommendation, awaiting the user: yes.
+   The session has since made `playFrom` catch a failed render on its branch.
+6. **End-to-end tests (proposal).** A test init script wraps
+   `AudioBufferSourceNode.prototype.start` and records each start. Which pitch played moves to
+   unit tests of the engine file, with a fake instrument.
+7. **Asset layer (measured on the live site).** Hashed assets are served with
+   `Cache-Control: max-age=0, must-revalidate` and an ETag, so every load revalidates. No
+   `.wasm` is served yet, so its content type is unknown until a deploy. This feeds
+   [ticket 03](03-where-the-web-build-lives.md).
+
 ## Comments
 
 ### Investigation pass, 2026-11-24
