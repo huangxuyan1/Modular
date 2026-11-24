@@ -151,6 +151,19 @@ void SoundFontNode::prepare(const PrepareInfo& info) {
         std::ceil(std::min(sustainDb, kFloorDb) * decayFramesPerDb));
     plan.releaseFramesPerDb = seconds(g[SoundFont::kReleaseVolEnv]) * rate / 100;
     plan.releaseFactor = maths::exp10(-1 / (20 * plan.releaseFramesPerDb));
+
+    // The modulation envelope's decay and release move linearly, a stage's
+    // time being a full change between 1 and 0. Its sustain is a decrease in
+    // 0.1 % steps.
+    plan.modulation.delay = frames(g[SoundFont::kDelayModEnv]);
+    plan.modulation.attack = frames(g[SoundFont::kAttackModEnv]);
+    plan.modulation.hold = frames(g[SoundFont::kHoldModEnv]);
+    plan.modDecayFrames = seconds(g[SoundFont::kDecayModEnv]) * rate;
+    const double sustainFall = g[SoundFont::kSustainModEnv] / 1000.0;
+    plan.modulation.sustain = 1 - sustainFall;
+    plan.modulation.decay =
+        static_cast<std::uint64_t>(std::ceil(sustainFall * plan.modDecayFrames));
+    plan.modReleaseFrames = seconds(g[SoundFont::kReleaseModEnv]) * rate;
     plans_.push_back(plan);
   }
   voices_.assign(voice_limit_, Voice{});
@@ -211,6 +224,7 @@ void SoundFontNode::noteOn(std::uint8_t channel, std::uint8_t key, std::uint8_t 
     // And the velocity-to-cutoff one to initialFilterFc.
     voice.cutoff = plan.zone.generators[SoundFont::kInitialFilterFc] +
                    kVelocityToCutoff * (128 - velocity) / 128;
+    voice.modulation.settle(plan.modulation);
     voice.active = sounds(voice, plan);
   }
 }
@@ -232,6 +246,11 @@ void SoundFontNode::startRelease(Voice& voice) {
   voice.held = false;
   const auto& plan = plans_[voice.plan];
   voice.looping = voice.looping && plan.loopsInRelease;
+  if (voice.modulation.settle(plan.modulation)) {
+    const double from = modulation(voice, plan);
+    voice.modulation.release(
+        from, static_cast<std::uint64_t>(std::ceil(from * plan.modReleaseFrames)));
+  }
   if (!voice.volume.settle(plan.volume)) {
     voice.active = false;
     return;
@@ -302,9 +321,32 @@ double SoundFontNode::volume(const Voice& voice, const PreparedZone& plan) {
   }
 }
 
-// The cutoff for the voice's next frame, in whole cents.
-std::int64_t SoundFontNode::cutoff(const Voice& voice, const PreparedZone&) {
-  return std::llround(voice.cutoff);
+// The modulation envelope's level for the voice's next frame, once settled:
+// 0 in its delay and once its release is over.
+double SoundFontNode::modulation(const Voice& voice, const PreparedZone& plan) {
+  const auto& envelope = voice.modulation;
+  const auto frame = static_cast<double>(envelope.frame);
+  switch (envelope.stage) {
+  case Stage::kAttack: // a linear rise, reaching 1 on its last frame
+    return (frame + 1) / static_cast<double>(plan.modulation.attack);
+  case Stage::kHold:
+    return 1;
+  case Stage::kDecay:
+    return 1 - frame / plan.modDecayFrames;
+  case Stage::kSustain:
+    return plan.modulation.sustain;
+  case Stage::kRelease:
+    return envelope.level - frame / plan.modReleaseFrames;
+  default:
+    return 0;
+  }
+}
+
+// The cutoff for the voice's next frame, in whole cents: its own, which holds
+// the velocity modulator's, plus the modulation envelope's.
+std::int64_t SoundFontNode::cutoff(const Voice& voice, const PreparedZone& plan) {
+  return std::llround(voice.cutoff + plan.zone.generators[SoundFont::kModEnvToFilterFc] *
+                                         modulation(voice, plan));
 }
 
 // The specification's two-pole low-pass, as a state-variable filter whose
@@ -374,6 +416,8 @@ void SoundFontNode::render(Voice& voice, float* left, float* right, std::uint32_
       else if (envelope.stage == Stage::kRelease) envelope.level *= plan.releaseFactor;
     }
     ++envelope.frame;
+    ++voice.modulation.frame;
+    voice.modulation.settle(plan.modulation);
     if (!sounds(voice, plan)) {
       voice.active = false;
       return;

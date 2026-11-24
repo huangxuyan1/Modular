@@ -168,6 +168,15 @@ std::size_t lastSounding(const std::vector<float>& samples) {
   return samples.size();
 }
 
+// The first of the first `count` frames on which two renders differ, or
+// `count` if they agree on all of them.
+std::size_t firstDifference(const std::vector<float>& a, const std::vector<float>& b,
+                            std::size_t count) {
+  for (std::size_t i = 0; i < count; ++i)
+    if (a.at(i) != b.at(i)) return i;
+  return count;
+}
+
 // The gain the default modulators give a note: velocity to attenuation, and
 // the channel volume held at 100. Each is 40 log10(value / 127) dB, which is
 // (value / 127)^2 in amplitude.
@@ -474,6 +483,99 @@ TEST_CASE("velocity lowers the cutoff linearly so a softer note is quieter and n
     lastTone = tone;
     lastLevel = out.left.at(4400);
   }
+}
+
+namespace {
+
+// Generators for a 2 kHz tone whose cutoff sits on it at velocity 127:
+// initialFilterFc 9540 less the velocity modulator's 18.75 is 9521.25 cents,
+// 2000 Hz. A volume release of 100 s keeps a released note at full level.
+std::vector<Generator> modulatedTone(std::vector<Generator> modulation) {
+  modulation.insert(modulation.end(), {set(gen::kInitialFilterFc, 9540),
+                                       set(gen::kReleaseVolEnv, 8000)});
+  return modulation;
+}
+
+// The first frame on which renders of the 2 kHz tone font with generators
+// `a` and with `b` differ, for one note at velocity 127.
+std::size_t firstDifferentFrame(const std::vector<Generator>& a,
+                                const std::vector<Generator>& b,
+                                const std::vector<Timed>& midi) {
+  const Run run{48000, 128, 4000};
+  const auto first = play(toneFont(modulatedTone(a), 2000, 48000, 8000), midi, run);
+  const auto second = play(toneFont(modulatedTone(b), 2000, 48000, 8000), midi, run);
+  return firstDifference(first.right, second.right, run.frames);
+}
+
+// Whether `frame` lies within one frame after `derived`.
+bool withinAFrame(std::size_t frame, double derived) {
+  const auto at = static_cast<double>(frame);
+  return at >= derived && at <= derived + 1;
+}
+
+} // namespace
+
+TEST_CASE("the modulation envelope moves the cutoff by modEnvToFilterFc times its level") {
+  // Stages of 3000 frames at 48 kHz (-4800 timecents): delay, attack and
+  // hold; a decay of 6000 frames for a full fall (-3600) to a sustain 50 %
+  // down; and from the note-off, a release as long. modEnvToFilterFc -2400
+  // takes the cutoff from 2000 Hz at level 0 to 500 Hz at level 1, and to
+  // 1000 Hz at the sustain's 0.5.
+  const auto font = toneFont(
+      modulatedTone({set(gen::kDelayModEnv, -4800), set(gen::kAttackModEnv, -4800),
+                     set(gen::kHoldModEnv, -4800), set(gen::kDecayModEnv, -3600),
+                     set(gen::kSustainModEnv, 500), set(gen::kReleaseModEnv, -3600),
+                     set(gen::kModEnvToFilterFc, -2400)}),
+      2000, 48000, 48000);
+  const auto out = play(font, {{13, noteOn(0, 60, 127)}, {13 + 15000, noteOff(0, 60)}},
+                        {48000, 128, 22000});
+  // Windows well inside the delay, the hold, the sustain and after the
+  // release, which ends 3000 frames after the note-off.
+  for (const auto& [from, cutoff] : {std::pair{613, 2000.0}, std::pair{6613, 500.0},
+                                     std::pair{12613, 1000.0}, std::pair{18613, 2000.0}}) {
+    CAPTURE(from);
+    CHECK(std::abs(toneGainDb(out, from, from + 2400) - butterworthDb(2000, cutoff)) <= 1);
+  }
+}
+
+TEST_CASE("the modulation envelope's stages begin and end within one frame of their derived times") {
+  // Two renders agree until the stage that tells them apart takes effect.
+  // Each stage here is 375 frames at 48 kHz (-8400 timecents), and the note
+  // starts at frame 13.
+  const std::vector<Timed> note{{13, noteOn(0, 60, 127)}};
+  const std::vector<Generator> stages{
+      set(gen::kDelayModEnv, -8400), set(gen::kAttackModEnv, -8400),
+      set(gen::kHoldModEnv, -8400), set(gen::kModEnvToFilterFc, -2400)};
+  const auto with = [&](std::vector<Generator> more) {
+    more.insert(more.begin(), stages.begin(), stages.end());
+    return more;
+  };
+  // The delay ends when the attack starts to move the cutoff, which a zone
+  // with no depth never does. (A repeated generator keeps its last value.)
+  CHECK(withinAFrame(firstDifferentFrame(with({}), with({set(gen::kModEnvToFilterFc, 0)}), note),
+                     13 + 375));
+  // The attack and hold end when the decay starts: here falling to a sustain
+  // of 0 over 375 frames, or over 750 (-7200).
+  CHECK(withinAFrame(
+      firstDifferentFrame(
+          with({set(gen::kDecayModEnv, -8400), set(gen::kSustainModEnv, 1000)}),
+          with({set(gen::kDecayModEnv, -7200), set(gen::kSustainModEnv, 1000)}), note),
+      13 + 3 * 375));
+  // The decay ends 187.5 frames later at a sustain 50 % down, while one to a
+  // sustain 75 % down falls on.
+  const std::vector<Generator> toHalf{set(gen::kDecayModEnv, -8400),
+                                      set(gen::kSustainModEnv, 500)};
+  CHECK(withinAFrame(
+      firstDifferentFrame(with(toHalf),
+                          with({set(gen::kDecayModEnv, -8400), set(gen::kSustainModEnv, 750)}),
+                          note),
+      13 + 3 * 375 + 187.5));
+  // The release starts on the note-off's frame.
+  const std::vector<Timed> released{{13, noteOn(0, 60, 127)}, {3011, noteOff(0, 60)}};
+  auto quick = toHalf, slow = toHalf;
+  quick.push_back(set(gen::kReleaseModEnv, -8400));
+  slow.push_back(set(gen::kReleaseModEnv, -7200));
+  CHECK(withinAFrame(firstDifferentFrame(with(quick), with(slow), released), 3011));
 }
 
 TEST_CASE("a stereo pair plays as two voices and keeps its image") {
@@ -856,15 +958,6 @@ bool soundsThroughout(const Stereo& out, std::size_t from, std::size_t to) {
   for (std::size_t i = from; i < to; ++i)
     if (out.left.at(i) == 0) return false;
   return true;
-}
-
-// The first of the first `count` frames on which two renders differ, or
-// `count` if they agree on all of them.
-std::size_t firstDifference(const std::vector<float>& a, const std::vector<float>& b,
-                            std::size_t count) {
-  for (std::size_t i = 0; i < count; ++i)
-    if (a.at(i) != b.at(i)) return i;
-  return count;
 }
 
 // A ramp of `points` points, each 48 above the last.
