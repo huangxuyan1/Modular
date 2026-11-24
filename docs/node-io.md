@@ -85,8 +85,8 @@ The file rules follow the [Standard MIDI Files specification](https://midi.org/s
 ## SoundFontNode
 
 Status: soundfont-node ticket 01, the tracer, ticket 02, loops and the piano's tone,
-and ticket 06, persistence. Ticket 03 adds the full voice policy, 04 the rest of the
-voice and the ignored list, and 05 file modulators and exclusive class. The rules
+ticket 03, the voice policy, and ticket 06, persistence. Ticket 04 adds the rest of
+the voice and the ignored list, and 05 file modulators and exclusive class. The rules
 marked *interim* below change then. See `.scratch/soundfont-node/spec.md` for the end
 state.
 
@@ -215,25 +215,60 @@ exact zeros, and its slot is free from the frame after its last sound. Tuning
 
 **Notes.** Every channel, channel 10 included, plays the one preset. Velocity is the
 note-on's byte, and velocity 0 is a note-off. Program changes, controllers, pitch
-bend and note-off velocity do nothing. A key is a channel and a key number. A key
-struck again starts a new note beside the old one. A note-off releases every voice of
-its key's oldest held note; with none held, it does nothing.
+bend and note-off velocity do nothing, and neither does a message with a data byte of
+128 or more, which is not MIDI. A key is a channel and a key number. A key
+struck again starts a new note beside the old one, so two parts in unison, on one
+channel or two, both sound.
+
+A note-off ends its key's oldest held note: it releases every voice of that note
+still sounding. The node counts each key's held notes whatever has become of their
+voices. So when that note was taken (below), or its voices ended by themselves while
+it was held, its note-off is spent on it and releases no other note. A note-on that
+matches no zone is a held note of its key too. A note-off with no held note on its
+key does nothing, and the node keeps no credit for a later note-on.
+
+**The pool.** The voice limit counts voices, so a note on a stereo pair takes two. A
+note-off frees nothing: a voice is busy until it ends by itself. When a note-on finds
+too few free voices, the node takes whole notes, every voice one note-on started,
+until the new note has the voices it needs. A stereo pair or a layered note never
+loses one side.
+
+- *Which note goes:* released notes first, the one whose note-off came first. Only
+  when none is left, held notes, the one whose note-on came first. Every note-on and
+  note-off is numbered in stream order, so there are no ties.
+- *The fade:* a taken voice ramps linearly to zero over 6 ms, rounded to whole
+  frames at the graph's rate, from full on the new note's frame. The new note starts
+  at its own frame.
+- *Tails:* each slot of the pool carries one fading tail beside its voice, and a tail
+  does not count against the limit. A slot taken again within 6 ms stops its older
+  tail at once.
+
+Taking depends only on the event stream, so the output stays bit-identical at every
+block size while the pool turns over.
+
+**Known limitation: `MidiBlockNode`'s held flag.** `MidiBlockNode`, and
+`MidiFileNode` with it, keeps one held flag per channel and key. So at Stop,
+retrigger or a file's end it sends one note-off per key, and a second held note on
+the same key and channel, such as a unison on one channel, keeps sounding. A
+whole-clip render never depends on this, since every note gets its own note-off from
+the file: it bites only under a realtime transport. The ticket that first gives the
+node one, such as the editor's, counts held notes per channel and key in
+`MidiBlockNode`.
 
 **Interim rules**, replaced by the tickets named:
 
-- *Pool full (03):* a note-on that finds too few free voices for all its zones is
-  not started.
 - *Unplayable zones (04):* refused at load, as listed under Errors.
 - *Silent ignoring (04):* generators and modulators the node does not read are
   ignored silently, effects sends included. There is no ignored list yet, so a loop
   that plays unlooped is not listed.
 
-`process()` allocates nothing. Voices render in slot order between events, so the
-output is bit-identical at every block size. Every transcendental function whose
-result reaches the output goes through one internal header,
-`nodes/src/SoundFontMaths.h`, which wraps the standard library for now. Map ticket
-08 decided that a browser render must match a native one bit for bit, so the soundfont
-spec's ticket 08 replaces it there with portable routines.
+`process()` allocates nothing: `prepare()` allocates the voices, their tails and the
+counts of held notes, 16 channels of 128 keys. Voices and tails render in slot order
+between events, so the output is bit-identical at every block size. Every
+transcendental function whose result reaches the output goes through one internal
+header, `nodes/src/SoundFontMaths.h`, which wraps the standard library for now. Map
+ticket 08 decided that a browser render must match a native one bit for bit, so the
+soundfont spec's ticket 08 replaces it there with portable routines.
 
 ## AudioOutputNode
 

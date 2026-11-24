@@ -23,6 +23,10 @@ namespace modular::nodes {
 // as its own mono voice, placed by its pan. A note-off starts a voice's
 // release and frees nothing; a voice ends by itself, when its envelope has
 // fallen 96 dB after its attack or its sample has run out with no loop left.
+// When too few voices are free, a note-on takes whole notes, released before
+// held and oldest first, each fading out over 6 ms. A key struck again starts
+// a new note beside the old one, and its note-offs end its held notes oldest
+// first, whatever has become of their voices.
 //
 // Loading parses the whole file at authoring time. prepare() never reads the
 // file again: it derives what depends on the sample rate and resets the pool,
@@ -119,8 +123,13 @@ private:
     bool held = false;
     bool looping = false;
     std::uint32_t plan = 0;
-    std::uint64_t note = 0; // its note-on's number in stream order
+    std::uint64_t note = 0;    // its note-on's number in stream order
+    std::uint64_t ordinal = 0; // which of its key's note-ons started it
+    std::uint64_t noteOff = 0; // its note-off's number, once released
     std::uint8_t channel = 0, key = 0;
+    // A taken voice's frames left to fade out, its next frame's gain being
+    // fadeLeft over the fade's length; 0 for a voice that is not fading.
+    std::uint32_t fadeLeft = 0;
     Envelope volume, modulation;
     double position = 0, increment = 0;
     // The gain of its total attenuation: initialAttenuation, the held
@@ -132,10 +141,27 @@ private:
     Filter filter;
   };
 
+  // One place in the pool: its voice and, beside it, the last voice taken
+  // from it while that one fades out. The tail does not count against the
+  // voice limit.
+  struct Slot {
+    Voice voice, tail;
+  };
+
+  // One key's notes, a key being a channel and a key number. They are counted
+  // whatever has become of their voices, so a note-off ends the note it
+  // belongs to, the key's oldest held one, even when that note's voices have
+  // already ended.
+  struct KeyNotes {
+    std::uint64_t noteOns = 0;  // its note-ons so far
+    std::uint64_t noteOffs = 0; // its note-offs that found a held note
+  };
+
   void adopt(SoundFont soundFont);
   void select(SoundFont::PresetNumber preset, std::vector<SoundFont::Zone> zones);
   void noteOn(std::uint8_t channel, std::uint8_t key, std::uint8_t velocity);
   void noteOff(std::uint8_t channel, std::uint8_t key);
+  std::size_t takeNote();
   void startRelease(Voice& voice);
   void render(Voice& voice, float* left, float* right, std::uint32_t from,
               std::uint32_t to);
@@ -153,9 +179,11 @@ private:
 
   // Execution state, built by prepare().
   double rate_ = 0;
+  std::uint32_t fade_frames_ = 1; // a taken voice's fade, 6 ms
   std::vector<PreparedZone> plans_;
-  std::vector<Voice> voices_;
-  std::uint64_t note_ons_ = 0; // note-ons started, which numbers each note
+  std::vector<Slot> slots_;    // the pool, one slot per voice of the limit
+  std::vector<KeyNotes> keys_; // 16 channels of 128 keys
+  std::uint64_t events_ = 0;   // note-ons and note-offs so far, which numbers each
 };
 
 } // namespace modular::nodes
