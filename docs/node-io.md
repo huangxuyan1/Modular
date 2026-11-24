@@ -50,7 +50,7 @@ Include `modular/nodes/MidiFileNode.h` and link `modular_midi`.
 | Surface | Behavior |
 | --- | --- |
 | Construction | Empty/unready, a filesystem path, or an already parsed `MidiFile` |
-| `import(path)` | Edit-only replacement; failed import preserves previous content |
+| `import(path)` / `import(bytes)` | Edit-only replacement from a file or its bytes; a failed import throws, records its message and preserves previous content |
 | `ready()` / `importError()` | Readiness and latest import failure |
 | `trigger()` input | `event<trigger>` starts/restarts the file from the beginning |
 | `stop()` input | Releases held notes and cancels future events; wins same-frame Start |

@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <limits>
 #include <optional>
+#include <span>
 
 #include "MidiFile.h"
 #include "MidiNodes.h"
@@ -22,16 +23,13 @@ public:
 
   bool ready() const { return file_.has_value(); }
   const std::string& importError() const { return import_error_; }
-  // Edit-only. Failed replacement preserves any previous, self-contained content.
+  // Edit-only, from a file or from its bytes. Failed replacement preserves any
+  // previous, self-contained content.
   void import(const std::filesystem::path& path) {
-    try {
-      auto replacement = MidiFile::read(path);
-      file_ = std::move(replacement);
-      import_error_.clear();
-    } catch (const std::exception& error) {
-      import_error_ = error.what();
-      throw;
-    }
+    replaceFile([&] { return MidiFile::read(path); });
+  }
+  void import(std::span<const std::uint8_t> bytes) {
+    replaceFile([&] { return MidiFile::parse(bytes); });
   }
 
   void prepare(const PrepareInfo& info) override {
@@ -60,6 +58,19 @@ public:
   }
 
 private:
+  // The authored file, not the frame content replaceContent() resolves from it.
+  template <class Read>
+  void replaceFile(Read read) {
+    try {
+      auto replacement = read();
+      file_ = std::move(replacement);
+      import_error_.clear();
+    } catch (const std::exception& error) {
+      import_error_ = error.what();
+      throw;
+    }
+  }
+
   std::optional<MidiFile> file_;
   std::string import_error_;
   std::uint64_t duration_frames_ = 0;
