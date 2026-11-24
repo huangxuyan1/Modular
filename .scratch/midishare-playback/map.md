@@ -96,6 +96,13 @@ build, as roadmap ticket 04's did. Research findings live under `research/` here
   — one polyphonic primitive (`event<midi>` in, `audio<2>` out) that owns the soundfont file's
   bytes as stored node content, saved once and whole inside the graph; its voices are internal,
   so release and stealing are its own policy. No kernel or workspace change, and no ADR.
+- [What does the page hand Modular, and what does it get back?](issues/04-page-to-modular-contract.md)
+  — two layers: midishare's own `AudioEngine` calls a Modular surface that parses the soundfont's
+  bytes once into an instrument handle and renders abcjs's Download .mid bytes at a given rate
+  into two JavaScript-owned channels, release included (render to a 2 s cap, trim below
+  −80 dBFS). Preview is a one-note clip through the same call; errors reject with Modular's
+  message, and the abcjs fallback stays in the page until a clip census or a patched writer
+  clears the MIDI writer's defects. No kernel or workspace change.
 
 ## Not yet specified
 

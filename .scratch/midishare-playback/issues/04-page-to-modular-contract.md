@@ -1,7 +1,7 @@
 # What does the page hand Modular, and what does it get back?
 
 Type: grilling
-Status: claimed
+Status: resolved
 
 ## Question
 
@@ -44,12 +44,150 @@ short note), and it must not quietly decide roadmap questions that are still ope
   per page or once per render (see the map's fog on repeated renders). Leave room for the
   stretch goal, a choice among a few soundfonts, without designing it.
 
+## Answer
+
+**Two layers.** midishare keeps its own `AudioEngine` (ABC text and an `AudioContext` in, an
+`AudioBuffer` out). Its Modular engine file calls a Modular web surface that takes Standard MIDI
+File bytes and a sample rate and returns two channels of samples. Modular sees no ABC, abcjs or
+Web Audio. The bytes are abcjs's Download .mid bytes as they are, so what you hear is what you
+download by construction. The soundfont is handed in once as bytes and parsed once into an
+instrument handle that renders any number of clips and previews. Nothing changes under
+`kernel/` or `workspace/`.
+
+Every decision below was **decided by the planning hub under the judgment the user delegated
+for this map ("All, on your best judgment"), 2026-11-24**, from the recommendations recorded
+under Comments, which hold the evidence. Like every planning record, it is provisional until its
+planning PR merges.
+
+Tags: **[page]** is midishare code only. **[glue]** is the exported functions and JavaScript
+loader Modular ships for the web; where they live and how they are built is
+[ticket 03](03-where-the-web-build-lives.md)'s. **[nodes]** is the node library.
+
+### The surface
+
+A sketch, not the final names; the spec fixes them.
+
+```ts
+// [glue] Modular's web surface. Every call returns a promise; calls run one at a time.
+const modular = await loadModular()                        // instantiate the module, once per page
+const piano = await modular.createInstrument(soundfont)    // soundfont: Uint8Array, parsed once
+const { sampleRate, channels } = await piano.render(midi, context.sampleRate)
+// midi: Uint8Array, Standard MIDI File bytes
+// sampleRate: the rate requested, unchanged
+// channels: [Float32Array, Float32Array], left and right, equal length, owned by JavaScript
+// Failure: the promise rejects with an Error whose message is Modular's.
+
+// [page] midishare's Modular engine file, behind its AudioEngine seam
+const midi = abcjs.synth.getMidiFile(abc, { midiOutputType: 'binary' })[0] // Download .mid's bytes
+const buffer = context.createBuffer(2, channels[0].length, sampleRate)
+buffer.copyToChannel(channels[0], 0)
+buffer.copyToChannel(channels[1], 1)
+```
+
+### Decisions
+
+1. **Two layers.** [page] [glue] midishare owns its `AudioEngine`. Its Modular engine file calls
+   the surface above. abcjs and Web Audio stay out of Modular, and the same surface runs under
+   Node.js for [the browser-versus-native check](08-browser-render-checked-against-native.md).
+2. **What goes in: abcjs's Download .mid bytes, as they are**, from
+   `getMidiFile(abc, {midiOutputType: 'binary'})`. [page] A MIDI writer that midishare owns or
+   patches, used for both Download .mid and Play, stays open to midishare; Modular's input does
+   not change with it. Feeding the flattened note events through a second input format is
+   rejected: it breaks "what you hear is what you download" wherever the writer and the synth
+   disagree.
+3. **The writer's defects are accepted in the contract.** [page] Modular plays the bytes it is
+   given faithfully; fixing the bytes is page policy. **A gate on midishare's side:** before the
+   abcjs fallback is removed, either midishare's clip census shows no affected clips or midishare
+   patches the writer. The fast-staccato defect matters most: its note-off comes before its
+   note-on, so a piano would ring to the end of the file. Until then the fallback stays, as the
+   map already requires.
+4. **An instrument handle.** [glue] [nodes] `createInstrument(soundfontBytes)` parses the
+   soundfont once. `render(midiBytes, sampleRate)` builds a fresh `Engine` per render on the
+   kept `Graph`, so every node's `prepare()` starts the render from scratch and roadmap
+   ticket 10 is not reached. The graph's shape is fixed in the glue. The one [nodes] addition is
+   a `MidiFileNode` import from bytes. A saved `MODULAR_GRAPH` instrument and a JavaScript
+   authoring API are rejected for now. The first needs a way to find the clip's MIDI node in a
+   saved graph and ships the soundfont as hex text at twice its size; it can arrive later behind
+   the same handle with no page change. The second would decide roadmap ticket 07 by the back
+   door, and its unwired `value` inputs would raise roadmap ticket 13.
+5. **What comes out: `{ sampleRate, channels: [Float32Array, Float32Array] }`, always two
+   channels.** [glue] [page] The samples are copied out of WebAssembly memory, at the requested
+   rate, with no resampling. The page builds the `AudioBuffer`. Stereo, because the soundfont
+   node outputs `audio<2>`
+   ([ticket 05](05-soundfont-node-shape-and-samples.md)).
+6. **The release tail: render to a cap past the file's end, then trim** sample-accurately below
+   a threshold. [glue] The contract promises only that the buffer holds the whole release and
+   ends at most a cap past the file's end. Start values, which the spec may tune: −80 dBFS and a
+   2 s cap. The length depends on the samples, never on block size, and a node-reported tail
+   length (a kernel `Node` interface change, the roadmap's "tail length") is not needed.
+   - **Trailing rests** are page policy, since the file ends at its last note-off. A
+     recommendation to midishare, not a contract term: pad the buffer with silence to the
+     musical end abcjs computes plus 200 ms, so a clip ending in rests ends where it does today.
+7. **A maximum length, past which `render` fails with an explicit error** that the page answers
+   with the fallback. [glue] It starts at 10 minutes of audio, provisional until midishare's
+   census gives the longest clip. Output goes to a preallocated or chunked sink, not a vector
+   growing in `process()`; the spec decides which.
+8. **Note preview is a one-note clip through the same `render`**, with bytes from
+   `getMidiFile(previewAbc(pitch))`. [page] It plays the roll's MIDI pitch for 0.25 s at
+   velocity 105, then the release. **An acceptance item for the spec:** time a one-note render
+   with the soundfont loaded, in the browser.
+9. **Loading.** [page] [glue] The page fetches the soundfont from the site's own static assets
+   and hands the bytes in.
+   - It loads lazily inside the first `render`, behind one shared promise, so the transport's
+     "loading" covers it.
+   - Warming up at the first click or key press is allowed.
+   - The module and the instrument live for the page's life.
+   - The data format is tickets 07, 09 and 10's.
+10. **Errors: no C++ exception crosses into JavaScript.** [glue] The glue catches every
+    `std::exception` at the module boundary, and the loader rejects with an `Error` carrying
+    Modular's message. After a render it checks `Engine::errorMessage()`. After a WebAssembly
+    trap the instance is discarded and the next call reloads it. Which exception mode builds the
+    module is [ticket 02](02-probe-offline-render-in-a-page.md)'s.
+11. **The fallback lives inside midishare's Modular engine file.** [page] A load failure means
+    abcjs for the rest of the page's life; a render failure means abcjs for that render. The
+    `engine` line is the off switch. Note for midishare: `playFrom` in `use-playback.ts` does
+    not catch a rejected `render`, which would leave the status at "loading".
+12. **Asynchronous, one call at a time.** [glue] Every call returns a promise, and the loader
+    serializes them, so moving the render into a Web Worker later changes no page code.
+13. **What must stay true for "what you hear is what Download .mid contains":**
+    1. Play and Download .mid get their bytes from one function, with the same options and the
+       same ABC text. [page]
+    2. Whatever writes the bytes (abcjs 6.7.2 pinned, or a writer midishare owns), both paths
+       use it. [page]
+    3. Modular plays every note in those bytes, on every channel, at the file's timing and the
+       velocity abcjs gave it. Velocity is honoured
+       ([ticket 09](09-soundfont-format-subset.md)). [nodes]
+    4. Two ABC voices sounding the same pitch both sound
+       ([ticket 06](06-release-survives-voice-allocation.md)). [nodes]
+    5. The claim covers notes, not General MIDI: program changes, controllers and pitch bend
+       are ignored. What the piano does with channel 10's drums is ticket 09's.
+    6. A browser render matches a native one on ticket 08's terms.
+
+### The page's open items
+
+For the planning hub to send to the midishare session. None blocks this ticket.
+
+1. A census of stored clips: staccato (`.` or `!staccato!`) and at what `Q:`; tuplets of 7 or
+   more; pitches below 16 or above 127; `%%MIDI program`, `drum`, `channel 10`, `chordprog` or
+   `bassprog`; quarter-tone accidentals; trailing rests; chord symbols; and the longest clip's
+   duration in seconds. It feeds decision 3's gate and decision 7's cap.
+2. Whether midishare will own or patch the MIDI writer (decisions 2 and 3).
+3. Whether a clip ending in rests should keep ending where it does today (decision 6's
+   recommendation).
+4. How long a first Play or first note press may wait, how large a download is acceptable, and
+   whether to warm up at the first gesture (decision 9).
+5. Closing `playFrom`'s missing catch, or relying on the fallback inside the engine file
+   (decision 11).
+6. How the end-to-end tests will detect that a note sounded once no sample files are fetched.
+7. Whether the asset layer serves `.wasm` as `application/wasm` and caches hashed assets long;
+   this may belong to ticket 03.
+
 ## Comments
 
-### Investigation pass, 2026-11-24 (provisional, not a resolution)
+### Investigation pass, 2026-11-24
 
-A ticket session investigated and recommended; the planning hub reviews every call below, and
-nothing here is decided. Modular facts are at `origin/main` 5d5d61d. midishare facts were read
+A ticket session investigated and recommended; the planning hub then decided every call (see
+**Answer**). This section is the evidence. Modular facts are at `origin/main` 5d5d61d. midishare facts were read
 from the midishare repository and from its engine-seam branch (uncommitted, unpushed and
 undeployed when read). abcjs facts come from abcjs 6.7.2's source and from the probe
 [`PROTOTYPE_compare.js`](../prototypes/04-abcjs-midi-vs-synth/PROTOTYPE_compare.js), which runs
