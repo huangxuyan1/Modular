@@ -16,9 +16,11 @@ the follow-ups; this file holds the numbers.
   stage's time, as FluidSynth's do, instead of 100; "no velocity-to-cutoff" removes the
   default velocity-to-cutoff modulator, which FluidSynth zeroes; "both" does both. "FluidSynth
   with the node's curve" plays a copy of the file whose piano carries a file modulator with
-  the node's velocity-to-cutoff curve ([`PROTOTYPE_add_modulator.py`](PROTOTYPE_add_modulator.py)).
+  the node's velocity-to-cutoff curve, which FluidSynth maps 18.75 cents higher than the node
+  ([`PROTOTYPE_add_modulator.py`](PROTOTYPE_add_modulator.py)).
 - **Thresholds.** Onset within FluidSynth's 64-frame block; pitch within ±1 cent; every 10 ms
   RMS window within ±1 dB while FluidSynth's is within 60 dB of its peak, after one global
+  offset, the median of every counted window's difference. Level counts are under that
   offset. "Worst window" is each note's largest level error after the offset; the column
   gives the range of those over the notes, at both rates.
 
@@ -38,14 +40,17 @@ the follow-ups; this file holds the numbers.
 | 96 dB envelope | FluidSynth with the node's curve | 16–63 | 80 | 80, 80 | 80, 80 | 80, 80 | −0.70 to +0.58 | +3.966 |
 | No velocity-to-cutoff | FluidSynth with the node's curve | 16–63 | 80 | 80, 80 | 80, 80 | 2, 3 | −2.81 to +10.91 | +4.093 |
 | Both | FluidSynth with the node's curve | 16–63 | 80 | 80, 80 | 80, 80 | 39, 51 | −0.58 to +10.90 | +4.107 |
+| As built | FluidSynth, events off its block grid | 100 | 32 | 7, 12 | 32, 32 | 0, 0 | −2.11 to −2.11 | +3.987 |
 
 The rows that remove the node's curve while FluidSynth plays it ("no velocity-to-cutoff" and
 "both" against FluidSynth with the node's curve) are mismatched on purpose: they show the
-curve is what makes the difference. Every row passes onset and pitch on every note.
+curve is what makes the difference. Every row passes pitch on every note, and onset on every
+note whose event lies on FluidSynth's block grid; the last row tests onset off that grid
+(its level fails on the envelope's range, as everywhere).
 
 ## The node as built against FluidSynth, velocities 64 to 127
 
-Global gain offset (node minus FluidSynth, median of every counted window): **+3.929 dB**
+Global gain offset (node minus FluidSynth, median of every counted window): **+3.929 dB**. Level counts are under this offset.
 
 | Rate | Notes | Onset within 64 frames | Pitch within 1 cent | Level within 1 dB |
 | --- | --- | --- | --- | --- |
@@ -487,7 +492,7 @@ Level errors are after the global offset; "early" is the node's level against Fl
 
 ## The node as built against FluidSynth with the node's curve, velocities 16 to 63
 
-Global gain offset (node minus FluidSynth, median of every counted window): **+3.963 dB**
+Global gain offset (node minus FluidSynth, median of every counted window): **+3.963 dB**. Level counts are under this offset.
 
 | Rate | Notes | Onset within 64 frames | Pitch within 1 cent | Level within 1 dB |
 | --- | --- | --- | --- | --- |
@@ -552,3 +557,52 @@ Each row covers the key's velocities. "Early" is at the lowest and the highest v
 | 97 | 18 | +0.0002 to +0.0002 | -0.27 / -0.20 | -1.18 | 60 of 460 | n/a |
 | 102 | 18 | -0.0001 to -0.0000 | -0.42 / -0.37 | -1.38 | 155 of 444 | n/a |
 | 106 | 18 | +0.0001 to +0.0001 | -0.58 / -0.59 | -1.58 | 194 of 343 | n/a |
+
+## Onset off FluidSynth's block grid
+
+`onset.mid`: key 60 at velocity 100, 32 events 0.0 to 3.1 ms after a block boundary. FluidSynth's onset minus the node's, in frames; the node's first sound is 43 frames after its event at 44.1 kHz and 47 at 48 kHz at every offset.
+
+Global gain offset (node minus FluidSynth, median of every counted window): **+3.987 dB**. Level counts are under this offset.
+
+| Rate | Notes | Onset within 64 frames | Pitch within 1 cent | Level within 1 dB |
+| --- | --- | --- | --- | --- |
+| 44100 | 32 | 7 | 32 | 0 |
+| 48000 | 32 | 12 | 32 | 0 |
+
+- 44100 Hz: the node's first sound [43] frames after its event; onset differences (FluidSynth later) [22, 42, 46, 51, 55, 60, 62, 64, 66, 68, 71, 73, 75, 77, 79, 82, 84, 86, 88, 91, 93, 95, 97, 99, 101, 104, 108, 113, 117, 121] frames; waveform lag at the onset 20.37 to 119.37 frames; pitch +0.0019 to +0.0019 cents; waveform similarity at least 0.9963; level error -2.11 to -2.11 dB; windows over 1 dB: 800 of 3488
+- 48000 Hz: the node's first sound [47] frames after its event; onset differences (FluidSynth later) [18, 34, 39, 44, 48, 50, 53, 55, 58, 60, 61, 63, 64, 66, 68, 69, 71, 72, 74, 76, 77, 79, 80, 84, 85, 88, 90, 93, 95, 100, 104, 109] frames; waveform lag at the onset 16.32 to 107.32 frames; pitch +0.0023 to +0.0023 cents; waveform similarity at least 0.9974; level error -2.11 to -2.11 dB; windows over 1 dB: 832 of 3488
+
+| Offset (ms) | 44.1 kHz | 48 kHz |
+| --- | --- | --- |
+| 0.0 | 22 | 18 |
+| 0.1 | 82 | 77 |
+| 0.2 | 77 | 72 |
+| 0.3 | 73 | 68 |
+| 0.4 | 68 | 63 |
+| 0.5 | 64 | 58 |
+| 0.6 | 60 | 53 |
+| 0.7 | 55 | 48 |
+| 0.8 | 51 | 44 |
+| 0.9 | 46 | 39 |
+| 1.0 | 42 | 34 |
+| 1.1 | 101 | 93 |
+| 1.2 | 97 | 88 |
+| 1.3 | 93 | 84 |
+| 1.4 | 88 | 79 |
+| 1.5 | 84 | 74 |
+| 1.6 | 79 | 69 |
+| 1.7 | 75 | 64 |
+| 1.8 | 71 | 60 |
+| 1.9 | 66 | 55 |
+| 2.0 | 62 | 50 |
+| 2.1 | 121 | 109 |
+| 2.2 | 117 | 104 |
+| 2.3 | 113 | 100 |
+| 2.4 | 108 | 95 |
+| 2.5 | 104 | 90 |
+| 2.6 | 99 | 85 |
+| 2.7 | 95 | 80 |
+| 2.8 | 91 | 76 |
+| 2.9 | 86 | 71 |
+| 3.0 | 82 | 66 |
+| 3.1 | 77 | 61 |

@@ -137,14 +137,20 @@ double msSince(Clock::time_point start) {
   return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
 }
 
-double median(std::vector<double> values) {
+// The median, least and most of a set of timings.
+struct Spread {
+  double median = 0, least = 0, most = 0;
+};
+
+Spread spread(std::vector<double> values) {
   std::sort(values.begin(), values.end());
   const auto n = values.size();
-  return n % 2 ? values[n / 2] : (values[n / 2 - 1] + values[n / 2]) / 2;
+  return {n % 2 ? values[n / 2] : (values[n / 2 - 1] + values[n / 2]) / 2, values.front(),
+          values.back()};
 }
 
 // Keeps a result alive so the optimizer cannot drop a render.
-volatile double sink_value = 0;
+volatile double keepAlive = 0;
 
 int timings(int argc, char** argv) {
   if (argc < 6) throw std::invalid_argument("time: wrong arguments");
@@ -165,9 +171,9 @@ int timings(int argc, char** argv) {
       web::Instrument instrument(*bytes);
       times.push_back(msSince(t));
     }
-    std::printf("load %-7s median %8.2f ms (min %.2f, max %.2f, %d runs)\n", name,
-                median(times), *std::min_element(times.begin(), times.end()),
-                *std::max_element(times.begin(), times.end()), runs);
+    const auto s = spread(times);
+    std::printf("load %-7s median %8.2f ms (min %.2f, max %.2f, %d runs)\n", name, s.median,
+                s.least, s.most, runs);
   }
 
   for (const double rate : {44100.0, 48000.0}) {
@@ -181,13 +187,13 @@ int timings(int argc, char** argv) {
       t = Clock::now();
       auto r = instrument.render(preview, rate);
       times.push_back(msSince(t));
-      sink_value = sink_value + r.left.size();
+      keepAlive = keepAlive + r.left.size();
     }
+    const auto s = spread(times);
     std::printf("%.1f kHz preview: %zu frames (%.3f s); first %.3f ms, then median %.3f ms "
                 "(min %.3f, max %.3f, 51 runs)\n",
-                rate / 1000, first.left.size(), first.left.size() / rate, firstMs,
-                median(times), *std::min_element(times.begin(), times.end()),
-                *std::max_element(times.begin(), times.end()));
+                rate / 1000, first.left.size(), first.left.size() / rate, firstMs, s.median,
+                s.least, s.most);
 
     for (const auto& [name, bytes] : clips) {
       times.clear();
@@ -198,12 +204,11 @@ int timings(int argc, char** argv) {
         times.push_back(msSince(t));
         frames = r.left.size();
       }
+      const auto c = spread(times);
       std::printf("%.1f kHz %s: %zu frames (%.1f s); median %.1f ms (min %.1f, max %.1f, "
                   "5 runs), %.2f ms per second of audio\n",
-                  rate / 1000, name.c_str(), frames, frames / rate, median(times),
-                  *std::min_element(times.begin(), times.end()),
-                  *std::max_element(times.begin(), times.end()),
-                  median(times) / (frames / rate));
+                  rate / 1000, name.c_str(), frames, frames / rate, c.median, c.least, c.most,
+                  c.median / (frames / rate));
     }
   }
   return 0;

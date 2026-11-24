@@ -19,7 +19,8 @@
 #   (none)  clip.mid (velocities 64 to 127) against FluidSynth on the soundfont as it is;
 #   -mod    clip.mid against FluidSynth on the copy whose file modulator makes FluidSynth apply
 #           the node's velocity-to-cutoff curve (PROTOTYPE_add_modulator.py);
-#   -low    low.mid (velocities 16 to 63) against FluidSynth on that copy.
+#   -low    low.mid (velocities 16 to 63) against FluidSynth on that copy;
+#   -onset  onset.mid (events off FluidSynth's block grid) against FluidSynth on the file.
 param(
   [Parameter(Mandatory = $true)][string]$Out,
   [Parameter(Mandatory = $true)][string]$FluidSynth,
@@ -88,33 +89,44 @@ $modulated = Join-Path $Out 'modulated.sf2'
 python -I (Join-Path $here 'PROTOTYPE_add_modulator.py') $SoundFont $modulated 0 0
 if ($LASTEXITCODE -ne 0) { throw 'modulated copy failed' }
 & $fluid --version | Select-Object -First 1
+# Each clip's node renders are <variant><suffix>-<rate>.wav.
+$clipSuffix = [ordered]@{ clip = ''; low = '-low'; onset = '-onset' }
+# FluidSynth's renders: its output name, the soundfont it plays and the clip.
+$fluidJobs = @(
+  @{ Name = 'fluidsynth'; Font = $SoundFont; Clip = 'clip' },
+  @{ Name = 'fluidsynth-mod'; Font = $modulated; Clip = 'clip' },
+  @{ Name = 'fluidsynth-mod-low'; Font = $modulated; Clip = 'low' },
+  @{ Name = 'fluidsynth-onset'; Font = $SoundFont; Clip = 'onset' })
 foreach ($rate in $rates) {
-  foreach ($clip in 'clip', 'low') {
-    $suffix = if ($clip -eq 'low') { '-low' } else { '' }
+  foreach ($clip in $clipSuffix.Keys) {
     foreach ($name in $variants.Keys) {
       & $variants[$name] render $SoundFont 0 0 (Join-Path $clips "$clip.mid") $rate 1 `
-        (Join-Path $Out "$name$suffix-$rate.wav")
+        (Join-Path $Out "$name$($clipSuffix[$clip])-$rate.wav")
       if ($LASTEXITCODE -ne 0) { throw "render failed: $name $clip $rate" }
     }
   }
   # Offline (-F), no MIDI driver (-n), no shell (-i), reverb and chorus off, 32-bit float.
-  foreach ($job in @(@('fluidsynth', $SoundFont, 'clip'), @('fluidsynth-mod', $modulated, 'clip'),
-                     @('fluidsynth-mod-low', $modulated, 'low'))) {
+  foreach ($job in $fluidJobs) {
     & $fluid -n -i -R 0 -C 0 -r $rate -O float -T wav -o synth.lock-memory=0 `
-      -F (Join-Path $Out "$($job[0])-$rate.wav") $job[1] (Join-Path $clips "$($job[2]).mid")
-    if ($LASTEXITCODE -ne 0) { throw "fluidsynth failed: $($job[0]) $rate" }
+      -F (Join-Path $Out "$($job.Name)-$rate.wav") $job.Font (Join-Path $clips "$($job.Clip).mid")
+    if ($LASTEXITCODE -ne 0) { throw "fluidsynth failed: $($job.Name) $rate" }
   }
 }
 
 # --- comparison ---------------------------------------------------------------------------
+# Each report's suffix, the clip compared and the FluidSynth render it is compared with.
+$compareJobs = @(
+  @{ Report = ''; Clip = 'clip'; Fluid = 'fluidsynth' },
+  @{ Report = '-mod'; Clip = 'clip'; Fluid = 'fluidsynth-mod' },
+  @{ Report = '-low'; Clip = 'low'; Fluid = 'fluidsynth-mod-low' },
+  @{ Report = '-onset'; Clip = 'onset'; Fluid = 'fluidsynth-onset' })
 foreach ($name in $variants.Keys) {
-  foreach ($job in @(@('', 'clip', '', 'fluidsynth'), @('-mod', 'clip', '', 'fluidsynth-mod'),
-                     @('-low', 'low', '-low', 'fluidsynth-mod-low'))) {
-    $report = Join-Path $Out "compare-$name$($job[0]).md"
-    python -I (Join-Path $here 'PROTOTYPE_compare.py') (Join-Path $clips "$($job[1]).json") `
-      (Join-Path $Out "$name$($job[2])") (Join-Path $Out $job[3]) > $report
-    if ($LASTEXITCODE -ne 0) { Get-Content $report; throw "compare failed: $name$($job[0])" }
-    "== compare-$name$($job[0])"
+  foreach ($job in $compareJobs) {
+    $report = Join-Path $Out "compare-$name$($job.Report).md"
+    python -I (Join-Path $here 'PROTOTYPE_compare.py') (Join-Path $clips "$($job.Clip).json") `
+      (Join-Path $Out "$name$($clipSuffix[$job.Clip])") (Join-Path $Out $job.Fluid) > $report
+    if ($LASTEXITCODE -ne 0) { Get-Content $report; throw "compare failed: $name$($job.Report)" }
+    "== compare-$name$($job.Report)"
     Get-Content $report | Where-Object { $_ -match '^(Global|\| (44100|48000) \||- )' }
   }
 }

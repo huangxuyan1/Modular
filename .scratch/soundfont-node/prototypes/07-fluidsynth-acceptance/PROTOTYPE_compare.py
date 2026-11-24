@@ -125,14 +125,26 @@ def analyse(note, rate, node, fluid, clip):
     counted = f_db >= f_db.max() - FLOOR_DB
     t = (np.arange(count) + 0.5) * w / rate  # window centres, seconds from onset
     held = t < (off - on) / rate
+    early = float(np.mean((n_db - f_db)[2:10]))  # 20 to 100 ms in
+    n_db, f_db, t, held = n_db[counted], f_db[counted], t[counted], held[counted]
+    # Fall rates in dB/s over the counted windows: while held after 0.2 s, and released.
+    hold = held & (t > 0.2)
+    rel = ~held & (t > t[held].max() + 0.03)
     return {
         "key": note["key"], "velocity": note["velocity"], "rate": rate,
         "onset": on_f - on_n, "node_onset": on_n - on, "silent_before": silent_before,
         "cents": cents, "lag0": a, "similarity": similarity,
-        "diff": (n_db - f_db)[counted], "t": t[counted], "held": held[counted],
-        "n_db": n_db[counted], "f_db": f_db[counted],
-        "peak_f": float(f_db.max()), "early": float(np.mean((n_db - f_db)[2:10])),
+        "diff": n_db - f_db, "t": t, "early": early,
+        "decay": (slope(t[hold], n_db[hold]), slope(t[hold], f_db[hold])),
+        "release": (slope(t[rel], n_db[rel]), slope(t[rel], f_db[rel])),
     }
+
+
+def fall_ratios(results, stage, steeper_than):
+    """Node over FluidSynth fall rates of a stage, for notes where FluidSynth falls faster
+    than `steeper_than` dB/s."""
+    return [r[stage][0] / r[stage][1] for r in results
+            if r[stage][1] == r[stage][1] and r[stage][1] < steeper_than]
 
 
 def fmt(x, digits=2):
@@ -151,8 +163,7 @@ def per_key(results, rate):
     for key in sorted({r["key"] for r in rs}):
         k = sorted((r for r in rs if r["key"] == key), key=lambda r: r["velocity"])
         worst = max((r["worst"] for r in k), key=abs)
-        ratios = [r["release"][0] / r["release"][1] for r in k
-                  if r["release"][1] == r["release"][1] and r["release"][1] < -20]
+        ratios = fall_ratios(k, "release", -20)
         fall = f"{float(np.median(ratios)):.4f}" if ratios else "n/a"
         print(f"| {key} | {', '.join(str(o) for o in sorted({r['onset'] for r in k}))} "
               f"| {min(r['cents'] for r in k):+.4f} to {max(r['cents'] for r in k):+.4f} "
@@ -166,10 +177,10 @@ def main() -> None:
     node_prefix, fluid_prefix = sys.argv[2], sys.argv[3]
     results = []
     for rate in RATES:
-        r_n, node = read_wav(Path(f"{node_prefix}-{rate}.wav"))
-        r_f, fluid = read_wav(Path(f"{fluid_prefix}-{rate}.wav"))
-        if r_n != rate or r_f != rate:
-            raise ValueError(f"rate mismatch: {r_n}, {r_f}, expected {rate}")
+        node_rate, node = read_wav(Path(f"{node_prefix}-{rate}.wav"))
+        fluid_rate, fluid = read_wav(Path(f"{fluid_prefix}-{rate}.wav"))
+        if node_rate != rate or fluid_rate != rate:
+            raise ValueError(f"rate mismatch: {node_rate}, {fluid_rate}, expected {rate}")
         length = min(len(node), len(fluid))
         print(f"<!-- {rate} Hz: node {len(node)} frames, FluidSynth {len(fluid)} frames -->")
         node, fluid = node[:length], fluid[:length]
@@ -179,7 +190,8 @@ def main() -> None:
     offset = float(np.median(np.concatenate([r["diff"] for r in results])))
     print(f"# Node against FluidSynth: {len(clip['notes'])} notes at {len(RATES)} rates\n")
     print(f"Global gain offset (node minus FluidSynth, median of every counted window): "
-          f"**{offset:+.3f} dB**\n")
+          f"**{offset:+.3f} dB**. Level counts are under this offset.\n")
+    # What depends on the offset, known only once every note is analysed.
     for r in results:
         err = r["diff"] - offset
         i = int(np.argmax(np.abs(err)))
@@ -187,12 +199,6 @@ def main() -> None:
         r["fails"] = int(np.sum(np.abs(err) > LEVEL_DB))
         r["windows"] = len(err)
         r["early_rel"] = r["early"] - offset
-        # Fall rates in dB/s over the counted windows, while held after 0.2 s, and released.
-        hold = r["held"] & (r["t"] > 0.2)
-        rel = ~r["held"] & (r["t"] > r["t"][r["held"]].max() + 0.03)
-        r["decay"] = (slope(r["t"][hold], r["n_db"][hold]), slope(r["t"][hold], r["f_db"][hold]))
-        r["release"] = (slope(r["t"][rel], r["n_db"][rel]), slope(r["t"][rel], r["f_db"][rel]))
-        r["release_end"] = float(r["t"][rel].max() - r["t"][r["held"]].max()) if rel.any() else 0
 
     print("| Rate | Notes | Onset within 64 frames | Pitch within 1 cent | Level within 1 dB |")
     print("| --- | --- | --- | --- | --- |")
@@ -214,10 +220,8 @@ def main() -> None:
               f"level error {min(r['worst'] for r in rs):+.2f} to "
               f"{max(r['worst'] for r in rs):+.2f} dB; windows over 1 dB: "
               f"{sum(r['fails'] for r in rs)} of {sum(r['windows'] for r in rs)}")
-    ratios = [r["release"][0] / r["release"][1] for r in results
-              if r["release"][1] == r["release"][1] and r["release"][1] < -20]
-    decays = [r["decay"][0] / r["decay"][1] for r in results
-              if r["decay"][1] == r["decay"][1] and r["decay"][1] < -5]
+    ratios = fall_ratios(results, "release", -20)
+    decays = fall_ratios(results, "decay", -5)
     if ratios:
         print(f"- Release fall rate, node over FluidSynth: median {np.median(ratios):.4f} "
               f"({min(ratios):.4f} to {max(ratios):.4f}, {len(ratios)} notes)")
@@ -233,8 +237,8 @@ def main() -> None:
         print(f"## {rate} Hz\n")
         print("Level errors are after the global offset; \"early\" is the node's level against "
               "FluidSynth's, offset removed, 20 to 100 ms after the onset; the worst window's "
-              "time is from the onset (the note-off is at 1.28 s). Fall rates are node / "
-              "FluidSynth in dB/s.\n")
+              f"time is from the onset (the note-off is at {clip['hold_ms'] / 1000:.2f} s). "
+              "Fall rates are node / FluidSynth in dB/s.\n")
         print("| Key | Vel | Onset (frames) | Lag (frames) | Pitch (cents) | Early (dB) "
               "| Worst (dB) | at (s) | Windows over 1 dB | Held fall | Release fall |")
         print("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")

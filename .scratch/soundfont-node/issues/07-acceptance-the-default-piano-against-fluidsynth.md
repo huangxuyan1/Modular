@@ -15,7 +15,7 @@ product code. A failure is a finding to fix in the node, as its own ticket, not 
   user's delegation, that the user approves it when this ticket is reached (map ticket 09,
   planning hub decision 2).
 
-**Status:** done
+**Status:** ready-for-human
 
 ## Checklist
 
@@ -48,12 +48,16 @@ product code. A failure is a finding to fix in the node, as its own ticket, not 
   Below velocity 64 the two differ by design. Compare there only if FluidSynth's default
   modulator can be replaced with the node's.
 
-  **Not met; the causes are found.** Onset and pitch hold on every note at both rates. Level
-  holds on 7 of 180 notes at each rate. Two differences from FluidSynth explain every
-  failure, and the node passes every note once both are removed. Fixing them is the node's
-  follow-up, not this ticket's (Comments, and the open notes). Below velocity 64 the
-  comparison ran, against a copy of the file that makes FluidSynth apply the node's
-  velocity-to-cutoff curve.
+  **Not met; the causes are found.** Pitch holds on every note at both rates, and onset on
+  every note of the comparison clip, whose events lie on FluidSynth's block boundaries. Off
+  them, FluidSynth itself starts notes up to 2.7 ms late, so the difference passes 64 frames
+  for 25 and 20 of 32 off-grid notes, while the node starts each note on its event's frame
+  plus its 1 ms default delay (Comments). Level holds on 7 of 180 notes at each rate. Two
+  differences from FluidSynth explain every level failure, and the node passes every note
+  once both are removed. Fixing them is the node's follow-up, not this ticket's (Comments,
+  and the open notes). Below velocity 64 the comparison ran, against a copy of the file
+  that makes FluidSynth apply a file modulator with the node's velocity-to-cutoff curve,
+  18.75 cents higher; its default could not be replaced.
 - [x] Confirm, or record as unconfirmed, the two facts the spec carries:
   - the velocity-to-cutoff default's amount source in the specification texts, as FluidSynth's
     source describes them;
@@ -80,9 +84,11 @@ a freshly fetched `origin/main` at `bc33cf8` and rebased before the push onto `2
 build 08), which touches none of its files. No product code changed. Every number per note
 is in [the results](../prototypes/07-fluidsynth-acceptance/results.md).
 
-**In short.** Onset and pitch meet their thresholds on every note. Level does not: 7 of 180
-notes pass at each rate. Two differences from FluidSynth explain every failure, and a build
-of the node with both removed passes every note at both rates:
+**In short.** Pitch meets its threshold on every note, and onset on every note whose event
+lies on FluidSynth's 64-frame grid. Off that grid FluidSynth is late by up to 2.7 ms and
+onset fails on most notes, through FluidSynth's timing, not the node's. Level fails: 7 of
+180 notes pass at each rate. Two differences from FluidSynth explain every level failure,
+and a build of the node with both removed passes every note at both rates:
 
 1. **The volume envelope's range.** FluidSynth's decay and release fall 96 dB over their
    stage's time; the node's fall 100 dB, as the spec says (09, D7). The node falls 4 % faster,
@@ -131,10 +137,14 @@ The open notes below recommend the follow-ups.
     folder, outside the repository:
 
     ```powershell
-    powershell -NoProfile -ExecutionPolicy Bypass -File run.ps1 -Out <folder>
-      -FluidSynth <...\fluidsynth-v2.6.3-win10-x64-cpp11\bin> -SoundFont <FluidR3_GM.sf2>
-      -Extract <the extract> -Patch <patches\diagnose-envelope-96db.patch>,<...no-velocity-cutoff.patch>,<...both.patch>
+    powershell -NoProfile -ExecutionPolicy Bypass -File run.ps1 -Out <folder> `
+      -FluidSynth <...\fluidsynth-v2.6.3-win10-x64-cpp11\bin> -SoundFont <FluidR3_GM.sf2> `
+      -Extract <the extract> `
+      -Patch "<p>\diagnose-envelope-96db.patch,<p>\diagnose-no-velocity-cutoff.patch,<p>\diagnose-both.patch"
     ```
+
+    `<p>` is the `patches` folder. `-Patch` takes one comma-separated string, because
+    `-File` passes an array as one string.
 
   - FluidSynth's render, at each rate: `fluidsynth -n -i -R 0 -C 0 -r <rate> -O float -T wav
     -o synth.lock-memory=0 -F <out.wav> <font.sf2> <clip.mid>`. Reverb and chorus are off;
@@ -152,6 +162,7 @@ The open notes below recommend the follow-ups.
     same number of frames after its event, and each note is held equally long in both
     renderers.
   - `low.mid` repeats the layout at velocities 16, 32, 48 and 63: 80 notes.
+  - `onset.mid` puts 32 notes off the grid, to test onset alone (Results).
 - *How a note is measured* (`PROTOTYPE_compare.py`), at 44.1 and 48 kHz:
   - **Onset:** each render's first non-zero frame in the note's slot.
   - **Pitch:** both renderers read the same sample points, so a pitch difference shows as a
@@ -170,7 +181,8 @@ The open notes below recommend the follow-ups.
 
 | Threshold | 44.1 kHz | 48 kHz |
 | --- | --- | --- |
-| Onset within 64 frames | 180 of 180: FluidSynth 22 frames later | 180 of 180: 18 frames later |
+| Onset within 64 frames, events on the block grid | 180 of 180: FluidSynth 22 frames later | 180 of 180: 18 frames later |
+| Onset within 64 frames, events off it (`onset.mid`) | 7 of 32: 22 to 121 frames later | 12 of 32: 18 to 109 frames later |
 | Pitch within ±1 cent | 180 of 180: −0.0013 to +0.0032 cents | 180 of 180: −0.0015 to +0.0042 cents |
 | Level within ±1 dB | 7 of 180; 4,006 of 27,230 windows outside | 7 of 180; 3,967 of 27,222 windows outside |
 
@@ -180,15 +192,29 @@ The open notes below recommend the follow-ups.
   (`NUM_BUFFERS_DELAY` in `fluid_voice.c`), so its default delay is none. Its first sound
   comes 65 frames after the event at both rates: its player starts the note one block after
   the event's frame, and its attack's first frame is silent. The waveforms are offset by
-  the same amount: 19.2 to 21.0 frames at 44.1 kHz and 15.0 to 17.0 at 48 kHz.
+  slightly less, 19.2 to 21.0 frames at 44.1 kHz and 15.0 to 17.0 at 48 kHz, since FluidSynth's
+  first frame is silent and the two attacks differ in shape.
+- **Onset off the grid.** `onset.mid` (key 60, velocity 100) puts 32 events 0.0, 0.1, … 3.1 ms
+  after a block boundary, in 0.1 ms ticks. The node's first sound is 43 frames after the
+  event at 44.1 kHz and 47 at 48 kHz at every offset: frame-exact. FluidSynth's comes later
+  by 22 to 121 frames at 44.1 kHz and 18 to 109 at 48 kHz, in a sawtooth that jumps at every
+  whole millisecond. Its player reads time in whole milliseconds (`fluid_sample_timer_process`)
+  and acts at block boundaries, so it rounds an event up to the next millisecond, then to
+  the next block, and then starts the note a block later, as on the grid. The difference
+  reaches 64 frames or more on 25 of 32 notes at 44.1 kHz and 20 of 32 at 48 kHz. That
+  lateness is FluidSynth's: against the file's own event times, the node is the exact one.
+  So the onset threshold holds only for events FluidSynth does not quantise; the open notes
+  ask the planning hub how to read it.
 - **Pitch** agrees to within 0.005 cents on every note: the node and FluidSynth derive the
   same increments.
 - **The global offset** is +3.93 dB, the node louder. FluidSynth's master gain of 0.2
   (−13.98 dB), its 0.4 scaling of the piano's 140 cB (+8.40 dB) and its filter's gain at
   Q 0 (+1.51 dB) predict +4.08 dB.
 - **Level fails** on every note but key 92 at velocities 80 to 127. Each note's worst window
-  is 0.76 to 5.24 dB below FluidSynth's, never above. Per key (44.1 kHz; 48 kHz is within
-  0.1 dB of it):
+  is 0.76 to 5.24 dB below FluidSynth's, never above. The counts here and below are under
+  the median offset; the spec names no way to choose it. The verdict does not depend on
+  that: the windows' errors span more than 2 dB, so no single offset passes every note. Per
+  key (44.1 kHz; 48 kHz is within 0.1 dB of it):
 
   | Key | Worst window (dB) | Level 20–100 ms in, velocity 64 / 127 (dB) | Release fall, node / FluidSynth |
   | --- | --- | --- | --- |
@@ -233,8 +259,10 @@ The open notes below recommend the follow-ups.
 - **The diagnosis.** Each patch in `patches/` rebuilds the harness from a patched copy of the
   sources; the checkout's `nodes/` is not touched. `diagnose-envelope-96db` makes a full
   decay or release fall 96 dB over its time instead of 100, and `diagnose-no-velocity-cutoff`
-  sets the velocity-to-cutoff depth to 0. "With the node's curve" is FluidSynth on the modified copy described under
-  **Below velocity 64**. Notes passing the level test, of 180 at velocities 64 to 127:
+  sets the velocity-to-cutoff depth to 0. "With the node's curve" is FluidSynth on the
+  modified copy described under **Below velocity 64**, whose curve sits 18.75 cents above the
+  node's. Notes passing the level test, of 180 at velocities 64 to 127, under each row's
+  median offset:
 
   | Node | Against | 44.1 kHz | 48 kHz | Each note's worst window (dB) |
   | --- | --- | --- | --- | --- |
@@ -341,14 +369,50 @@ ran once.
 - *Checks, on the final tree.*
   - `python scripts/check_docs.py`: 0 problems.
   - `git diff --check`: clean.
-  - The native suite was not run: nothing that builds changed. The harness is outside the
-    CMake build; it compiled and ran with MSVC as above. CI's build path runs the suite,
-    since the branch changes files other than Markdown.
+  - Full suite through the script, on the rebased tree: Debug 12/12 and Release 12/12 CTest
+    entries, both `desktop` tests included. Nothing that builds changed, but the branch is
+    not documentation-only, so CI's build path runs it too. The harness is outside the
+    CMake build; it compiled and ran with MSVC as above.
   - No TDD: the ticket changes no product code, and its harness is a throwaway (spec ruling
     C3).
-- *Review.* REVIEW
+- *Review.* `/code-review` ran on both axes over `git diff origin/main...HEAD` at `1741a99`,
+  with a clean working tree. Any further review is the planning hub's, with Codex.
+  - **Standards.** The public-content check was clean: noreply author, no local paths,
+    account or machine names, emails, secrets or binaries.
+    - Fixed:
+      - `Status: done` with unticked items breaks `triage-labels.md` ("once every checklist
+        item is ticked"). Web build 08, which also left an item to the user, is
+        `ready-for-human`; this ticket now is too.
+      - The review record was a placeholder, and the full suite had not run: both done.
+      - An unreflowed line, and a PowerShell command without line continuations.
+      - `sink_value` became `keepAlive`. The timing printout's repeated median, least and
+        most became one `spread` helper.
+      - In `PROTOTYPE_compare.py`, the release ratios are one `fall_ratios` helper, the
+        unused `peak_f` and `release_end` are gone, and the fall rates moved into
+        `analyse`, leaving `main` only what needs the global offset.
+      - `run.ps1`'s positional job arrays became named fields.
+    - Kept, as judgement calls:
+      - `results.md` holds the generated per-note tables, as the checklist asks for the
+        numbers per note.
+      - `diagnose-both.patch` repeats the other two, because a variant applies one patch.
+      - The short names `on_n` and `on_f` (node and FluidSynth), used throughout.
+  - **Spec.** It found every constraint met and every headline number consistent with the
+    results, and no scope creep.
+    - Fixed:
+      - The review placeholder.
+      - Onset held only for events on FluidSynth's block grid. The off-grid clip now
+        measures the rest (Onset, above).
+      - Pass counts depend on how the offset is chosen. They are labelled as under the
+        median offset, with the reason the verdict does not depend on it.
+      - "The node's curve" in FluidSynth is 18.75 cents higher. The checklist note and the
+        results now say so.
+      - "Offset by the same amount" overstated the waveform lag. It is now "slightly less".
 
 **Open notes for the planning hub.**
+
+- *Status.* `ready-for-human`, not `done`: the threshold item is unmet and the by-ear item is
+  the user's. Nothing remains for an agent in this ticket. What remains is the planning
+  hub's or the user's: the two follow-ups below, and judging sound parity by ear.
 
 - *Follow-up 1, needed for the thresholds: the volume envelope's range.* Recommended: a node
   ticket under which decay and release fall 96 dB over their stage's time, FluidSynth's
@@ -368,11 +432,18 @@ ran once.
     brighter, because brightness no longer follows velocity. Recommended, since the
     acceptance compares against FluidSynth and today's sound;
   - or keep D2's curve and accept that the treble differs from FluidSynth below velocity
-    127, by up to 4.3 dB at velocity 64 on key 106. The thresholds then stay unmet on 14 to
-    15 notes per rate even after follow-up 1.
+    127, by up to 4.3 dB at velocity 64 on key 106. The thresholds then stay unmet even
+    after follow-up 1: on 14 to 15 notes per rate under the median offset, and on some note
+    under any offset, since the errors span 4.9 dB.
 
   Either is a reversal or a reaffirmation of D2, for the planning hub or the user. Ticket 05
   should know the outcome: its amount-0 switch-offs only matter while the default exists.
+- *A reading of the onset threshold.* "Onset within FluidSynth's 64-frame control block"
+  holds for events on FluidSynth's block grid and fails for most others, because FluidSynth
+  starts a note up to 2.7 ms after its event while the node starts it on the event's frame.
+  Recommended: read the threshold as the node starting no later than FluidSynth, and
+  earlier only by FluidSynth's own quantisation, or measure onset against the event's
+  frame. No node change follows; it is a wording for the planning hub.
 - *No action:* the node's default 1 ms delay (FluidSynth rounds it to nothing), linear
   interpolation (about 0.6 dB on the top key) and the filter's level. All are inside the
   thresholds.
