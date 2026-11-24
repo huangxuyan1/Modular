@@ -28,9 +28,12 @@ public:
 
   // Sizes both channels to hold `frames`, before an Engine processes a block:
   // the only place the sink allocates. Frames past the capacity are dropped.
+  // Writing starts again from the first frame, so the position never lies
+  // beyond the capacity.
   void setCapacity(std::size_t frames) {
     left_.assign(frames, 0.0f);
     right_.assign(frames, 0.0f);
+    written_ = 0;
   }
 
   // A fresh Engine writes from the first frame again.

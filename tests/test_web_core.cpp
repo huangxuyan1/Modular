@@ -40,16 +40,18 @@ struct Timed {
 };
 
 Timed on(std::uint32_t tick, int key, int velocity = 127, int channel = 0) {
-  return {tick, {static_cast<std::uint8_t>(0x90 | channel), static_cast<std::uint8_t>(key),
-                 static_cast<std::uint8_t>(velocity)}};
+  return {tick, {static_cast<std::uint8_t>(0x90 | channel),
+                 static_cast<std::uint8_t>(key), static_cast<std::uint8_t>(velocity)}};
 }
 
 Timed off(std::uint32_t tick, int key, int channel = 0) {
-  return {tick, {static_cast<std::uint8_t>(0x80 | channel), static_cast<std::uint8_t>(key), 0}};
+  return {tick, {static_cast<std::uint8_t>(0x80 | channel),
+                 static_cast<std::uint8_t>(key), 0}};
 }
 
 void bigEndian(Bytes& out, std::uint32_t value, int size) {
-  for (int i = size - 1; i >= 0; --i) out.push_back(static_cast<std::uint8_t>(value >> (8 * i)));
+  for (int i = size - 1; i >= 0; --i)
+    out.push_back(static_cast<std::uint8_t>(value >> (8 * i)));
 }
 
 void variable(Bytes& out, std::uint32_t value) {
@@ -123,8 +125,10 @@ Bytes toneFont() {
   sf2test::Sample right{"right", sine(0.0125, 4410), 44100, 57};
   right.loop = sf2test::Loop{80, 4080};
   file.samples = {left, right};
-  const sf2test::Zone envelope{{set(gen::kAttackVolEnv, -7000), set(gen::kDecayVolEnv, -3000),
-                                set(gen::kSustainVolEnv, 150), set(gen::kReleaseVolEnv, -1200),
+  const sf2test::Zone envelope{{set(gen::kAttackVolEnv, -7000),
+                                set(gen::kDecayVolEnv, -3000),
+                                set(gen::kSustainVolEnv, 150),
+                                set(gen::kReleaseVolEnv, -1200),
                                 set(gen::kInitialFilterFc, 9000)}};
   file.instruments.push_back(
       {"pair", {envelope,
@@ -184,8 +188,8 @@ Stereo byHand(const Bytes& font, const Bytes& midi, double rate, std::uint32_t b
   auto& file = static_cast<MidiFileNode&>(graph.node(fileId));
   auto& synth = static_cast<SoundFontNode&>(graph.node(synthId));
   auto& sink = static_cast<CaptureSinkNode&>(graph.node(sinkId));
-  graph.connect(startId, static_cast<TriggerAtNode&>(graph.node(startId)).trigger(), fileId,
-                file.trigger());
+  auto& start = static_cast<TriggerAtNode&>(graph.node(startId));
+  graph.connect(startId, start.trigger(), fileId, file.trigger());
   graph.connect(fileId, file.midi(), synthId, synth.midiIn());
   graph.connect(synthId, synth.out(), sinkId, sink.in());
   Engine engine(graph, rate, block);
@@ -203,7 +207,7 @@ Stereo byHand(const Bytes& font, const Bytes& midi, double rate, std::uint32_t b
 }
 
 // Two seconds of frames at a whole-number rate: the cap on the release tail.
-std::uint64_t cap(double rate) { return static_cast<std::uint64_t>(2 * rate); }
+std::uint64_t capFrames(double rate) { return static_cast<std::uint64_t>(2 * rate); }
 
 std::vector<float> firstFrames(const std::vector<float>& samples, std::size_t count) {
   return {samples.begin(),
@@ -242,7 +246,7 @@ TEST_CASE("a rendering is the soundfont node's own output with no gain at two ra
     CHECK(rendering.left != rendering.right);
     for (const std::uint32_t block : {127u, 509u}) {
       CAPTURE(block);
-      const auto reference = byHand(font, midi, rate, block, cap(rate));
+      const auto reference = byHand(font, midi, rate, block, capFrames(rate));
       CHECK(rendering.left.size() > reference.fileFrames); // the release was kept
       CHECK(rendering.left == firstFrames(reference.left, rendering.left.size()));
       CHECK(rendering.right == firstFrames(reference.right, rendering.right.size()));
@@ -276,12 +280,12 @@ TEST_CASE("a release that ends inside the cap is kept through its last frame at 
   const auto font = steadyFont(16000, {set(gen::kReleaseVolEnv, 0)});
   const auto midi = midiFile({on(0, 60)}, 96);
   const auto rendering = Instrument(font).render(midi, 48000);
-  const auto reference = byHand(font, midi, 48000, 509, cap(48000));
+  const auto reference = byHand(font, midi, 48000, 509, capFrames(48000));
   const auto length = rendering.left.size();
   REQUIRE(reference.fileFrames == 4800);
   CHECK(rendering.right.size() == length);
   CHECK(length > 4800);
-  CHECK(length < 4800 + cap(48000));
+  CHECK(length < 4800 + capFrames(48000));
   CHECK(audibleAt(rendering.left, rendering.right, length - 1));
   CHECK_FALSE(audibleIn(reference, length, reference.left.size()));
   // What the trim cut still sounds, below the threshold.
@@ -316,15 +320,16 @@ TEST_CASE("a quiet note in the tail is kept above -80 dBFS and cut below it") {
   const auto midi = midiFile({on(0, 60)}, 96);
   const auto above = steadyFont(16, {set(gen::kReleaseVolEnv, 0)});
   const auto kept = Instrument(above).render(midi, 48000);
-  const auto keptReference = byHand(above, midi, 48000, 127, cap(48000));
+  const auto keptReference = byHand(above, midi, 48000, 127, capFrames(48000));
   CHECK(kept.left.size() > 4800);
   CHECK(audibleAt(kept.left, kept.right, kept.left.size() - 1));
   CHECK_FALSE(audibleIn(keptReference, kept.left.size(), keptReference.left.size()));
 
   const auto below = steadyFont(4, {set(gen::kReleaseVolEnv, 0)});
   const auto cut = Instrument(below).render(midi, 48000);
-  const auto cutReference = byHand(below, midi, 48000, 127, cap(48000));
-  REQUIRE(soundsIn(cutReference.left, cutReference.right, 4800, cutReference.left.size()));
+  const auto cutReference = byHand(below, midi, 48000, 127, capFrames(48000));
+  REQUIRE(soundsIn(cutReference.left, cutReference.right, 4800,
+                   cutReference.left.size()));
   CHECK_FALSE(audibleIn(cutReference, 0, cutReference.left.size()));
   CHECK(cut.left.size() == 4800);
   CHECK(cut.right.size() == 4800);
@@ -355,8 +360,8 @@ TEST_CASE("malformed bytes fail with the nodes' own messages") {
                        "soundfont: compressed samples (sf3) are not supported",
                        std::invalid_argument);
   Instrument instrument(toneFont());
-  CHECK_THROWS_WITH_AS(instrument.render(notMidi(), 48000), "midi file: missing MThd header",
-                       std::invalid_argument);
+  CHECK_THROWS_WITH_AS(instrument.render(notMidi(), 48000),
+                       "midi file: missing MThd header", std::invalid_argument);
   const auto rendering = instrument.render(chord(), 48000);
   CHECK(rendering.left == Instrument(toneFont()).render(chord(), 48000).left);
 }
@@ -374,6 +379,17 @@ TEST_CASE("a rate that is not finite and positive is refused before the MIDI byt
                          "render: sample rate must be finite and positive",
                          std::invalid_argument);
   }
+}
+
+TEST_CASE("a rendering whose frames cannot be counted is refused and the instrument renders on") {
+  // At 1e19 Hz the file's single tick is about 1.04e16 frames, which a frame
+  // count holds, but its two-second tail is 2e19, which none does.
+  Instrument instrument(shortFont());
+  CHECK_THROWS_WITH_AS(instrument.render(midiFile({}, 1), 1e19), "render: too many frames",
+                       std::invalid_argument);
+  const auto midi = midiFile({on(0, 60)}, 96);
+  const auto fresh = Instrument(shortFont()).render(midi, 48000);
+  CHECK(instrument.render(midi, 48000).left == fresh.left);
 }
 
 TEST_CASE("the voice limit defaults to the soundfont node's 256") {
@@ -471,7 +487,8 @@ bool countsFrom(const std::vector<float>& left, const std::vector<float>& right,
                 std::size_t count) {
   if (left.size() != count || right.size() != count) return false;
   for (std::size_t i = 0; i < count; ++i)
-    if (left[i] != static_cast<float>(i) || right[i] != -static_cast<float>(i)) return false;
+    if (left[i] != static_cast<float>(i) || right[i] != -static_cast<float>(i))
+      return false;
   return true;
 }
 

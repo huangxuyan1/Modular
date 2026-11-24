@@ -19,37 +19,40 @@ using nodes::MidiFileNode;
 using nodes::SoundFontNode;
 using nodes::TriggerAtNode;
 
-// The core's own choice: no node's output depends on the block size.
+// The render core's own choice: no node's output depends on the block size.
 constexpr std::uint32_t kBlockFrames = 512;
 // The release tail renders for at most this long past the file's end.
 constexpr double kTailSeconds = 2;
-// -80 dBFS, written as a float literal rather than computed, so every build
-// compares against the same value.
-constexpr float kAudible = 1e-4f;
+// The tail is kept through its last frame at or above -80 dBFS. A float
+// literal rather than computed, so every build compares against the same value.
+constexpr float kTailThreshold = 1e-4f;
 
 // The file's frames, whole, then the tail through its last frame where either
 // channel reaches the threshold.
 std::size_t trimmedLength(const Channels& channels, std::size_t fileFrames) {
   for (std::size_t end = channels.left.size(); end > fileFrames; --end)
-    if (std::abs(channels.left[end - 1]) >= kAudible ||
-        std::abs(channels.right[end - 1]) >= kAudible)
+    if (std::abs(channels.left[end - 1]) >= kTailThreshold ||
+        std::abs(channels.right[end - 1]) >= kTailThreshold)
       return end;
   return fileFrames;
 }
 
-// The file's frames plus the whole frames of the tail, as the sink's size.
+// The file's frames plus the whole frames of the tail: the sink's size. Counted
+// in size_t, which is 32 bits on wasm32, so a sum that does not fit throws
+// rather than wrapping.
 std::size_t renderedFrames(std::uint64_t fileFrames, double sampleRate) {
-  constexpr auto kMost = std::numeric_limits<std::size_t>::max();
+  constexpr auto kMostFrames = std::numeric_limits<std::size_t>::max();
   const double tail = std::floor(kTailSeconds * sampleRate);
-  if (tail >= static_cast<double>(kMost) ||
-      fileFrames > kMost - static_cast<std::size_t>(tail))
+  if (tail >= static_cast<double>(kMostFrames) ||
+      fileFrames > kMostFrames - static_cast<std::size_t>(tail))
     throw std::invalid_argument("render: too many frames");
   return static_cast<std::size_t>(fileFrames) + static_cast<std::size_t>(tail);
 }
 
 } // namespace
 
-Instrument::Instrument(std::span<const std::uint8_t> soundFont, std::uint32_t voiceLimit) {
+Instrument::Instrument(std::span<const std::uint8_t> soundFont,
+                       std::uint32_t voiceLimit) {
   const auto startId = graph_.addNode<TriggerAtNode>(0);
   midi_ = graph_.addNode<MidiFileNode>();
   const auto synthId = graph_.addNode<SoundFontNode>();

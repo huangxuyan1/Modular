@@ -26,10 +26,10 @@ public:
   // Edit-only, from a file or from its bytes. Failed replacement preserves any
   // previous, self-contained content.
   void import(const std::filesystem::path& path) {
-    replace([&] { return MidiFile::read(path); });
+    replaceFile([&] { return MidiFile::read(path); });
   }
   void import(std::span<const std::uint8_t> bytes) {
-    replace([&] { return MidiFile::parse(bytes); });
+    replaceFile([&] { return MidiFile::parse(bytes); });
   }
 
   void prepare(const PrepareInfo& info) override {
@@ -58,8 +58,9 @@ public:
   }
 
 private:
+  // The authored file, not the frame content replaceContent() resolves from it.
   template <class Read>
-  void replace(Read read) {
+  void replaceFile(Read read) {
     try {
       auto replacement = read();
       file_ = std::move(replacement);
