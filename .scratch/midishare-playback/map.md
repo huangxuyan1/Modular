@@ -81,6 +81,13 @@ build, as roadmap ticket 04's did. Research findings live under `research/` here
 
 <!-- one line per closed ticket: enough to judge relevance, then open the ticket for detail -->
 
+- [Which soundfonts ship, in what format, under what licence and at what size?](issues/07-which-samples-ship.md)
+  — SoundFont 2 read by Modular at authoring time: the only route with no codec in Modular that
+  keeps the instrument an authored node owning its samples. The host serves at most 25 MiB per
+  file, so the site ships a single-preset extract. Recommended default: FluidR3_GM's acoustic
+  grand piano (MIT, today's sound), fallback FreePats' Upright Piano KW small (CC0); the extract's
+  size needs the file, so measuring it is a new task.
+
 ## Not yet specified
 
 In scope, not yet sharp enough to ticket. Graduates as the frontier advances.
@@ -88,7 +95,8 @@ In scope, not yet sharp enough to ticket. Graduates as the frontier advances.
 - **Choosing among a few soundfonts (stretch).** What "a few" are (different instruments, or
   different pianos), who chooses (the clip's author, stored with the clip, or each listener),
   and how the choice crosses the contract. Sharp once the default piano and the contract are
-  decided.
+  decided. Research favours further FluidR3_GM presets (one licence), each extracted under the
+  host's 25 MiB limit.
 - **How the Modular-side work cuts into specs.** Probably two: the web build with its render
   surface, and the soundfont node. Depends on the build, surface and node tickets.
 - **Where the render runs in the page** (main thread or a Web Worker), and what the site shows
