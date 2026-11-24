@@ -59,7 +59,9 @@ or removed. Prepared schedules, held notes, pending button presses, synth state
 and device queues are excluded. Unconfigured MIDI nodes reopen with Load MIDI
 available; output readiness is checked on Run. Unsupported kinds and versions,
 malformed files and nested supernodes fail
-explicitly. Invalid Open retains the current graph. A saved inner graph uses the
+explicitly. The editor has no presentation for a soundfont node, so a graph
+holding one fails with `open: unsupported node kind modular.soundfont/1`.
+Invalid Open retains the current graph. A saved inner graph uses the
 ordinary format; importing it as a supernode is deferred.
 
 See [graph-persistence.md](graph-persistence.md) for the shared client API,

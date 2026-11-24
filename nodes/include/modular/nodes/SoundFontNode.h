@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <vector>
 
 #include "modular/Graph.h"
@@ -36,6 +37,11 @@ public:
   PortId out() const { return out_; }
 
   bool ready() const { return sound_font_.has_value(); }
+  // The loaded file, its bytes the node's stored content. Throws while empty.
+  const SoundFont& soundFont() const {
+    if (!ready()) throw std::invalid_argument("soundfont: load a soundfont first");
+    return *sound_font_;
+  }
   // Edit-only. A failed load throws and keeps the previous content. A load
   // selects the file's lowest preset and keeps the voice limit.
   void load(std::span<const std::uint8_t> bytes);

@@ -1,7 +1,9 @@
 #include "modular/nodes/PrimitivePersistence.h"
 
+#include <algorithm>
 #include <array>
 #include <charconv>
+#include <cstddef>
 #include <iomanip>
 #include <limits>
 #include <locale>
@@ -11,6 +13,7 @@
 #include "modular/nodes/BasicNodes.h"
 #include "modular/nodes/MidiFileNode.h"
 #include "modular/nodes/ManualTriggerNode.h"
+#include "modular/nodes/SoundFontNode.h"
 #include "modular/nodes/WavRecorderNode.h"
 #ifdef _WIN32
 #include "modular/nodes/AudioOutputNode.h"
@@ -108,6 +111,42 @@ void requirePorts(const Node& node, std::span<const PortType> inputs,
   };
   check(node.inputs(), inputs);
   check(node.outputs(), outputs);
+}
+
+// modular.soundfont/1 SETTINGS: "loaded bank program voiceLimit", or "empty
+// voiceLimit" for a node with no soundfont, in classic-locale decimal.
+struct SoundFontSettings {
+  bool loaded = false;
+  std::uint16_t bank = 0, program = 0;
+  std::uint32_t voiceLimit = 0;
+};
+
+SoundFontSettings soundFontSettings(const std::string& text) {
+  const auto invalid = [] {
+    return std::invalid_argument("open: invalid soundfont settings");
+  };
+  std::istringstream input(text);
+  input.imbue(std::locale::classic());
+  const auto read = [&](auto& value) {
+    std::string token;
+    if (!(input >> token)) throw invalid();
+    const auto result = std::from_chars(token.data(), token.data() + token.size(), value);
+    if (result.ec != std::errc{} || result.ptr != token.data() + token.size())
+      throw invalid();
+  };
+  SoundFontSettings settings;
+  std::string state;
+  input >> state;
+  settings.loaded = state == "loaded";
+  if (!settings.loaded && state != "empty") throw invalid();
+  if (settings.loaded) {
+    read(settings.bank);
+    read(settings.program);
+  }
+  read(settings.voiceLimit);
+  input >> std::ws;
+  if (!input.eof()) throw invalid();
+  return settings;
 }
 
 } // namespace
@@ -311,6 +350,49 @@ std::span<const NodeCodec> primitiveCodecs() {
        return g.restoreNode<AudioOutputNode>(id, ports, setting<std::uint32_t>(content));
      }},
 #endif
+  };
+  return codecs;
+}
+
+std::span<const NodeCodec> soundFontCodecs() {
+  static const NodeCodec codecs[]{
+    {"modular.soundfont/1",
+     [](const Node& n) { return typeid(n) == typeid(SoundFontNode); },
+     [](const Node& n) {
+       const auto& node = static_cast<const SoundFontNode&>(n);
+       const std::array inputs{PortType::event(subtype::Midi)};
+       const std::array outputs{PortType::audio(2)};
+       requirePorts(node, inputs, outputs);
+       std::ostringstream settings;
+       settings.imbue(std::locale::classic());
+       if (!node.ready()) {
+         settings << "empty " << node.voiceLimit();
+         return NodeContent{settings.str(), {}};
+       }
+       settings << "loaded " << node.bank() << ' ' << node.program() << ' '
+                << node.voiceLimit();
+       const auto bytes = std::as_bytes(node.soundFont().bytes());
+       return NodeContent{settings.str(),
+                          std::vector<std::byte>(bytes.begin(), bytes.end())};
+     },
+     [](Graph& g, NodeId id, const NodePorts& ports, const NodeContent& content) {
+       const auto settings = soundFontSettings(content.settings);
+       if (!settings.loaded) {
+         if (!content.stored.empty())
+           throw std::invalid_argument("open: empty soundfont node has content");
+         g.restoreNode<SoundFontNode>(id, ports);
+       } else {
+         std::vector<std::uint8_t> bytes(content.stored.size());
+         std::transform(content.stored.begin(), content.stored.end(), bytes.begin(),
+                        [](std::byte b) { return std::to_integer<std::uint8_t>(b); });
+         // The same parser as a load, so a file that no longer parses fails here.
+         g.restoreNode<SoundFontNode>(id, ports, SoundFont::parse(bytes));
+       }
+       auto& node = static_cast<SoundFontNode&>(g.node(id));
+       if (settings.loaded) node.setPreset(settings.bank, settings.program);
+       node.setVoiceLimit(settings.voiceLimit);
+       return id;
+     }},
   };
   return codecs;
 }
