@@ -3,13 +3,14 @@
 Status: tickets-published
 
 Completed phase: `/to-tickets`, invoked and approved by the user on 2026-09-13.
-Five tickets are published below as `ready-for-agent`. The [spec](spec.md) remains
-unchanged. Tickets 01 and 02 were subsequently invoked through `/implement`; see
-their implementation notes for delivery and verification. Tickets 03-05 await invocation.
+Five tickets were published below as `ready-for-agent`. The [spec](spec.md) remains
+unchanged. All five were later invoked through `/implement` and are now `done`; see
+their implementation notes and review records for delivery and verification.
 
 The premature [spec artifact](archive/premature-spec-20260912.md) is preserved only
 as history. The original node-I/O additions were provisional; ticket 02 integrates
-them under the agreed spec. All work remains uncommitted.
+them under the agreed spec. The work was uncommitted when this note was written; it
+was published in the repository's root commit.
 
 ## Interview scope and delegation (2026-09-13)
 
