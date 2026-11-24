@@ -70,6 +70,7 @@ inline constexpr std::uint16_t kFineTune = 52;
 inline constexpr std::uint16_t kSampleId = 53;
 inline constexpr std::uint16_t kSampleModes = 54;
 inline constexpr std::uint16_t kScaleTuning = 56;
+inline constexpr std::uint16_t kExclusiveClass = 57;
 inline constexpr std::uint16_t kOverridingRootKey = 58;
 } // namespace gen
 

@@ -69,6 +69,7 @@ public:
     kSampleId = 53,
     kSampleModes = 54,
     kScaleTuning = 56,
+    kExclusiveClass = 57,
     kOverridingRootKey = 58,
     kGeneratorCount = 61,
   };
@@ -79,30 +80,80 @@ public:
     bool operator==(const PresetNumber&) const = default;
   };
 
-  // One instrument zone as a preset plays it. Generators hold the final values:
-  // instrument defaults, then its global and local zone, plus the preset's
-  // global and local offsets, clamped to the specification's ranges.
-  //
-  // Its points, indexes into the sample data, are the sample header's plus the
-  // zone's address offsets: the fine offset plus 32768 times the coarse one.
-  // The start and end are kept within the header's sample.
+  // A modulator, as the specification's section 8.2 defines it: its output,
+  // the amount times its source and its amount source, each mapped by its
+  // curve, polarity and direction, then taken through its transform, adds to
+  // its destination generator. The reader keeps a zone's legal modulators
+  // only; see zones().
+  struct Modulator {
+    std::uint16_t source = 0;
+    std::uint16_t destination = 0;
+    std::int32_t amount = 0; // signed 16-bit in the file, widened for sums
+    std::uint16_t amountSource = 0;
+    std::uint16_t transform = 0;
+
+    // Within a zone, duplicate records match without regard to the transform.
+    bool sameZoneKey(const Modulator& other) const {
+      return source == other.source && destination == other.destination &&
+             amountSource == other.amountSource;
+    }
+    // Across zones and levels, identity also requires matching transforms.
+    bool identicalTo(const Modulator& other) const {
+      return sameZoneKey(other) && transform == other.transform;
+    }
+  };
+
+  // A sample header's points, indexes into the sample data: its first point,
+  // the point after its last, and its loop's first point and the point after
+  // its last.
+  struct Header {
+    std::uint32_t start = 0, end = 0, loopStart = 0, loopEnd = 0;
+  };
+
+  // The points a zone plays, indexes into the sample data, as place() finds
+  // them.
+  struct Points {
+    std::uint32_t start = 0, end = 0, loopStart = 0, loopEnd = 0;
+    // Why a zone that would loop plays unlooped, if it does.
+    enum class Fault : std::uint8_t { kNone, kLoopOutside, kLoopEmpty };
+    Fault fault = Fault::kNone;
+  };
+
+  // A zone's value for each generator.
+  using Values = std::array<double, kGeneratorCount>;
+
+  // One instrument zone as a preset plays it. Generators hold the effective
+  // instrument values plus the effective preset offsets. A file modulator's
+  // destination stays unclamped here so that its range applies to the sum at
+  // note-on; other generators keep their usual bounds here.
   struct Zone {
     std::uint8_t keyLow = 0, keyHigh = 127;
     std::uint8_t velocityLow = 0, velocityHigh = 127;
     std::array<std::int32_t, kGeneratorCount> generators{};
-    std::uint32_t sampleStart = 0; // the first point played
-    std::uint32_t sampleEnd = 0;   // one past the last point played
-    // The loop: its first point, and the point after its last. Empty when the
-    // header's loop with its offsets is empty or lies outside the points the
-    // zone plays, so the zone plays unlooped whatever its sampleModes.
-    std::uint32_t loopStart = 0, loopEnd = 0;
+    Header header; // its sample's, which place() moves by its address offsets
     std::uint32_t sampleRate = 0;
     std::uint8_t originalPitch = 60;
     std::int8_t pitchCorrection = 0; // the header's, in cents
+    // The file's modulators at each level: the global zone's, each superseded
+    // by an identical one of the zone's own (the same source, destination,
+    // amount source and transform). Preset-level modulators add to
+    // instrument-level ones.
+    std::vector<Modulator> instrumentModulators, presetModulators;
   };
 
   static SoundFont parse(std::span<const std::uint8_t> bytes);
   static SoundFont read(const std::filesystem::path& path);
+
+  // The points a zone with these generator values plays: the header's start,
+  // end and loop, each plus the zone's address offsets, the fine offset plus
+  // 32768 times the coarse one. The start and end stay within the header's
+  // sample. A loop that lies outside the points played, or is empty (its end
+  // not after its start), is dropped, so the zone plays unlooped; a zone that
+  // would loop (sampleModes 1 or 3) says why.
+  static Points place(const Header& header, const Values& generators);
+
+  // A value clamped to the specification's range for its generator, if any.
+  static double bounded(std::size_t generator, double value);
 
   // The lowest bank, then the lowest program in it.
   PresetNumber lowestPreset() const;
@@ -123,19 +174,11 @@ public:
   }
 
 private:
-  // The points an instrument zone plays, as Zone holds them. Every generator
-  // that moves them is valid only in an instrument, so a preset cannot.
-  struct Points {
-    std::uint32_t start = 0, end = 0, loopStart = 0, loopEnd = 0;
-    // Why a zone that would loop plays unlooped, if it does.
-    enum class Fault : std::uint8_t { kNone, kLoopOutside, kLoopEmpty };
-    Fault fault = Fault::kNone;
-  };
   struct ParsedZone {
     std::array<std::int16_t, kGeneratorCount> amounts{};
     std::array<bool, kGeneratorCount> given{};
     std::uint16_t target = 0; // instrument or sample index
-    Points points;            // an instrument zone's
+    std::vector<Modulator> modulators; // its legal ones, last of each same-zone key
   };
   // A preset's or instrument's zones, and its global zone if it has one.
   struct Zones {
@@ -147,14 +190,12 @@ private:
     Zones zones;
   };
   struct Sample {
-    std::uint32_t start = 0, end = 0, loopStart = 0, loopEnd = 0, rate = 0;
+    Header header;
+    std::uint32_t rate = 0;
     std::uint8_t originalPitch = 60;
     std::int8_t correction = 0; // cents
     bool rom = false;           // its points are in a ROM, not in the file
   };
-
-  static Points place(const ParsedZone& zone, const std::optional<ParsedZone>& global,
-                      const Sample& sample);
 
   std::vector<std::uint8_t> bytes_;
   std::size_t sample_data_ = 0; // byte offset of the first point
