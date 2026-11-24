@@ -2219,6 +2219,363 @@ TEST_CASE("a file modulator adds its output to its destination generator for the
   }
 }
 
+namespace {
+
+// A full-left steady zone 50 dB down, which a test gives modulators.
+File quietZone() {
+  return oneZone(steady(16384, 60000),
+                 {set(gen::kPan, -500), set(gen::kInitialAttenuation, 500)});
+}
+
+// The centibels of attenuation that `edit` adds to one note on the quiet zone:
+// its level with the edit against its level without, at frame 500. `before`
+// comes ahead of the note-on.
+double addedCentibels(const std::function<void(File&)>& edit, int key, int velocity,
+                      std::vector<Timed> before = {}) {
+  File edited = quietZone();
+  edit(edited);
+  before.push_back({13, noteOn(0, key, velocity)});
+  const Run run{48000, 128, 600};
+  const auto with = play(build(edited), before, run);
+  const auto without = play(build(quietZone()), before, run);
+  return -200 * std::log10(with.left.at(500) / without.left.at(500));
+}
+
+// The same for modulators in the instrument zone.
+double addedCentibels(const std::vector<Modulator>& modulators, int key, int velocity,
+                      std::vector<Timed> before = {}) {
+  return addedCentibels([&](File& file) { file.instruments[0].zones[0].modulators = modulators; },
+                        key, velocity, std::move(before));
+}
+
+// The specification's 96 dB curves, as section 8.2.1 draws them: concave
+// rises as -20/96 log10((1 - x)^2), convex as 1 + 20/96 log10(x^2), each
+// reaching 1 at x = 1 and capped there.
+double concaveCurve(double x) {
+  return x >= 1 ? 1 : std::min(1.0, -40.0 / 96 * std::log10(1 - x));
+}
+double convexCurve(double x) { return x <= 0 ? 0 : std::max(0.0, 1 + 40.0 / 96 * std::log10(x)); }
+
+// The value a source enumerator gives a key, from -1 to 1, written from the
+// specification and node-io.md's normalization: linear and switch sources over
+// 128 values, unipolar concave and convex curves over the values 0 to 127, and
+// bipolar curves out from the centre, over half the 128 values each way.
+double expectedCurve(std::uint16_t source, int key) {
+  const bool down = (source & kDown) != 0, bipolar = (source & kBipolar) != 0;
+  const double x = key / 128.0;
+  switch (source & 0xfc00) {
+  case kLinear:
+    if (bipolar) return down ? 1 - 2 * x : 2 * x - 1;
+    return down ? 1 - x : x;
+  case kSwitch: {
+    const bool on = (key >= 64) != down;
+    return on ? 1 : bipolar ? -1 : 0;
+  }
+  default: {
+    const bool convex = (source & 0xfc00) == kConvex;
+    if (!bipolar) {
+      const double position = (down ? 127 - key : key) / 127.0;
+      return convex ? convexCurve(position) : concaveCurve(position);
+    }
+    const double distance = std::abs(2 * x - 1);
+    const double size = convex ? convexCurve(distance) : concaveCurve(distance);
+    return (key > 64) != down ? size : -size;
+  }
+  }
+}
+
+} // namespace
+
+TEST_CASE("a modulated generator stays within its range, and whole where it counts whole things") {
+  const Run run{48000, 128, 1000};
+  const std::vector<Timed> note{{13, noteOn(0, 70, 100)}};
+  const auto zone = [](std::vector<Generator> generators, std::vector<Modulator> modulators) {
+    File file = oneZone(sine(0.01, 20000), std::move(generators));
+    file.instruments[0].zones[0].modulators = std::move(modulators);
+    return build(file);
+  };
+  // Pan 400 and 300 more is fully right, as pan 500 is.
+  CHECK(play(zone({set(gen::kPan, 400)}, {constant(gen::kPan, 300)}), note, run).right ==
+        play(zone({set(gen::kPan, 500)}, {}), note, run).right);
+  // 1000 cB taken off 100 cB and the default modulators' 83 leaves none: the
+  // voice is no louder than its sample, a steady half scale.
+  File louder = oneZone(steady(16384, 4000),
+                        {set(gen::kPan, -500), set(gen::kInitialAttenuation, 100)});
+  louder.instruments[0].zones[0].modulators = {constant(gen::kInitialAttenuation, -1000)};
+  CHECK(play(build(louder), note, run).left.at(500) == doctest::Approx(0.5));
+  // The key over 128, at key 70 0.55, rounds to 1: the root moves to 61 and
+  // the sample mode to 1, as their generators would.
+  const Modulator byKey{kKeySource, gen::kOverridingRootKey, 1, 0, 0};
+  CHECK(play(zone({set(gen::kOverridingRootKey, 60)}, {byKey}), note, run).left ==
+        play(zone({set(gen::kOverridingRootKey, 61)}, {}), note, run).left);
+  // The sample runs out about frame 11,200 unless it loops.
+  auto byKeyToMode = byKey;
+  byKeyToMode.destination = gen::kSampleModes;
+  const Run past{48000, 128, 30000};
+  const auto looped = play(zone({}, {byKeyToMode}), note, past);
+  CHECK(looped.left == play(zone({set(gen::kSampleModes, 1)}, {}), note, past).left);
+  CHECK(looped.left != play(zone({}, {}), note, past).left);
+}
+
+TEST_CASE("a file modulator maps its source by its curve, polarity and direction as the specification defines") {
+  // The key as the source, so no default modulator is replaced, 480 cB to
+  // initialAttenuation: the attenuation it adds is 480 times the curve.
+  for (const std::uint16_t curve : {kLinear, kConcave, kConvex, kSwitch})
+    for (const std::uint16_t polarity : {std::uint16_t{0}, kBipolar})
+      for (const std::uint16_t direction : {std::uint16_t{0}, kDown}) {
+        const auto source = static_cast<std::uint16_t>(kKeySource | curve | polarity | direction);
+        for (const int key : {0, 1, 20, 63, 64, 65, 100, 126, 127}) {
+          CAPTURE(source);
+          CAPTURE(key);
+          const Modulator modulator{source, gen::kInitialAttenuation, 480, 0, 0};
+          CHECK(addedCentibels({modulator}, key, 100) ==
+                doctest::Approx(480 * expectedCurve(source, key)));
+        }
+      }
+}
+
+TEST_CASE("a file modulator's source is the note's velocity or key, a constant, or a controller held at its power-on value") {
+  // Each linear and unipolar unless named: 640 cB times the source's value.
+  // Controllers in the stream move nothing; the node holds CC7 at 100, CC10 at
+  // 64, CC11 at 127, the pitch wheel centred and its sensitivity at 2
+  // semitones, and every other source at 0.
+  const std::vector<Timed> moved{{3, MidiMsg{0xb0, 7, 0}},   {3, MidiMsg{0xb0, 1, 127}},
+                                 {3, MidiMsg{0xb0, 10, 0}},  {3, MidiMsg{0xb0, 11, 0}},
+                                 {3, MidiMsg{0xe0, 0, 0}},   {3, MidiMsg{0xd0, 127, 0}},
+                                 {3, MidiMsg{0xa0, 70, 127}}};
+  for (const auto& [source, value] : std::vector<std::pair<std::uint16_t, double>>{
+           {kNoController, 1},
+           {kVelocitySource, 90 / 128.0},
+           {kKeySource, 70 / 128.0},
+           {0x0087, 100 / 128.0},      // CC7, channel volume
+           {0x008b, 127 / 128.0},      // CC11, expression
+           {0x028a, 0},                // CC10, pan, bipolar
+           {0x0081, 0},                // CC1, the modulation wheel
+           {0x00c0, 0},                // CC64, the sustain pedal
+           {0x00db, 0},                // CC91, reverb
+           {0x000a, 0},                // poly pressure
+           {0x000d, 0},                // channel pressure
+           {0x020e, 0},                // the pitch wheel, bipolar
+           {0x000e, 0.5},              // the pitch wheel
+           {0x0010, 2 / 128.0}}) {     // the pitch wheel's sensitivity
+    CAPTURE(source);
+    const Modulator modulator{source, gen::kInitialAttenuation, 640, 0, 0};
+    CHECK(addedCentibels({modulator}, 70, 90) == doctest::Approx(640 * value));
+    CHECK(addedCentibels({modulator}, 70, 90, moved) ==
+          doctest::Approx(640 * value));
+  }
+}
+
+TEST_CASE("a file modulator's amount source scales its output and its transform can take its size") {
+  // 480 cB from the key, scaled by a velocity switch that is on below 64.
+  const Modulator switched{kKeySource, gen::kInitialAttenuation, 480,
+                           static_cast<std::uint16_t>(kVelocitySource | kSwitch | kDown), 0};
+  CHECK(addedCentibels({switched}, 100, 40) == doctest::Approx(480 * 100 / 128.0));
+  CHECK(addedCentibels({switched}, 100, 64) == doctest::Approx(0));
+  // A constant 300 cB scaled by the key on its concave curve.
+  const Modulator scaled{kNoController, gen::kInitialAttenuation, 300,
+                         static_cast<std::uint16_t>(kKeySource | kConcave), 0};
+  CHECK(addedCentibels({scaled}, 90, 100) == doctest::Approx(300 * concaveCurve(90 / 127.0)));
+  // A bipolar key at key 20 is -0.6875: 330 cB off, or with the absolute
+  // value transform, 330 cB on.
+  const auto bipolarKey = static_cast<std::uint16_t>(kKeySource | kBipolar);
+  CHECK(addedCentibels({{bipolarKey, gen::kInitialAttenuation, 480, 0, 0}}, 20, 100) ==
+        doctest::Approx(-330));
+  CHECK(addedCentibels({{bipolarKey, gen::kInitialAttenuation, 480, 0, kAbsolute}}, 20,
+                       100) == doctest::Approx(330));
+  // A negative amount through it is a size too.
+  CHECK(addedCentibels({{bipolarKey, gen::kInitialAttenuation, -480, 0, kAbsolute}}, 100,
+                       100) == doctest::Approx(270));
+}
+
+namespace {
+
+// FluidR3's switch-off: note-on velocity to initialFilterFc, linear and down,
+// as the default modulator, with amount 0 and a velocity switch, down, as its
+// amount source (map ticket 09's census).
+const Modulator kSwitchOff{static_cast<std::uint16_t>(kVelocitySource | kDown),
+                           gen::kInitialFilterFc, 0,
+                           static_cast<std::uint16_t>(kVelocitySource | kSwitch | kDown), 0};
+
+// A centred zone playing a 4 kHz tone at 48 kHz through a cutoff of `cutoff`
+// cents, with the given modulators at each level.
+Bytes filteredTone(int cutoff, std::vector<Modulator> instrument,
+                   std::vector<Modulator> preset = {}) {
+  File file = oneZone(sine(4000 / 48000.0, 12000), {set(gen::kInitialFilterFc, cutoff)});
+  file.instruments[0].zones[0].modulators = std::move(instrument);
+  file.presets[0].zones[0].modulators = std::move(preset);
+  return build(file);
+}
+
+// Velocities at which the default velocity-to-cutoff modulator lowers the
+// cutoff by whole cents, -2400 (128 - v) / 128, and that drop.
+const std::vector<std::pair<int, int>> kWholeDrops{
+    {124, 75}, {100, 525}, {64, 1200}, {40, 1650}, {4, 2325}};
+
+} // namespace
+
+TEST_CASE("a file modulator replaces a default one with its source, destination and transform, whatever its amount source") {
+  // FluidR3's amount-0 switch-off leaves the cutoff at initialFilterFc at
+  // every velocity: the note plays as a zone without it whose cutoff is
+  // raised by the default modulator's drop. So it does with no amount source
+  // or another one.
+  const Run run{48000, 128, 6000};
+  for (const std::uint16_t amountSource : {kSwitchOff.amountSource, std::uint16_t{0},
+                                           std::uint16_t{0x0081}}) {
+    auto switchOff = kSwitchOff;
+    switchOff.amountSource = amountSource;
+    for (const auto& [velocity, drop] : kWholeDrops) {
+      CAPTURE(amountSource);
+      CAPTURE(velocity);
+      const std::vector<Timed> note{{13, noteOn(0, 60, velocity)}};
+      const auto out = play(filteredTone(9000, {switchOff}), note, run);
+      CHECK(out.left == play(filteredTone(9000 + drop, {}), note, run).left);
+      CHECK(out.left != play(filteredTone(9000, {}), note, run).left);
+    }
+  }
+  // A file modulator with the velocity-to-attenuation default's source,
+  // destination and transform but half its amount halves its decibels:
+  // 20 log10(v / 127) dB.
+  const Modulator halfVelocity{0x0502, gen::kInitialAttenuation, 480, 0, 0};
+  for (const int velocity : {105, 85, 64}) {
+    CAPTURE(velocity);
+    const auto heard = [&](int v) {
+      File file = quietZone();
+      file.instruments[0].zones[0].modulators = {halfVelocity};
+      return play(build(file), {{13, noteOn(0, 60, v)}}, {48000, 128, 600}).left.at(500);
+    };
+    CHECK(20 * std::log10(heard(velocity) / heard(127)) ==
+          doctest::Approx(20 * std::log10(velocity / 127.0)));
+  }
+}
+
+TEST_CASE("a modulator unlike every default, or a preset's, adds to the default modulators instead of replacing one") {
+  // Each has the switch-off's amount 0, so it adds nothing, and the default
+  // velocity-to-cutoff modulator still lowers the cutoff.
+  const auto transformed = [] {
+    auto m = kSwitchOff;
+    m.transform = kAbsolute;
+    return m;
+  }();
+  const auto rising = [] {
+    auto m = kSwitchOff;
+    m.source = kVelocitySource;
+    return m;
+  }();
+  const auto elsewhere = [] {
+    auto m = kSwitchOff;
+    m.destination = gen::kInitialFilterQ;
+    return m;
+  }();
+  const Run run{48000, 128, 6000};
+  const std::vector<Timed> note{{13, noteOn(0, 60, 64)}};
+  const auto plain = play(filteredTone(9000, {}), note, run);
+  CHECK(play(filteredTone(9000, {transformed}), note, run).left == plain.left);
+  CHECK(play(filteredTone(9000, {rising}), note, run).left == plain.left);
+  CHECK(play(filteredTone(9000, {elsewhere}), note, run).left == plain.left);
+  CHECK(play(filteredTone(9000, {}, {kSwitchOff}), note, run).left == plain.left);
+}
+
+TEST_CASE("preset-level modulators add to instrument-level ones and a zone's own supersede its global zone's") {
+  const auto quiet = [](std::vector<Modulator> instrumentGlobal, std::vector<Modulator> instrument,
+                        std::vector<Modulator> presetGlobal, std::vector<Modulator> preset) {
+    return [=](File& file) {
+      file.instruments[0].zones[0].modulators = instrument;
+      if (!instrumentGlobal.empty())
+        file.instruments[0].zones.insert(file.instruments[0].zones.begin(),
+                                         Zone{{}, instrumentGlobal});
+      file.presets[0].zones[0].modulators = preset;
+      if (!presetGlobal.empty())
+        file.presets[0].zones.insert(file.presets[0].zones.begin(), Zone{{}, presetGlobal});
+    };
+  };
+  const auto atten = [](int amount, std::uint16_t amountSource = 0) {
+    return Modulator{kNoController, gen::kInitialAttenuation,
+                     static_cast<std::int16_t>(amount), amountSource, 0};
+  };
+  // Levels add: 100 cB from the instrument and 60 from the preset.
+  CHECK(addedCentibels(quiet({}, {atten(100)}, {}, {atten(60)}), 60, 100) ==
+        doctest::Approx(160));
+  // A local zone's identical modulator supersedes its global zone's, at each
+  // level; one that differs in its amount source adds.
+  CHECK(addedCentibels(quiet({atten(300)}, {atten(100)}, {}, {}), 60, 100) ==
+        doctest::Approx(100));
+  CHECK(addedCentibels(quiet({}, {}, {atten(200)}, {atten(60)}), 60, 100) ==
+        doctest::Approx(60));
+  CHECK(addedCentibels(quiet({atten(300)}, {atten(128, 0x008b)}, {}, {}), 60, 100) ==
+        doctest::Approx(300 + 127));
+  // A global zone's modulator applies to the zone, and within one zone the
+  // last of identical modulators is kept.
+  CHECK(addedCentibels(quiet({atten(300)}, {}, {atten(40)}, {}), 60, 100) ==
+        doctest::Approx(340));
+  CHECK(addedCentibels(quiet({}, {atten(300), atten(100)}, {}, {}), 60, 100) ==
+        doctest::Approx(100));
+}
+
+TEST_CASE("a modulator to a generator that moves nothing in a voice changes nothing and is not listed") {
+  // At the instrument level: keynum and velocity, which modulators read,
+  // and the generators that choose zones or name what they play. At the
+  // preset level, a generator valid only in an instrument, as the preset's own
+  // generator would be. Constant modulators of 30.
+  auto file = plainZone();
+  const auto plain = playsPlainly(file);
+  for (const std::uint16_t destination :
+       {gen::kKeynum, gen::kVelocity, gen::kKeyRange, gen::kVelRange, gen::kInstrument,
+        gen::kSampleId, std::uint16_t{14}, std::uint16_t{42}, std::uint16_t{60}})
+    file.instruments[0].zones[0].modulators.push_back(constant(destination, 30));
+  for (const std::uint16_t destination :
+       {gen::kOverridingRootKey, gen::kSampleModes, gen::kStartAddrsOffset, gen::kKeynum,
+        gen::kExclusiveClass})
+    file.presets[0].zones[0].modulators.push_back(constant(destination, 30));
+  CHECK(listedBy(build(file)).empty());
+  CHECK(playsPlainly(file).left == plain.left);
+}
+
+TEST_CASE("a modulator to an effects send changes nothing and lists the sends when it has an amount") {
+  auto file = plainZone();
+  const auto plain = playsPlainly(file);
+  file.instruments[0].zones[0].modulators = {constant(gen::kReverbEffectsSend, 0)};
+  CHECK(listedBy(build(file)).empty());
+  file.presets[0].zones[0].modulators = {constant(gen::kChorusEffectsSend, -200)};
+  CHECK(listedBy(build(file)) == Listed{kSends});
+  CHECK(playsPlainly(file).left == plain.left);
+}
+
+TEST_CASE("an illegal modulator is ignored unlisted, and replaces no default") {
+  // Sources the specification forbids or does not define: MIDI controllers
+  // 0, 6, 32 to 63, 98 to 101 and 120 to 127, general controllers it does not
+  // list, and curve types past 3; as an amount source, the link too; and
+  // transforms other than 0 and 2. Each would add 500 cB.
+  std::vector<Modulator> illegal;
+  for (const std::uint16_t controller : {0, 6, 32, 45, 63, 98, 101, 120, 127})
+    illegal.push_back({static_cast<std::uint16_t>(0x80 | controller),
+                       gen::kInitialAttenuation, 500, 0, 0});
+  for (const std::uint16_t general : {1, 4, 9, 11, 12, 15, 17, 100, 126})
+    illegal.push_back({general, gen::kInitialAttenuation, 500, 0, 0});
+  illegal.push_back({static_cast<std::uint16_t>(0x1000 | kKeySource),
+                     gen::kInitialAttenuation, 500, 0, 0});
+  illegal.push_back({kNoController, gen::kInitialAttenuation, 500, 0x0006, 0});
+  illegal.push_back({kNoController, gen::kInitialAttenuation, 500, 0x00a0, 0});
+  illegal.push_back({kNoController, gen::kInitialAttenuation, 500, 0x007f, 0});
+  illegal.push_back({kNoController, gen::kInitialAttenuation, 500, 0x1003, 0});
+  for (const std::uint16_t transform : {1, 3, 0x8000})
+    illegal.push_back({kNoController, gen::kInitialAttenuation, 500, 0, transform});
+  // And a switch-off whose amount source is bank select.
+  auto badSwitchOff = kSwitchOff;
+  badSwitchOff.amountSource = 0x0080;
+  illegal.push_back(badSwitchOff);
+
+  auto file = plainZone();
+  const auto plain = playsPlainly(file);
+  file.instruments[0].zones[0].modulators = illegal;
+  CHECK(listedBy(build(file)).empty());
+  CHECK(playsPlainly(file).left == plain.left);
+  const Run run{48000, 128, 6000};
+  const std::vector<Timed> note{{13, noteOn(0, 60, 64)}};
+  CHECK(play(filteredTone(9000, {badSwitchOff}), note, run).left ==
+        play(filteredTone(9000, {}), note, run).left);
+}
+
 // Counts the global allocations made while `counting` is set.
 namespace {
 bool counting = false;
