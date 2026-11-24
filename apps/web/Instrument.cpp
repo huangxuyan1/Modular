@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
-#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -44,9 +43,7 @@ std::size_t trimmedLength(const Channels& channels, std::size_t fileFrames) {
 
 // The most frames a channel can hold. On wasm32 a vector of floats holds fewer
 // than size_t counts, so a larger rendering would fail as a bare length error.
-std::size_t mostFrames() {
-  return std::min(std::numeric_limits<std::size_t>::max(), std::vector<float>().max_size());
-}
+std::size_t mostFrames() { return std::vector<float>().max_size(); }
 
 // Refuses a file longer than the limit, or one whose rendering could not be
 // counted at this rate, from its duration alone: before any node prepares at
@@ -61,11 +58,13 @@ void checkLength(double fileSeconds, double sampleRate) {
 
 // The file's frames plus the whole frames of the tail: the sink's size. Counted
 // in size_t, which is 32 bits on wasm32, so a sum that does not fit throws
-// rather than wrapping.
+// rather than wrapping. checkLength() has refused any rate near the limit, but
+// the node rounds the file's frames, which may still carry the sum past it.
 std::size_t renderedFrames(std::uint64_t fileFrames, double sampleRate) {
   const auto most = mostFrames();
   const double tail = std::floor(kTailSeconds * sampleRate);
-  if (tail >= static_cast<double>(most) || fileFrames > most - static_cast<std::size_t>(tail))
+  if (tail >= static_cast<double>(most) ||
+      fileFrames > most - static_cast<std::size_t>(tail))
     throw std::invalid_argument("render: too many frames");
   return static_cast<std::size_t>(fileFrames) + static_cast<std::size_t>(tail);
 }
@@ -111,9 +110,9 @@ Rendering Instrument::render(std::span<const std::uint8_t> midiFile, double samp
       engine.process(static_cast<std::uint32_t>(
           std::min<std::uint64_t>(kBlockFrames, frames - engine.streamTime())));
     // A node reports a failure while processing rather than throwing, so the
-    // render asks once every frame is rendered.
+    // render asks once every frame is rendered. It is not an authoring error.
     if (auto error = engine.errorMessage(); !error.empty())
-      throw std::invalid_argument(error);
+      throw std::runtime_error(error);
   }
 
   // The rendering takes the sink's channels rather than copying them, so a

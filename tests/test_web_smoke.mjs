@@ -16,6 +16,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
+import { runInNewContext } from 'node:vm';
 
 const [loaderPath, soundfontPath, testLoaderPath] = process.argv.slice(2);
 if (!loaderPath || !soundfontPath || !testLoaderPath)
@@ -133,6 +134,14 @@ test('bad MIDI bytes reject with an Error carrying the parser message, and the n
   assert.deepEqual(after.channels, before.channels);
 });
 
+// Awaits each of `failures`, pairs of a call and a message, and checks that the call rejected
+// with an Error carrying exactly that message.
+async function rejectWith(failures) {
+  for (const [call, message] of failures)
+    await assert.rejects(call, (error) => error instanceof Error && error.message === message,
+                         message);
+}
+
 // Records the order in which `calls` settle, then waits for every one of them.
 async function settleInOrder(calls) {
   const settled = [];
@@ -166,7 +175,7 @@ test("each malformed input rejects with an Error carrying Modular's message, and
   const instrument = await modular.createInstrument(soundfont);
   const before = await instrument.render(oneNote(), 48000);
   const finiteAndPositive = 'render: sample rate must be finite and positive';
-  const failures = [
+  await rejectWith([
     [modular.createInstrument(notSoundfont()), 'soundfont: not a soundfont'],
     [modular.createInstrument(new Uint8Array(0)), 'soundfont: truncated chunk'],
     [modular.createInstrument(soundfont3()),
@@ -183,13 +192,21 @@ test("each malformed input rejects with an Error carrying Modular's message, and
     // render core's tests render a file of exactly ten minutes.
     [instrument.render(midiFile([], 600 * kTicksPerSecond + 1), 48000),
      'render: file is longer than 10 minutes'],
-  ];
-  for (const [call, message] of failures)
-    await assert.rejects(call, (error) => error instanceof Error && error.message === message,
-                         message);
+  ]);
   assert.deepEqual((await instrument.render(oneNote(), 48000)).channels, before.channels);
   const fresh = await modular.createInstrument(soundfont);
   assert.deepEqual((await fresh.render(oneNote(), 48000)).channels, before.channels);
+});
+
+test('a file of zero duration is no error: it renders two empty channels', async () => {
+  const instrument = await modular.createInstrument(soundfont);
+  const rendering = await instrument.render(midiFile([[0, 0x90, 60, 100]], 0), 48000);
+  assert.equal(rendering.sampleRate, 48000);
+  assert.equal(rendering.channels.length, 2);
+  for (const samples of rendering.channels) {
+    assert.ok(samples instanceof Float32Array);
+    assert.equal(samples.length, 0);
+  }
 });
 
 test('the loader refuses an argument of the wrong type with an Error, before the module sees it', async () => {
@@ -199,7 +216,7 @@ test('the loader refuses an argument of the wrong type with an Error, before the
   const notMidiBytes = 'midi file: bytes must be a Uint8Array';
   const notANumber = 'render: sample rate must be a number';
   // The module itself would take each of these: as a view, a copy or a coerced number.
-  const failures = [
+  await rejectWith([
     [modular.createInstrument(soundfont.slice().buffer), notBytes],
     [modular.createInstrument(Array.from(soundfont)), notBytes],
     [modular.createInstrument(), notBytes],
@@ -208,11 +225,17 @@ test('the loader refuses an argument of the wrong type with an Error, before the
     [instrument.render(midi, '48000'), notANumber],
     [instrument.render(midi, 48000n), notANumber],
     [instrument.render(midi), notANumber],
-  ];
-  for (const [call, message] of failures)
-    await assert.rejects(call, (error) => error instanceof Error && error.message === message,
-                         message);
-  assert.ok(soundsOn((await instrument.render(midi, 48000)).channels[0], 24000));
+  ]);
+  const rendering = await instrument.render(midi, 48000);
+  assert.ok(soundsOn(rendering.channels[0], 24000));
+
+  // A Uint8Array from another realm, such as an iframe's, is still one.
+  const foreign = (bytes) => runInNewContext('Uint8Array.from(bytes)', { bytes });
+  const foreignFont = foreign(soundfont);
+  assert.ok(!(foreignFont instanceof Uint8Array));
+  const foreignInstrument = await modular.createInstrument(foreignFont);
+  assert.deepEqual((await foreignInstrument.render(foreign(midi), 48000)).channels,
+                   rendering.channels);
 });
 
 test("changing the page's arrays after a call changes nothing", async () => {
@@ -296,6 +319,29 @@ test('a trap rejects only its own call, and the next call runs on a fresh instan
   assert.deepEqual(asked, ['modular_web.wasm', 'modular_web.wasm']);
   assert.deepEqual((await made.value.render(oneNote(), 48000)).channels, before.channels);
   assert.equal(testInstances.length, 2);
+});
+
+test('a fresh instance that cannot load rejects the call that needed it, and the next call loads one again', async () => {
+  let asks = 0;
+  // The second instance looks for a .wasm that is not there.
+  const modular = await loadTestModular({
+    locateFile: (path, prefix) => prefix + (++asks === 2 ? 'missing.wasm' : path),
+  });
+  const instrument = await modular.createInstrument(soundfont);
+  const before = await instrument.render(oneNote(), 48000);
+  await assert.rejects(instrument.render(trapping(), 48000),
+                       (error) => error.message.startsWith('module stopped: '));
+  // Emscripten reports the failed load on the console as well; the test keeps it quiet.
+  const report = console.error;
+  console.error = () => {};
+  try {
+    await assert.rejects(instrument.render(oneNote(), 48000),
+                         (error) => error instanceof Error && error.message.includes('missing.wasm'));
+  } finally {
+    console.error = report;
+  }
+  assert.deepEqual((await instrument.render(oneNote(), 48000)).channels, before.channels);
+  assert.equal(asks, 3);
 });
 
 test('rendering a clip again and again does not grow the module memory, and each rendering is released once copied out', async (t) => {

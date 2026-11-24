@@ -24,7 +24,8 @@ struct Rendering {
 // with no gain in it, so a rendering holds the soundfont node's own samples.
 // Each render imports its bytes into the kept MIDI file node and builds a fresh
 // Engine, so every node starts from scratch. Errors throw std::invalid_argument:
-// the nodes' messages unchanged, the render core's own as "render: ...".
+// the nodes' messages unchanged, the render core's own as "render: ...". A
+// message a node reports while rendering throws std::runtime_error.
 class Instrument {
 public:
   // Plays the soundfont's lowest preset from a pool of `voiceLimit` voices. A
@@ -37,9 +38,8 @@ public:
   // Renders the file and at most two seconds past its end, then trims that
   // release tail after its last frame where either channel reaches -80 dBFS.
   // The file's own frames are always kept whole. A file longer than ten minutes
-  // is refused before anything is sized for it, and a message a node reports
-  // while rendering fails the render. Running out of memory throws
-  // std::bad_alloc; the instrument renders on after any failure.
+  // is refused before anything is sized for it. Running out of memory throws
+  // std::bad_alloc. The instrument renders on after any failure.
   Rendering render(std::span<const std::uint8_t> midiFile, double sampleRate);
 
 private:

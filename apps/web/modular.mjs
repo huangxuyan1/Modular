@@ -24,9 +24,14 @@ export async function loadModular(options = {}) {
   };
 
   let queue = Promise.resolve();
-  // Runs `work` once every call made before it has settled, whether or not it failed.
-  const enqueue = (work) => {
-    const result = queue.then(work);
+  // Runs `work` with the live instance once every call made before it has settled, whether
+  // or not it failed. A call whose arguments failed their check, `problem`, rejects in that
+  // turn without reaching the module.
+  const run = (problem, work) => {
+    const result = queue.then(async () => {
+      if (problem !== undefined) throw new Error(problem);
+      return work(await live());
+    });
     queue = result.then(ignore, ignore);
     return result;
   };
@@ -45,35 +50,35 @@ export async function loadModular(options = {}) {
     };
     return {
       async render(midi, sampleRate) {
-        const problem = !(midi instanceof Uint8Array) ? 'midi file: bytes must be a Uint8Array'
+        const problem = !isBytes(midi) ? 'midi file: bytes must be a Uint8Array'
           : typeof sampleRate !== 'number' ? 'render: sample rate must be a number'
           : undefined;
         // Copied now, so the page may change its array before the call runs.
         const bytes = problem === undefined ? new Uint8Array(midi) : undefined;
-        return enqueue(async () => {
-          if (problem !== undefined) throw new Error(problem);
-          const current = await live();
-          return current.render(handleIn(current), bytes, sampleRate);
-        });
+        return run(problem, (current) =>
+          current.render(handleIn(current), bytes, sampleRate));
       },
     };
   };
 
   return {
     async createInstrument(soundfont) {
-      const problem = !(soundfont instanceof Uint8Array)
-        ? 'soundfont: bytes must be a Uint8Array' : undefined;
+      const problem = !isBytes(soundfont) ? 'soundfont: bytes must be a Uint8Array' : undefined;
       // The instrument's own copy, made once and never the page's array, which the page
       // may change or transfer.
       const bytes = problem === undefined ? new Uint8Array(soundfont) : undefined;
-      return enqueue(async () => {
-        if (problem !== undefined) throw new Error(problem);
-        const current = await live();
-        return instrument(bytes, current, current.createInstrument(bytes));
-      });
+      return run(problem, (current) =>
+        instrument(bytes, current, current.createInstrument(bytes)));
     },
   };
 }
+
+// Whether `value` is a Uint8Array, a Node Buffer included, from this realm or another, such
+// as an iframe's. The typed arrays' own toStringTag getter names a typed array's kind and
+// gives undefined for anything else, so no other object can pass for one.
+const typedArrayKind = Object.getOwnPropertyDescriptor(
+  Object.getPrototypeOf(Uint8Array.prototype), Symbol.toStringTag).get;
+const isBytes = (value) => typedArrayKind.call(value) === 'Uint8Array';
 
 // One instance of the module, behind the calls the loader makes to it. A method returns
 // what the module gives, or throws an Error: Modular's message when an export fails, or
@@ -83,19 +88,21 @@ async function instantiate(locateFile) {
   // glue finds its .wasm beside itself unless locateFile says otherwise.
   const settings = {};
   if (locateFile !== undefined) settings.locateFile = locateFile;
-  const module = await createModule(settings);
+  let module = await createModule(settings);
   // The Error of the trap or abort that stopped this instance, once one has.
   let stop;
 
   // Calls an export. Every export catches whatever C++ throws, so an exception here is a
   // trap or an abort, after which nothing in this instance can be trusted: no later call
-  // reaches it.
+  // reaches it, and the module and its memory are let go at once, even while an
+  // instrument made here still holds this instance.
   const call = (name, ...args) => {
     if (stop !== undefined) throw stop;
     try {
       return module[name](...args);
     } catch (error) {
       stop = new Error(`module stopped: ${error?.message ?? error}`, { cause: error });
+      module = undefined;
       throw stop;
     }
   };
