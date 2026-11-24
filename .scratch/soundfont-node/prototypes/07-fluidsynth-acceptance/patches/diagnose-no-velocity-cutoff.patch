@@ -1,0 +1,10 @@
+diff --git a/nodes/src/SoundFontNode.cpp b/nodes/src/SoundFontNode.cpp
+--- a/nodes/src/SoundFontNode.cpp
++++ b/nodes/src/SoundFontNode.cpp
+@@ -31,5 +31,5 @@ constexpr int kPowerOnVolume = 100;
+ // velocity 0. It is linear at every velocity, with no velocity switch, so a
+ // softer note is never brighter (ticket 09, D2).
+-constexpr double kVelocityToCutoff = -2400;
++constexpr double kVelocityToCutoff = 0;
+
+ double seconds(std::int32_t timecents) { return maths::exp2(timecents / 1200.0); }

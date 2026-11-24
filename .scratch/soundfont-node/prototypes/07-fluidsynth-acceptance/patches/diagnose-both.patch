@@ -1,0 +1,24 @@
+diff --git a/nodes/src/SoundFontNode.cpp b/nodes/src/SoundFontNode.cpp
+--- a/nodes/src/SoundFontNode.cpp
++++ b/nodes/src/SoundFontNode.cpp
+@@ -31,5 +31,5 @@ constexpr int kPowerOnVolume = 100;
+ // velocity 0. It is linear at every velocity, with no velocity switch, so a
+ // softer note is never brighter (ticket 09, D2).
+-constexpr double kVelocityToCutoff = -2400;
++constexpr double kVelocityToCutoff = 0;
+
+ double seconds(std::int32_t timecents) { return maths::exp2(timecents / 1200.0); }
+@@ -176,5 +176,5 @@ void SoundFontNode::prepare(const PrepareInfo& info) {
+     plan.volume.sustain = maths::exp10(-sustainDb / 20);
+     plan.volume.decayEnds = sustainDb >= kFloorDb;
+-    plan.releaseFramesPerDb = seconds(g[SoundFont::kReleaseVolEnv]) * rate / 100;
++    plan.releaseFramesPerDb = seconds(g[SoundFont::kReleaseVolEnv]) * rate / 96;
+     plan.releaseFactor = maths::exp10(-1 / (20 * plan.releaseFramesPerDb));
+     plan.modulation.delay = frames(g[SoundFont::kDelayModEnv], rate);
+@@ -292,5 +292,5 @@ void SoundFontNode::scaleToKey(Voice& voice, const PreparedZone& plan, int key)
+   const double decayFramesPerDb =
+       seconds(atKey(SoundFont::kDecayVolEnv, SoundFont::kKeynumToVolEnvDecay, 8000)) *
+-      rate_ / 100;
++      rate_ / 96;
+   voice.decayFactor = maths::exp10(-1 / (20 * decayFramesPerDb));
+   const double sustainDb = g[SoundFont::kSustainVolEnv] / 10.0;
