@@ -268,3 +268,28 @@ from a freshly fetched `origin/main` at `00bfcac`. Before its first push it was 
     - the induced trap standing for an abort;
     - the uncountable-rate refusal, a choice made here;
     - the limit as a constant.
+  - The planning hub accepted the first three as recorded.
+
+**2026-11-24: `main` merged in.** After the first push, ticket 05 landed as `3c0aad4`. It
+added the CI job, the version, the manifest and the LF pinning. It was merged into this
+branch rather than rebased, since the branch was already pushed. Both sides were kept.
+
+- *The test module.*
+  - It builds from the module's own sources, `MODULAR_WEB_SOURCES`, which include
+    `apps/web/Version.cpp`.
+  - It waits on the same version stamp, includes its header, and links with
+    `MODULAR_WEB_LINK_OPTIONS`.
+  - So the loader's `version` works there too. The smoke test checks that the test module
+    reports the same `version` as the shipped one.
+  - It still builds into `web-test-module/`, so `dist/` holds exactly the manifest's five
+    files. The manifest test checks that.
+- *The loader* reads `version` once, from its first instance, through the same guarded
+  calls. A fresh instance after a trap is the same build.
+- *`docs/web.md`*: ticket 05's coverage and exclusions, with the test module under its own
+  heading.
+- *Checks on the merged tree.*
+  - Native, through the script: Debug 11/11 and Release 11/11, both `desktop` tests
+    included, with no compiler warnings.
+  - `ctest --preset web`: 9/9. This ticket adds no CTest entry. Its cases are in
+    `web_core_tests` and `web_smoke`, which now has 13 cases.
+  - `check_docs`: 0 problems. `git diff --check`: clean.
