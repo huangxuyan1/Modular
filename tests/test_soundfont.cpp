@@ -10,9 +10,11 @@
 #include <functional>
 #include <new>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
+#include "GoldenRender.h"
 #include "modular/Engine.h"
 #include "modular/nodes/BasicNodes.h"
 #include "modular/nodes/SoundFontNode.h"
@@ -1698,6 +1700,162 @@ TEST_CASE("output is bit-identical at any block size and rate while the pool tur
         CHECK(out.right == reference.right);
       }
     }
+}
+
+namespace {
+
+// A tone of `period` points: a triangle with a little noise from a linear
+// congruential generator. It is made of integers only, so the golden clip's
+// soundfont has the same bytes on every platform, as one made with std::sin
+// need not.
+std::vector<std::int16_t> integerTone(std::size_t points, int period, std::uint32_t seed) {
+  std::vector<std::int16_t> result(points);
+  const int half = period / 2;
+  for (std::size_t i = 0; i < points; ++i) {
+    const int phase = static_cast<int>(i % static_cast<std::size_t>(period));
+    const int triangle = phase < half ? -12000 + 24000 * phase / half
+                                      : 12000 - 24000 * (phase - half) / (period - half);
+    seed = seed * 1664525u + 1013904223u;
+    result[i] = static_cast<std::int16_t>(triangle + static_cast<int>(seed >> 22) - 512);
+  }
+  return result;
+}
+
+// The golden clip's soundfont, which takes every maths path the node has. Its
+// samples are recorded at 32 and 25 kHz, neither a graph rate, and rooted away
+// from the keys played, by overridingRootKey and by their headers.
+//
+//   A  keys 0-59    the low tone, root 55, loops (mode 1), pan -500, 60 dB down
+//   B  keys 0-59    the high tone, root 67, loops while held (mode 3), pan +500
+//   C  keys 60-127  velocity 0-90: the low tone, root 72, loops, centred; its
+//                   decay falls to the floor while held, and its cutoff, raised
+//                   by the modulation envelope, passes 0.45 of every graph rate
+//   D  keys 60-127  velocity 91-127: the high tone, root 67, loops, pan 250, a
+//                   low cutoff the modulation envelope lowers further
+//   E  keys 64-80   a short sample, root 64, played to its end, pan -170
+//
+// Both envelopes have every stage, and the modulation envelope moves the
+// cutoff. The preset adds 4 dB of attenuation.
+Bytes everyPath() {
+  File file;
+  file.samples = {{"low", integerTone(9000, 128, 1), 32000, 60},
+                  {"high", integerTone(4000, 37, 2), 25000, 67},
+                  {"short", integerTone(1500, 23, 3), 25000, 64}};
+  file.samples[0].loop = Loop{1009, 8009};
+  file.samples[1].loop = Loop{211, 3711};
+  const Zone global{{set(gen::kDelayVolEnv, -9000), set(gen::kAttackVolEnv, -7000),
+                     set(gen::kHoldVolEnv, -8000), set(gen::kDecayVolEnv, -2400),
+                     set(gen::kSustainVolEnv, 300), set(gen::kReleaseVolEnv, -2000),
+                     set(gen::kDelayModEnv, -8500), set(gen::kAttackModEnv, -6000),
+                     set(gen::kHoldModEnv, -7700), set(gen::kDecayModEnv, -4000),
+                     set(gen::kSustainModEnv, 600), set(gen::kReleaseModEnv, -3000),
+                     set(gen::kInitialFilterFc, 7500), set(gen::kModEnvToFilterFc, 2400)}};
+  file.instruments.push_back(
+      {"every path",
+       {global,
+        Zone{{range(gen::kKeyRange, 0, 59), set(gen::kOverridingRootKey, 55),
+              set(gen::kSampleModes, 1), set(gen::kPan, -500),
+              set(gen::kInitialAttenuation, 600), set(gen::kSampleId, 0)}},
+        Zone{{range(gen::kKeyRange, 0, 59), set(gen::kSampleModes, 3), set(gen::kPan, 500),
+              set(gen::kSampleId, 1)}},
+        Zone{{range(gen::kKeyRange, 60, 127), range(gen::kVelRange, 0, 90),
+              set(gen::kOverridingRootKey, 72), set(gen::kSampleModes, 1),
+              set(gen::kPan, 0), set(gen::kSustainVolEnv, 1000),
+              set(gen::kInitialFilterFc, 13500), set(gen::kModEnvToFilterFc, 1200),
+              set(gen::kSampleId, 0)}},
+        Zone{{range(gen::kKeyRange, 60, 127), range(gen::kVelRange, 91, 127),
+              set(gen::kSampleModes, 1), set(gen::kPan, 250),
+              set(gen::kInitialFilterFc, 5000), set(gen::kModEnvToFilterFc, -1800),
+              set(gen::kSampleId, 1)}},
+        Zone{{range(gen::kKeyRange, 64, 80), set(gen::kPan, -170), set(gen::kSampleId, 2)}}}});
+  file.presets.push_back({"every path", 0, 0,
+                          {Zone{{set(gen::kInitialAttenuation, 40)}},
+                           Zone{{set(gen::kInstrument, 0)}}}});
+  return build(file);
+}
+
+// The golden clip, in milliseconds from frame 3, for a pool of six voices. A
+// note below key 60 starts two voices, one from 64 to 80 two, any other one.
+//
+// - 0 to 11 ms: seven notes fill the pool. Held notes are taken oldest first,
+//   and at 11 ms a slot whose tail is still fading is taken again.
+// - Velocity 1 at 10 ms reaches the 1440 cB ceiling on zone A.
+// - The first two note-offs belong to taken notes and are dropped.
+// - Releases start in the delay (104 ms), the attack (140), the decay (70), the
+//   hold (228) and the sustain (185, 190: zone B then plays on through its
+//   loop's end).
+// - Released notes are taken first, the one released first first (160, 170).
+// - Keys 0 and 127 play far below and far above their roots.
+// - Zone C's voices end by their decay while held, and zone E's at its sample's
+//   end, so the note-offs at 460 and 470 ms find nothing sounding.
+// - Key 60 is struck twice on one channel; its note-offs end the older first.
+std::vector<Timed> everyPathClip(double rate) {
+  struct At {
+    std::uint64_t ms;
+    MidiMsg message;
+  };
+  const std::vector<At> clip{
+      {0, noteOn(0, 48, 100)},    {3, noteOn(1, 62, 127)},    {5, noteOn(2, 67, 64)},
+      {6, noteOn(3, 70, 85)},     {8, noteOn(4, 90, 110)},    {10, noteOn(5, 30, 1)},
+      {11, noteOn(6, 40, 90)},    {40, noteOff(0, 48)},       {50, noteOff(3, 70)},
+      {70, noteOff(5, 30)},       {100, noteOn(7, 61, 105)},  {104, noteOff(7, 61)},
+      {130, noteOn(8, 63, 127)},  {140, noteOff(8, 63)},      {160, noteOn(9, 100, 64)},
+      {170, noteOn(10, 76, 85)},  {185, noteOff(4, 90)},      {190, noteOff(6, 40)},
+      {200, noteOn(14, 84, 70)},  {228, noteOff(14, 84)},     {300, noteOn(11, 0, 127)},
+      {302, noteOn(12, 127, 127)}, {450, noteOff(11, 0)},     {455, noteOff(12, 127)},
+      {460, noteOff(9, 100)},     {470, noteOff(10, 76)},     {480, noteOn(13, 60, 40)},
+      {490, noteOn(13, 60, 96)},  {600, noteOff(13, 60)},     {640, noteOff(13, 60)}};
+  const auto perSecond = static_cast<std::uint64_t>(rate);
+  std::vector<Timed> result;
+  for (const auto& [ms, message] : clip) result.push_back({3 + ms * perSecond / 1000, message});
+  return result;
+}
+
+// The golden clip's values, rendered with the node's portable maths. A change
+// that alters them updates them in this same commit, so review sees every change
+// to the node's rendered bits. A ticket that adds a maths path to the node
+// extends the clip and updates them.
+const std::vector<golden::Render> kEveryPathGolden{
+    {44100, 37395, {
+        0x2a53fb94112c494aull, 0x6861d124711f233eull, 0x200abe2b1ca26c37ull,
+        0xce698539b0af5f03ull, 0x98e6f0959529fad8ull, 0x489bf256e9887ee8ull,
+        0x7bb405c0a6a36fffull, 0xf5a282f353ee7298ull, 0xe5094f89e8f145cfull,
+        0x8f58bffb479fffbaull}},
+    {48000, 40702, {
+        0x615e5438c6b03017ull, 0xc621da9b882d895eull, 0xff45ce91128a66b5ull,
+        0x146a86fa6bf2efc7ull, 0x22264cc805e150a3ull, 0x018136c5d378e312ull,
+        0x070c5e768f224c64ull, 0xf5f95c6ca1957677ull, 0xe395c6e83f1297b6ull,
+        0x910143434a329f03ull}},
+    {22050, 18699, {
+        0xf5cfda7ced0c4428ull, 0x6e306793085247dfull, 0x9027c9a872345261ull,
+        0x4be112a43184eaedull, 0xd5236c89bb979968ull}},
+};
+
+} // namespace
+
+TEST_CASE("a clip through every maths path renders its golden bits at three rates") {
+  std::vector<golden::Render> renders;
+  std::string differences;
+  for (std::size_t r = 0; r < kEveryPathGolden.size(); ++r) {
+    const double rate = kEveryPathGolden[r].rate;
+    CAPTURE(rate);
+    // Rendered past its end, then trimmed after the last frame either channel
+    // sounds on.
+    const auto cap = static_cast<std::uint64_t>(2 * rate);
+    auto out = play(everyPath(), everyPathClip(rate), {rate, 97, cap}, voiceLimit(6));
+    std::size_t end = 0;
+    for (std::size_t i = 0; i < out.left.size(); ++i)
+      if (out.left[i] != 0 || out.right[i] != 0) end = i + 1;
+    REQUIRE(end > 0);
+    REQUIRE(end < cap);
+    out.left.resize(end);
+    out.right.resize(end);
+    renders.push_back(golden::measure(rate, out.left, out.right));
+    const auto difference = golden::difference(kEveryPathGolden[r], renders.back());
+    if (!difference.empty()) differences += difference + "\n";
+  }
+  if (!differences.empty())
+    FAIL_CHECK(differences << "the render's values:\n" << golden::source(renders));
 }
 
 TEST_CASE("process allocates nothing") {

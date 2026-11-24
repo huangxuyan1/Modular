@@ -85,7 +85,8 @@ The file rules follow the [Standard MIDI Files specification](https://midi.org/s
 ## SoundFontNode
 
 Status: soundfont-node ticket 01, the tracer, ticket 02, loops and the piano's tone,
-ticket 03, the voice policy, and ticket 06, persistence. Ticket 04 adds the rest of
+ticket 03, the voice policy, ticket 06, persistence, and ticket 08, portable maths.
+Ticket 04 adds the rest of
 the voice and the ignored list, and 05 file modulators and exclusive class. The rules
 marked *interim* below change then. See `.scratch/soundfont-node/spec.md` for the end
 state.
@@ -264,11 +265,26 @@ node one, such as the editor's, counts held notes per channel and key in
 
 `process()` allocates nothing: `prepare()` allocates the voices, their tails and the
 counts of held notes, 16 channels of 128 keys. Voices and tails render in slot order
-between events, so the output is bit-identical at every block size. Every
-transcendental function whose result reaches the output goes through one internal
-header, `nodes/src/SoundFontMaths.h`, which wraps the standard library for now. Map
-ticket 08 decided that a browser render must match a native one bit for bit, so the
-soundfont spec's ticket 08 replaces it there with portable routines.
+between events, so the output is bit-identical at every block size.
+
+**Portable maths.** The node computes its output without the platform's maths
+library. Maths libraries disagree on `exp2`, `pow`, `log10`, `sin` and `cos` in the
+last place: MSVC's with Emscripten's, and even MSVC's Debug build with its Release
+build, which rendered the default piano differently at 44.1 kHz. Map ticket 08
+decided that a browser render matches the native one bit for bit, so every
+transcendental value that reaches the output, whether computed at load, in
+`prepare()`, at a note-on or per frame, comes from one internal header,
+`nodes/src/SoundFontMaths.h`. Its `exp2`, `exp10`, `log10`, `sin` and `cos` are
+built only from operations IEEE 754 makes exact or correctly rounded (`+ - * /`,
+`floor`, `ldexp`, `frexp` and conversions), and no build fuses them (see
+[project-foundations.md](project-foundations.md#implementation-conventions)). So the
+same graph, soundfont, notes and sample rate render the same bits in every build.
+The routines are within a few units in the last place of the true values, far
+inside the node's tolerances. A golden test in `soundfont_tests` pins those bits: a
+clip through every maths path the node has, at 44.1, 48 and 22.05 kHz, as its frame
+count and a hash of every 4,096 frames (`tests/GoldenRender.h`). A change that alters
+them, such as a new maths path, updates its values in the same commit, so review
+sees every change to the node's rendered bits.
 
 ## AudioOutputNode
 
