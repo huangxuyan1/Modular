@@ -92,6 +92,10 @@ build, as roadmap ticket 04's did. Research findings live under `research/` here
   `emsdk_env.ps1`, which changes no lasting environment variable. `emcc`, `emcmake` with the
   Ninja already present, and a C++20 hello-world that throws and catches with `-fexceptions` all
   work. Link C++ with `em++`.
+- [Is the soundfont node one primitive or a supernode of voices, and where do its samples live?](issues/05-soundfont-node-shape-and-samples.md)
+  — one polyphonic primitive (`event<midi>` in, `audio<2>` out) that owns the soundfont file's
+  bytes as stored node content, saved once and whole inside the graph; its voices are internal,
+  so release and stealing are its own policy. No kernel or workspace change, and no ADR.
 
 ## Not yet specified
 
@@ -101,7 +105,9 @@ In scope, not yet sharp enough to ticket. Graduates as the frontier advances.
   different pianos), who chooses (the clip's author, stored with the clip, or each listener),
   and how the choice crosses the contract. Sharp once the default piano and the contract are
   decided. Research favours further FluidR3_GM presets (one licence), each extracted under the
-  host's 25 MiB limit.
+  host's 25 MiB limit. On the node's side a choice is an authoring edit between renders: another
+  file loaded into the one node, or another preset of the same file (the node-shape decision
+  above).
 - **How the Modular-side work cuts into specs.** Probably two: the web build with its render
   surface, and the soundfont node. Depends on the build, surface and node tickets.
 - **Where the render runs in the page** (main thread or a Web Worker), and what the site shows
@@ -109,8 +115,10 @@ In scope, not yet sharp enough to ticket. Graduates as the frontier advances.
   only if it changes the contract.
 - **Repeated renders on one loaded soundfont.** Rebuilding the graph per clip is simplest, but
   reading a soundfont is costly to repeat. Reusing the graph builds a new `Engine` on it per
-  render, which is exactly the `prepare()` question roadmap ticket 10 holds open. Sharp once the
-  node-shape and contract tickets say what the graph holds.
+  render, which is exactly the `prepare()` question roadmap ticket 10 holds open. The node
+  parses its soundfont when it is loaded, never in `prepare()`, so a new `Engine` does not read
+  it again (the node-shape decision above). Sharp once the contract ticket says what the graph
+  holds.
 - **Sound parity.** How the new piano is judged against today's before the abcjs fallback goes,
   and by whom. Sharp once the default soundfont is chosen.
 
