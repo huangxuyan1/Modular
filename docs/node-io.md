@@ -283,7 +283,10 @@ inside the node's tolerances. A golden test in `soundfont_tests` pins those bits
 clip through every maths path the node has, at 44.1, 48 and 22.05 kHz, as its frame
 count and a hash of every 4,096 frames (`tests/GoldenRender.h`). A change that alters
 them, such as a new maths path, updates its values in the same commit, so review
-sees every change to the node's rendered bits.
+sees every change to the node's rendered bits. The web render surface's
+[golden clips](web.md#golden-clips) pin the node's output through the render core too,
+in every build: a change to what the node renders updates their values in that same
+commit as well.
 
 ## AudioOutputNode
 
