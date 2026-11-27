@@ -73,7 +73,10 @@ def force_push(args):
 
 
 def native_path(path, powershell):
-  if os.name == "nt" and not powershell:
+  if powershell:
+    # PowerShell separates path parts with backslashes on every host.
+    path = path.replace("\\", "/")
+  elif os.name == "nt":
     # Git Bash converts /drive/... when passing arguments to native git.exe.
     path = re.sub(r"^/([a-zA-Z])(?:/|$)", r"\1:/", path)
   return Path(path)
