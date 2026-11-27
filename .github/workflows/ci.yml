@@ -69,12 +69,20 @@ jobs:
       - name: Internal links and the CLAUDE.md import of AGENTS.md
         run: python3 scripts/check_docs.py
       - name: Whitespace errors and conflict markers in changed lines
+        id: whitespace
         run: |
           if git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
             git diff --check "$BASE_SHA...$HEAD_SHA"
+            echo "has_range=true" >> "$GITHUB_OUTPUT"
           else
             echo "No usable base commit '$BASE_SHA'; nothing to compare."
           fi
+      - name: Public content and commit email addresses
+        if: steps.whitespace.outputs.has_range == 'true'
+        run: python3 scripts/check_public_content.py "$BASE_SHA" "$HEAD_SHA"
+      - name: Line length in changed source lines
+        if: steps.whitespace.outputs.has_range == 'true'
+        run: python3 scripts/check_line_length.py "$BASE_SHA" "$HEAD_SHA"
 
   # No job name: a skipped matrix job would report its unexpanded name, so the
   # checks read "windows (Debug)", "windows (Release)" or a skipped "windows".
@@ -181,7 +189,7 @@ jobs:
           if [ "$DOCS_ONLY" = true ]; then
             case "$BUILD" in success|skipped) ;; *) echo "::error::Build result: $BUILD."; exit 1 ;; esac
             case "$WEB" in success|skipped) ;; *) echo "::error::Web build result: $WEB."; exit 1 ;; esac
-            echo "Documentation-only change: links, whitespace and changed-file scope passed."
+            echo "Documentation-only change: docs checks and changed-file scope passed."
           else
             [ "$BUILD" = success ] || { echo "::error::Windows Debug/Release build and tests: $BUILD."; exit 1; }
             [ "$WEB" = success ] || { echo "::error::Web build and tests under Node: $WEB."; exit 1; }

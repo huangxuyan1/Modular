@@ -125,8 +125,9 @@ RESTRICT; do not treat the older index-based fragility as an open constraint.
 
 ## Implementation conventions
 
-- C++20, two-space indent and approximately 90-column lines. One class per concern;
-  `PascalCase` types, `camelCase` methods, trailing-underscore private members,
+- C++20, two-space indent and a 90-column limit, enforced on added and changed
+  lines by [`check_line_length.py`](../scripts/check_line_length.py). One class per
+  concern; `PascalCase` types, `camelCase` methods, trailing-underscore private members,
   `kPascalCase` constants, not SCREAMING names. Header declarations use
   `#pragma once`; kernel implementation belongs in `kernel/src/`. Use fixed-width
   integers for contractual frames, ports and ids, `std::size_t` for indices,

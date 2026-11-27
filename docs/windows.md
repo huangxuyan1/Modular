@@ -74,8 +74,12 @@ makes it fail rather than pass.
 - **Every change:** `python scripts/check_docs.py` (Python 3, also runnable
   locally) checks that each repository-internal Markdown link reaches a tracked
   file and, for Markdown targets, an existing heading, and that `CLAUDE.md` imports
-  `AGENTS.md` (a line reading `@AGENTS.md`). `git diff --check` rejects whitespace
-  errors and conflict markers in the changed lines. No Markdown style linter runs.
+  `AGENTS.md` (a line reading `@AGENTS.md`). When the base commit is available,
+  `git diff --check` rejects whitespace errors and conflict markers,
+  [`check_public_content.py`](../scripts/check_public_content.py) checks added lines
+  for home paths and emails and checks commit email metadata, and
+  [`check_line_length.py`](../scripts/check_line_length.py) enforces 90 columns on
+  added C++, CMake, Python and JavaScript lines. No Markdown style linter runs.
 - **Build path:** on the `windows-2022` image (Visual Studio 2022, the preset's
   generator), Debug and Release each configure the `windows` preset, build every
   target and run CTest with `--label-exclude desktop`: the kernel, node, authoring,
