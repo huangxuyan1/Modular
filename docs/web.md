@@ -13,7 +13,8 @@ words, defined below. The decisions behind it are in the
 The `web` CMake presets configure with Emscripten's toolchain and build every target the
 web build defines, which leaves out the Windows-only and native-only ones below. The test
 preset then runs every test the web build registers, under emsdk's own Node, which the
-configure preset names as CMake's emulator:
+configure preset names as CMake's emulator. Run `ctest --preset web -N` after
+configuring to list the registered tests. The suite covers:
 
 - the kernel, node, authoring, MIDI-file and soundfont tests, graph persistence included;
   the soundfont tests' golden clips give the same bits under Node as natively;

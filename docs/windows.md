@@ -9,17 +9,16 @@ From the repository root in PowerShell:
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_windows.ps1
 ```
 
-This configures the `windows` preset, builds Debug, and runs all twelve CTest
-entries: kernel, node, authoring, MIDI-file and soundfont tests, the web render
-core's tests with its golden clips (`web_core_tests`), a CLI smoke test, the
-soundfont extract tool's test (`soundfont_extract`), kernel purity, the soundfont
-node's portable-maths check (`soundfont_portable_maths`), and the two
-`desktop`-labelled entries, the
-actual graph-editor app check (`graph_editor_app`) and a focused gesture regression
-(`graph_editor_gesture`). The extract tool's test runs `scripts/soundfont_extract.py`
-with the Python 3 (3.8 or later) that CMake finds when it configures; with none
-found, that test fails and says so. The portable-maths check, like kernel purity, reads
-the source: it fails when a soundfont node source other than
+This configures the `windows` preset, builds Debug, and runs the full CTest suite.
+The headless tests cover the kernel, nodes, authoring, MIDI files, soundfonts and
+web render core with its golden clips (`web_core_tests`), plus the CLI smoke test,
+the soundfont extract tool (`soundfont_extract`), kernel purity and the soundfont
+node's portable-maths check (`soundfont_portable_maths`). The `desktop` label
+covers the graph-editor app check (`graph_editor_app`) and the focused gesture
+regression (`graph_editor_gesture`). The extract tool's test runs
+`scripts/soundfont_extract.py` with the Python 3 (3.8 or later) that CMake finds
+when it configures; with none found, that test fails and says so. The portable-maths
+check, like kernel purity, reads the source: it fails when a soundfont node source other than
 `nodes/src/SoundFontMaths.h` calls a maths-library transcendental such as `std::sin`
 or `exp2` (see [node-io.md](node-io.md#soundfontnode)).
 Any failed step stops the script. The execution-policy option applies only to
@@ -30,7 +29,7 @@ The `desktop` tests launch the real editor on a private Win32 desktop that the
 test creates. The editor's window, file choosers and dialogs open there, so
 nothing appears on the screen or takes focus, and the editor is killed with the
 test, even when a CTest timeout ends it. They add about 20 seconds per
-configuration. Append `-ExcludeDesktop` to run only the ten headless entries.
+configuration. Append `-ExcludeDesktop` to run only the headless tests.
 
 For an optimized build, append `-Configuration Release`. Executables are under
 `build/windows/Debug/` or `build/windows/Release/`.
@@ -51,8 +50,9 @@ cmake --build --preset windows
 ctest --preset windows
 ```
 
+Run `ctest --preset windows -N` after configuring to list the registered tests.
 `ctest --preset windows -LE desktop` (`--label-exclude`) runs only the headless
-tests, the same selection hosted CI runs; `-L desktop` runs only the two editor
+tests, the same selection hosted CI runs; `-L desktop` runs only the editor
 tests. Append `--build-config Release` for Release.
 
 Prefer the script in agent shells: it normalizes duplicate `Path`/`PATH`
@@ -96,7 +96,7 @@ makes it fail rather than pass.
 
 CI does not cover:
 
-- the two `desktop`-labelled tests, `graph_editor_app` and `graph_editor_gesture`,
+- the `desktop`-labelled tests, `graph_editor_app` and `graph_editor_gesture`,
   which drive the real graph-editor window. The local script runs them by
   default (or use `ctest --preset windows -L desktop`); when a change affects the
   graph editor, record that local result as the ticket's GUI evidence;
