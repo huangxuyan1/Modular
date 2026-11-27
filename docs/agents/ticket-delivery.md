@@ -50,6 +50,7 @@ in `.scratch/version-control/spec.md`.
 9. **Merge.** The user decides when to merge; a session merges only when the
    user asks it to. Nothing merges automatically. GitHub squash-merges and
    deletes the remote branch.
+   For an approved merge, use `scripts/merge_when_green.sh <pr> <head-sha> "<subject>"`.
 10. **Cleanup.** Once the squash commit is on `main`, the user retires the
     ticket's worktree and local branch, or asks a session to:
     `git worktree remove <path>`, then `git branch -D <branch>`. A squash merge
