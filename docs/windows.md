@@ -9,17 +9,16 @@ From the repository root in PowerShell:
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build_windows.ps1
 ```
 
-This configures the `windows` preset, builds Debug, and runs all twelve CTest
-entries: kernel, node, authoring, MIDI-file and soundfont tests, the web render
-core's tests with its golden clips (`web_core_tests`), a CLI smoke test, the
-soundfont extract tool's test (`soundfont_extract`), kernel purity, the soundfont
-node's portable-maths check (`soundfont_portable_maths`), and the two
-`desktop`-labelled entries, the
-actual graph-editor app check (`graph_editor_app`) and a focused gesture regression
-(`graph_editor_gesture`). The extract tool's test runs `scripts/soundfont_extract.py`
-with the Python 3 (3.8 or later) that CMake finds when it configures; with none
-found, that test fails and says so. The portable-maths check, like kernel purity, reads
-the source: it fails when a soundfont node source other than
+This configures the `windows` preset, builds Debug, and runs the full CTest suite.
+The headless tests cover the kernel, nodes, authoring, MIDI files, soundfonts and
+web render core with its golden clips (`web_core_tests`), plus the CLI smoke test,
+the soundfont extract tool (`soundfont_extract`), kernel purity and the soundfont
+node's portable-maths check (`soundfont_portable_maths`). The `desktop` label
+covers the graph-editor app check (`graph_editor_app`) and the focused gesture
+regression (`graph_editor_gesture`). The extract tool's test runs
+`scripts/soundfont_extract.py` with the Python 3 (3.8 or later) that CMake finds
+when it configures; with none found, that test fails and says so. The portable-maths
+check, like kernel purity, reads the source: it fails when a soundfont node source other than
 `nodes/src/SoundFontMaths.h` calls a maths-library transcendental such as `std::sin`
 or `exp2` (see [node-io.md](node-io.md#soundfontnode)).
 Any failed step stops the script. The execution-policy option applies only to
@@ -30,7 +29,7 @@ The `desktop` tests launch the real editor on a private Win32 desktop that the
 test creates. The editor's window, file choosers and dialogs open there, so
 nothing appears on the screen or takes focus, and the editor is killed with the
 test, even when a CTest timeout ends it. They add about 20 seconds per
-configuration. Append `-ExcludeDesktop` to run only the ten headless entries.
+configuration. Append `-ExcludeDesktop` to run only the headless tests.
 
 For an optimized build, append `-Configuration Release`. Executables are under
 `build/windows/Debug/` or `build/windows/Release/`.
@@ -51,8 +50,9 @@ cmake --build --preset windows
 ctest --preset windows
 ```
 
+Run `ctest --preset windows -N` after configuring to list the registered tests.
 `ctest --preset windows -LE desktop` (`--label-exclude`) runs only the headless
-tests, the same selection hosted CI runs; `-L desktop` runs only the two editor
+tests, the same selection hosted CI runs; `-L desktop` runs only the editor
 tests. Append `--build-config Release` for Release.
 
 Prefer the script in agent shells: it normalizes duplicate `Path`/`PATH`
@@ -74,8 +74,13 @@ makes it fail rather than pass.
 - **Every change:** `python scripts/check_docs.py` (Python 3, also runnable
   locally) checks that each repository-internal Markdown link reaches a tracked
   file and, for Markdown targets, an existing heading, and that `CLAUDE.md` imports
-  `AGENTS.md` (a line reading `@AGENTS.md`). `git diff --check` rejects whitespace
-  errors and conflict markers in the changed lines. No Markdown style linter runs.
+  `AGENTS.md` (a line reading `@AGENTS.md`). When the base commit is available,
+  `git diff --check` rejects whitespace errors and conflict markers,
+  [`check_public_content.py`](../scripts/check_public_content.py) checks added lines
+  for home paths and emails and checks commit email metadata, and
+  [`check_line_length.py`](../scripts/check_line_length.py) enforces 90 columns on
+  added C++, CMake, Python and JavaScript lines. The docs job also tests the
+  Claude Code Git guard. No Markdown style linter runs.
 - **Build path:** on the `windows-2022` image (Visual Studio 2022, the preset's
   generator), Debug and Release each configure the `windows` preset, build every
   target and run CTest with `--label-exclude desktop`: the kernel, node, authoring,
@@ -91,7 +96,7 @@ makes it fail rather than pass.
 
 CI does not cover:
 
-- the two `desktop`-labelled tests, `graph_editor_app` and `graph_editor_gesture`,
+- the `desktop`-labelled tests, `graph_editor_app` and `graph_editor_gesture`,
   which drive the real graph-editor window. The local script runs them by
   default (or use `ctest --preset windows -L desktop`); when a change affects the
   graph editor, record that local result as the ticket's GUI evidence;
@@ -136,6 +141,12 @@ Claude Code context. Put shared rules in `AGENTS.md`. Detailed
 layer decisions and coding conventions are in `docs/project-foundations.md`; read
 that file when working in those areas. Domain vocabulary, ADRs and local tickets
 remain in `CONTEXT.md`, `docs/adr/` and `.scratch/`.
+
+The committed [Claude Code settings](../.claude/settings.json) run a Git guard
+before Bash and PowerShell tool calls. It blocks direct force-push commands and
+`git -C` paths outside `CLAUDE_PROJECT_DIR`, while allowing worktrees inside it.
+The hook runs through Git Bash on Windows and uses `python3` or `python`. It is a
+command guardrail, not a shell sandbox.
 
 Codex discovers project `AGENTS.md` instructions when a run starts. Its documented
 default combined limit is 32 KiB; keep the root file within that budget and account

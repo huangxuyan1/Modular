@@ -31,10 +31,12 @@ in `.scratch/version-control/spec.md`.
    every checkpoint, not only the net diff. Read `git log -p origin/main..HEAD`
    for local paths (home or user directories), account and machine names, email
    addresses, secrets, private inputs, generated output and third-party material
-   of unclear provenance. Commit metadata is published too:
-   `git log origin/main..HEAD --format='%an <%ae>'` should show the account's
-   GitHub noreply address. Fix what you find before pushing; a commit that was
-   never pushed may be amended or squashed, since nothing public changes.
+   of unclear provenance. Run
+   [`python scripts/check_public_content.py`](../../scripts/check_public_content.py)
+   for the mechanical check: it scans added lines for home paths and emails and
+   checks every commit's author and committer emails. It does not replace reading
+   each checkpoint. Fix what you find before pushing; a commit that was never
+   pushed may be amended or squashed, since nothing public changes.
    Content that is already pushed goes to the user.
 7. **Push and open the PR.** `git push -u origin <branch>`, then
    `gh pr create --base main`. Later commits, such as review fixes, go to the same
@@ -48,6 +50,7 @@ in `.scratch/version-control/spec.md`.
 9. **Merge.** The user decides when to merge; a session merges only when the
    user asks it to. Nothing merges automatically. GitHub squash-merges and
    deletes the remote branch.
+   For an approved merge, use `scripts/merge_when_green.sh <pr> <head-sha> "<subject>"`.
 10. **Cleanup.** Once the squash commit is on `main`, the user retires the
     ticket's worktree and local branch, or asks a session to:
     `git worktree remove <path>`, then `git branch -D <branch>`. A squash merge

@@ -4,6 +4,7 @@ build/
 .vscode/
 compile_commands.json
 .cache/
+__pycache__/
 .claude/settings.local.json
 # Private MIDI investigation; redistribution rights have not been established.
 artifacts/midi-repair/
