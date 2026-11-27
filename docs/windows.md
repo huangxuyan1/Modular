@@ -79,7 +79,8 @@ makes it fail rather than pass.
   [`check_public_content.py`](../scripts/check_public_content.py) checks added lines
   for home paths and emails and checks commit email metadata, and
   [`check_line_length.py`](../scripts/check_line_length.py) enforces 90 columns on
-  added C++, CMake, Python and JavaScript lines. No Markdown style linter runs.
+  added C++, CMake, Python and JavaScript lines. The docs job also tests the
+  Claude Code Git guard. No Markdown style linter runs.
 - **Build path:** on the `windows-2022` image (Visual Studio 2022, the preset's
   generator), Debug and Release each configure the `windows` preset, build every
   target and run CTest with `--label-exclude desktop`: the kernel, node, authoring,
@@ -140,6 +141,12 @@ Claude Code context. Put shared rules in `AGENTS.md`. Detailed
 layer decisions and coding conventions are in `docs/project-foundations.md`; read
 that file when working in those areas. Domain vocabulary, ADRs and local tickets
 remain in `CONTEXT.md`, `docs/adr/` and `.scratch/`.
+
+The committed [Claude Code settings](../.claude/settings.json) run a Git guard
+before Bash and PowerShell tool calls. It blocks direct force-push commands and
+`git -C` paths outside `CLAUDE_PROJECT_DIR`, while allowing worktrees inside it.
+The hook runs through Git Bash on Windows and uses `python3` or `python`. It is a
+command guardrail, not a shell sandbox.
 
 Codex discovers project `AGENTS.md` instructions when a run starts. Its documented
 default combined limit is 32 KiB; keep the root file within that budget and account

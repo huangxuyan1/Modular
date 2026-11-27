@@ -83,6 +83,8 @@ jobs:
       - name: Line length in changed source lines
         if: steps.whitespace.outputs.has_range == 'true'
         run: python3 scripts/check_line_length.py "$BASE_SHA" "$HEAD_SHA"
+      - name: Claude Code Git guard tests
+        run: python3 tests/test_guard_git.py
 
   # No job name: a skipped matrix job would report its unexpanded name, so the
   # checks read "windows (Debug)", "windows (Release)" or a skipped "windows".
