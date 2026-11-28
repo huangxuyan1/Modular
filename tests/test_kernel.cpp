@@ -318,16 +318,16 @@ TEST_CASE("connect enforces exact type equality") {
 
 namespace {
 
-// Defined here and nowhere else. The kernel compares an audio subtype and never
-// learns what it means, and the node library defines none yet.
+// A test-only id: the node library defines no audio subtype yet, and the kernel
+// compares one without learning what it means.
 constexpr std::uint32_t kMel = 7;
 
 // One audio input and one audio output of whatever types a test declares, so a
 // spectral stream and a speaker bus need no node library that defines either.
 // retype() is a node-owned configuration edit of both ports at once.
-class AudioPorts : public Node {
+class AudioStage : public Node {
 public:
-  AudioPorts(Graph& graph, PortType in, PortType out) : Node(graph) {
+  AudioStage(Graph& graph, PortType in, PortType out) : Node(graph) {
     in_ = addInput(in, "in");
     out_ = addOutput(out, "out");
   }
@@ -350,10 +350,10 @@ TEST_CASE("an 80-band spectral stream cannot connect to an 80-channel speaker bu
   Graph g;
   const auto mel = PortType::audio(80, kMel);
   const auto bus = PortType::audio(80);
-  const auto spectrum = place<AudioPorts>(g, mel, mel);
-  const auto analysis = place<AudioPorts>(g, mel, mel);
-  const auto speakers = place<AudioPorts>(g, bus, bus);
-  const auto output = place<AudioPorts>(g, bus, bus);
+  const auto spectrum = place<AudioStage>(g, mel, mel);
+  const auto analysis = place<AudioStage>(g, mel, mel);
+  const auto speakers = place<AudioStage>(g, bus, bus);
+  const auto output = place<AudioStage>(g, bus, bus);
 
   CHECK_THROWS_AS(g.connect(spectrum.id, spectrum->out(), speakers.id, speakers->in()),
                   std::invalid_argument);
@@ -369,8 +369,8 @@ TEST_CASE("an equal audio subtype at a different width still refuses to connect"
   Graph g;
   const auto wideType = PortType::audio(80, kMel);
   const auto narrowType = PortType::audio(40, kMel);
-  const auto wide = place<AudioPorts>(g, wideType, wideType);
-  const auto narrow = place<AudioPorts>(g, narrowType, narrowType);
+  const auto wide = place<AudioStage>(g, wideType, wideType);
+  const auto narrow = place<AudioStage>(g, narrowType, narrowType);
   CHECK_THROWS_AS(g.connect(wide.id, wide->out(), narrow.id, narrow->in()),
                   std::invalid_argument);
   CHECK_THROWS_AS(g.connect(narrow.id, narrow->out(), wide.id, wide->in()),
@@ -386,7 +386,7 @@ TEST_CASE("an audio subtype never equals a value or event subtype of the same nu
   CHECK(PortType::value(subtype::Float).channels == 0);
 
   Graph g;
-  const auto audio = place<AudioPorts>(g, PortType::audio(1, subtype::Trigger),
+  const auto audio = place<AudioStage>(g, PortType::audio(1, subtype::Trigger),
                                        PortType::audio(1, subtype::Trigger));
   std::vector<int> log;
   const auto probe = place<OrderProbeNode>(g, 0, log); // event<trigger> both ways
@@ -410,8 +410,8 @@ TEST_CASE("a supernode face carries a spectral subtype and refuses a speaker bus
   CHECK(parent.node(super.id).inputs()[0].type == mel);
   CHECK(parent.node(super.id).outputs()[0].type == mel);
 
-  const auto speakers = place<AudioPorts>(parent, bus, bus);
-  const auto analysis = place<AudioPorts>(parent, mel, mel);
+  const auto speakers = place<AudioStage>(parent, bus, bus);
+  const auto analysis = place<AudioStage>(parent, mel, mel);
   CHECK_THROWS_AS(
       parent.connect(super.id, spectrumOut->port(), speakers.id, speakers->in()),
       std::invalid_argument);
@@ -429,8 +429,8 @@ TEST_CASE("a subtype change that would break a wire is refused and changes no ty
   Graph g;
   const auto mel = PortType::audio(80, kMel);
   const auto bus = PortType::audio(80);
-  const auto source = place<AudioPorts>(g, mel, mel);
-  const auto sink = place<AudioPorts>(g, mel, mel);
+  const auto source = place<AudioStage>(g, mel, mel);
+  const auto sink = place<AudioStage>(g, mel, mel);
   g.connect(source.id, source->out(), sink.id, sink->in());
 
   // The same width, so only the subtype breaks the wire. The edit's unwired
@@ -452,9 +452,9 @@ TEST_CASE("an audio port with no channels throws when declared or reconfigured")
   // A zero-wide buffer would read as permanent silence instead of failing, so it
   // is an authoring error in every build, wherever a port type enters a node.
   Graph g;
-  CHECK_THROWS_AS(g.addNode<AudioPorts>(PortType::audio(0), PortType::audio(1)),
+  CHECK_THROWS_AS(g.addNode<AudioStage>(PortType::audio(0), PortType::audio(1)),
                   std::invalid_argument);
-  CHECK_THROWS_AS(g.addNode<AudioPorts>(PortType::audio(1), PortType::audio(0, kMel)),
+  CHECK_THROWS_AS(g.addNode<AudioStage>(PortType::audio(1), PortType::audio(0, kMel)),
                   std::invalid_argument);
   CHECK(g.nodeCount() == 0);
 
@@ -467,7 +467,7 @@ TEST_CASE("an audio port with no channels throws when declared or reconfigured")
   CHECK(s->outputs().empty());
 
   // Unwired, so only the width can refuse the edit, and none of it lands.
-  const auto node = place<AudioPorts>(g, PortType::audio(2), PortType::audio(2));
+  const auto node = place<AudioStage>(g, PortType::audio(2), PortType::audio(2));
   CHECK_THROWS_AS(node->retype(g, node.id, PortType::audio(1), PortType::audio(0)),
                   std::invalid_argument);
   CHECK(node->inputs()[0].type == PortType::audio(2));

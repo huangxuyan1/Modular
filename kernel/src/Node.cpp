@@ -12,7 +12,7 @@ namespace {
 
 // Checked wherever a port type enters a node, not in PortType::audio(): an
 // aggregate-initialized PortType never passes through the factory.
-void requireChannels(PortType type, const char* operation) {
+void requireAudioChannels(PortType type, const char* operation) {
   if (type.domain == Domain::Audio && type.channels == 0)
     throw std::invalid_argument(std::string(operation) +
                                 ": an audio port needs at least one channel");
@@ -27,7 +27,7 @@ Node::Node(Graph& graph)
 PortId Node::addPort(std::vector<PortSpec>& ports,
                      const std::vector<PortSpec>* restored,
                      PortType type, std::string name) {
-  requireChannels(type, "declare");
+  requireAudioChannels(type, "declare");
   if (restored) {
     if (ports.size() >= restored->size() || (*restored)[ports.size()].type != type)
       throw std::invalid_argument("restore: port declaration does not match node");
@@ -52,7 +52,7 @@ void Node::setPortTypes(Graph& graph, NodeId self,
   auto nextInputs = inputs_;
   auto nextOutputs = outputs_;
   for (const auto& change : changes) {
-    requireChannels(change.type, "configure");
+    requireAudioChannels(change.type, "configure");
     bool found = false;
     for (auto* ports : {&nextInputs, &nextOutputs}) {
       for (auto& port : *ports) {

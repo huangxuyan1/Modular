@@ -127,9 +127,10 @@ std::vector<PortSpec> readPorts(Reader& input, const char* direction, unsigned v
     if (domain > static_cast<unsigned>(Domain::Event))
       throw std::invalid_argument("open: unsupported port domain");
     PortType type{static_cast<Domain>(domain)};
-    if (version == 1) {
-      (type.domain == Domain::Audio ? type.channels : type.sub) =
-          input.number<std::uint32_t>();
+    if (version == 1 && type.domain == Domain::Audio) {
+      type.channels = input.number<std::uint32_t>();
+    } else if (version == 1) {
+      type.sub = input.number<std::uint32_t>();
     } else {
       type.sub = input.number<std::uint32_t>();
       type.channels = input.number<std::uint32_t>();

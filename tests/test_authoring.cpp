@@ -1188,8 +1188,8 @@ TEST_CASE("a graph saved by the version 1 writer opens with its identities port 
 }
 
 namespace {
-// Defined here and nowhere else, as in the kernel tests: the node library
-// defines no audio subtype yet.
+// A test-only id, as in the kernel tests: the node library defines no audio
+// subtype yet.
 constexpr std::uint32_t kMel = 7;
 
 // A mel spectrogram's output, an N-band spectral stream. Like the mixer's
@@ -1206,7 +1206,7 @@ private:
   PortId output_ = kNoPort;
 };
 
-std::vector<NodeCodec> withSpectrum() {
+std::vector<NodeCodec> codecsWithSpectrum() {
   std::vector<NodeCodec> codecs(primitiveCodecs().begin(), primitiveCodecs().end());
   codecs.push_back({"test.spectrum/1",
       [](const Node& n) { return typeid(n) == typeid(Spectrum); },
@@ -1226,7 +1226,7 @@ std::string fileBytes(const std::filesystem::path& path) {
 } // namespace
 
 TEST_CASE("a saved spectral port reopens with its subtype and refuses a speaker bus") {
-  const auto codecs = withSpectrum();
+  const auto codecs = codecsWithSpectrum();
   Workspace authored;
   const auto id = authored.graph().addNode<Spectrum>(80);
   const auto out = static_cast<Spectrum&>(authored.graph().node(id)).out();
@@ -1251,8 +1251,8 @@ TEST_CASE("a saved spectral port reopens with its subtype and refuses a speaker 
   CHECK(graph.connections().empty());
 }
 
-TEST_CASE("zero-width or mistyped version 2 ports fail to open and keep the graph") {
-  const auto codecs = withSpectrum();
+TEST_CASE("zero-width or mistyped saved ports fail to open and keep the graph") {
+  const auto codecs = codecsWithSpectrum();
   const std::string valid =
       "MODULAR_GRAPH 2\nNEXT 99\nNODES 3\n"
       "NODE 2 \"modular.const-float/1\"\nSETTINGS \"0.5\"\nCONTENT \"\"\n"
@@ -1287,6 +1287,32 @@ TEST_CASE("zero-width or mistyped version 2 ports fail to open and keep the grap
     CHECK(current.graph().nodeCount() == 3);
     CHECK(static_cast<ConstFloatNode&>(current.graph().node(2)).constant() == 0.5f);
   }
+
+  // A version 1 audio port's one number is its width, so a zero there fails too:
+  // against the gain's declaration, and through the kernel's rule for a node that
+  // declares the width it was saved with.
+  const auto version1 = [](const std::string& kind, const std::string& ports) {
+    return "MODULAR_GRAPH 1\nNEXT 9\nNODES 1\nNODE 4 \"" + kind + "\"\nSETTINGS \"" +
+        (kind == "modular.gain/1" ? "1" : "") + "\"\nCONTENT \"\"\nPOSITION 0 0\n" +
+        ports + "WIRES 0\nEND\n";
+  };
+  const std::string gainPorts = "INPUTS 2\nPORT 1 0 1 \"in\"\nPORT 2 1 3 \"gain\"\n"
+      "OUTPUTS 1\nPORT 3 0 1 \"out\"\n";
+  std::istringstream mono(version1("modular.gain/1", gainPorts));
+  CHECK_NOTHROW(openGraph(mono, codecs));
+  auto zeroGain = gainPorts;
+  zeroGain.replace(zeroGain.find("PORT 1 0 1"), 10, "PORT 1 0 0");
+  std::istringstream zeroIn(version1("modular.gain/1", zeroGain));
+  CHECK_THROWS_WITH_AS(current = openGraph(zeroIn, codecs),
+                       "restore: port declaration does not match node",
+                       std::invalid_argument);
+  std::istringstream zeroSpectrum(version1("test.spectrum/1",
+      "INPUTS 0\nOUTPUTS 1\nPORT 1 0 0 \"spectrum\"\n"));
+  CHECK_THROWS_WITH_AS(current = openGraph(zeroSpectrum, codecs),
+                       "declare: an audio port needs at least one channel",
+                       std::invalid_argument);
+  CHECK(current.graph().nodeCount() == 3);
+  CHECK(static_cast<ConstFloatNode&>(current.graph().node(2)).constant() == 0.5f);
 }
 
 TEST_CASE("a reopened version 1 graph saves as version 2 and reopens unchanged") {

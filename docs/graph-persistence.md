@@ -254,8 +254,9 @@ Version coverage opens the version 1 fixture and checks every port and wire agai
 literal values. Saving that graph writes version 2, which reopens with the same
 ids, names, types and wires and leaves the fixture's bytes unchanged. A test-only
 node with an `audio(80, kMel)` output round-trips with its subtype and still
-refuses an `audio(80)` input. Version 2 ports with zero channels, a lost or gained
-subtype or a channel count on a value port fail Open without replacing the graph.
+refuses an `audio(80)` input. Audio ports saved with zero channels, in either
+version, and version 2 ports with a lost or gained subtype or a channel count on a
+value port fail Open without replacing the graph.
 
 The actual Windows app tests cover Save/Open and Save As, restored layout/settings,
 Edit after Open from Run, unchanged saved content during processing, unsaved choices
