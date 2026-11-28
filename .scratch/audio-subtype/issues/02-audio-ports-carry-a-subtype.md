@@ -24,7 +24,7 @@ records every decision and the test seams. Two user decisions from 2026-11-23 ap
 
 **Blocked by:** 01 (Pin a real version-1 save file as a fixture).
 
-**Status:** needs-info
+**Status:** done
 
 **Kernel**
 
@@ -64,13 +64,13 @@ records every decision and the test seams. Two user decisions from 2026-11-23 ap
       Open with the subtype intact. The reopened port still refuses an `audio(80)` input.
 - [x] A version-2 file with a zero-channel audio port fails to open and leaves the caller's
       graph unchanged.
-- [ ] The only edit to an existing test: the corrupt-input test's unsupported-version case
+- [x] The only edit to an existing test: the corrupt-input test's unsupported-version case
       moves from version 2 to version 3.
-      **Open, for the user:** a second existing test needed an edit. "stored MIDI file times
-      keep the digits that recover each double as earlier saves wrote them" was added by
-      PR 29 on 2026-11-24, after this ticket. It compares Save's whole output with literal
-      version-1 bytes, so any version-2 writer fails it. It now expects version 2 output with
-      the same CONTENT; see the comments.
+      **Second edit, accepted by the user on 2026-11-28:** a second existing test needed
+      an edit. "stored MIDI file times keep the digits that recover each double as earlier
+      saves wrote them" was added by PR 29 on 2026-11-24, after this ticket. It compared
+      Save's whole output with literal version-1 bytes, so any version-2 writer fails it. It
+      now expects version 2 output with the same CONTENT; see the comments.
 - [x] Node codecs keep their kind versions and encodings.
 - [x] Opening a version-1 file never rewrites it; it changes only through the user's next
       Save.
@@ -104,8 +104,8 @@ records every decision and the test seams. Two user decisions from 2026-11-23 ap
 - [x] The claim closes with a commit whose subject is the claim, and the roadmap records the
       claim as proven, as the identity claim's close did.
       The PR's title is the claim, and the squash merge makes it the commit's subject, as
-      `0d9396a` did; that merge is the user's. The roadmap close assumes the open item above
-      is accepted.
+      `0d9396a` did; that merge is the user's. The user accepted the second test edit above,
+      so the close stands.
 
 ## Comments
 
@@ -230,3 +230,9 @@ suites (`scripts/build_windows.ps1`, all targets, desktop entries included) each
 `git diff --check`, `scripts/check_line_length.py` and `scripts/check_public_content.py`
 are clean over `origin/main...HEAD`, and `git diff --stat` still lists no path under
 `nodes/`.
+
+**2026-11-28 — ruling.** The planning hub relayed the user's answer to "Accept the second test
+edit on PR 45?": "Yes, merge when green". The edit to "stored MIDI file times keep the digits
+that recover each double as earlier saves wrote them" is accepted, and the roadmap close, its
+Proven row and the `AGENTS.md` status line stay as they are. Every checklist item is now ticked,
+so the status is `done`. The merge stays with the planning hub.
