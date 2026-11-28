@@ -109,7 +109,14 @@ private:
   std::istringstream input_;
 };
 
-std::vector<PortSpec> readPorts(Reader& input, const char* direction) {
+// Save writes the newest container version; Open reads every version so far.
+// PORT is the only record that differs between them.
+constexpr unsigned kWrittenVersion = 2;
+
+// Version 1 stored one number per port: an audio port's channel count, or a
+// value or event port's subtype. Version 2 stores the subtype, then the
+// channel count, which is 0 for value and event ports.
+std::vector<PortSpec> readPorts(Reader& input, const char* direction, unsigned version) {
   input.tag(direction);
   const auto count = input.count();
   std::vector<PortSpec> ports;
@@ -117,10 +124,18 @@ std::vector<PortSpec> readPorts(Reader& input, const char* direction) {
     input.tag("PORT");
     const auto id = input.number<PortId>();
     const auto domain = input.number<unsigned>();
-    const auto subtype = input.number<std::uint32_t>();
     if (domain > static_cast<unsigned>(Domain::Event))
       throw std::invalid_argument("open: unsupported port domain");
-    ports.push_back({id, {static_cast<Domain>(domain), subtype}, input.quoted()});
+    PortType type{static_cast<Domain>(domain)};
+    if (version == 1 && type.domain == Domain::Audio) {
+      type.channels = input.number<std::uint32_t>();
+    } else if (version == 1) {
+      type.sub = input.number<std::uint32_t>();
+    } else {
+      type.sub = input.number<std::uint32_t>();
+      type.channels = input.number<std::uint32_t>();
+    }
+    ports.push_back({id, type, input.quoted()});
   }
   return ports;
 }
@@ -130,7 +145,8 @@ void writePorts(std::ostream& output, const char* direction,
   output << direction << ' ' << ports.size() << '\n';
   for (const auto& port : ports)
     output << "PORT " << port.id << ' ' << static_cast<unsigned>(port.type.domain)
-           << ' ' << port.type.sub << ' ' << std::quoted(port.name) << '\n';
+           << ' ' << port.type.sub << ' ' << port.type.channels << ' '
+           << std::quoted(port.name) << '\n';
 }
 
 } // namespace
@@ -142,7 +158,7 @@ void saveGraph(const Workspace& workspace, std::ostream& output,
   text.imbue(std::locale::classic());
   text << std::setprecision(std::numeric_limits<double>::max_digits10);
   const auto& graph = workspace.graph();
-  text << "MODULAR_GRAPH 1\nNEXT " << graph.nextIdentity()
+  text << "MODULAR_GRAPH " << kWrittenVersion << "\nNEXT " << graph.nextIdentity()
        << "\nNODES " << graph.nodeCount() << '\n';
   for (const auto id : graph.nodeIds()) {
     const auto& node = graph.node(id);
@@ -180,7 +196,8 @@ Workspace openGraph(std::istream& input, std::span<const NodeCodec> codecs) {
   if (input.bad() || !input.eof()) throw std::invalid_argument("open: could not read graph");
   Reader reader(std::move(bytes));
   reader.tag("MODULAR_GRAPH");
-  if (reader.number<unsigned>() != 1)
+  const auto version = reader.number<unsigned>();
+  if (version < 1 || version > kWrittenVersion)
     throw std::invalid_argument("open: unsupported graph version");
   reader.tag("NEXT");
   Workspace workspace;
@@ -197,7 +214,8 @@ Workspace openGraph(std::istream& input, std::span<const NodeCodec> codecs) {
     content.stored = unhex(reader.quoted());
     reader.tag("POSITION");
     const NodePosition position{reader.number<double>(), reader.number<double>()};
-    const NodePorts ports{readPorts(reader, "INPUTS"), readPorts(reader, "OUTPUTS")};
+    const NodePorts ports{readPorts(reader, "INPUTS", version),
+                          readPorts(reader, "OUTPUTS", version)};
     if (codec.restore(workspace.graph(), id, ports, content) != id)
       throw std::invalid_argument("open: node codec changed identity");
     workspace.setPosition(id, position);

@@ -8,6 +8,7 @@
 #include <thread>
 #include <sstream>
 #include <fstream>
+#include <iterator>
 #include <tuple>
 
 #include "modular/Engine.h"
@@ -136,7 +137,7 @@ TEST_CASE("open rejects corrupt identities ports settings content and references
   std::istringstream original(valid);
   auto current = openGraph(original, primitiveCodecs());
   for (const auto& [before, after] : std::vector<std::pair<std::string, std::string>>{
-       {"MODULAR_GRAPH 1", "MODULAR_GRAPH 2"},
+       {"MODULAR_GRAPH 1", "MODULAR_GRAPH 3"},
        {"modular.const-float/1", "unknown/1"},
        {"NEXT 99", "NEXT 6"}, {"NEXT 99", "NEXT 0"},
        {"NEXT 99", "NEXT 4294967297"}, {"NODES 2", "NODES -1"},
@@ -568,12 +569,19 @@ TEST_CASE("stored MIDI file times keep the digits that recover each double as ea
   const auto file = MidiFile::parse(bytes);
   Workspace authored;
   authored.graph().addNode<MidiFileNode>(file);
-  const auto earlier = midiNodeGraph("midi-file", "loaded",
-      "20.833343750000001 0 2\n0.055555583333333332 144 60 100\n"
-      "20.833343750000001 128 60 0\n");
+  const std::string times = "20.833343750000001 0 2\n0.055555583333333332 144 60 100\n"
+      "20.833343750000001 128 60 0\n";
+  const auto earlier = midiNodeGraph("midi-file", "loaded", times);
+  // Earlier saves wrote container version 1. Save now writes version 2, whose
+  // port records differ, and the same CONTENT.
+  const auto written =
+      "MODULAR_GRAPH 2\nNEXT 5\nNODES 1\nNODE 4 \"modular.midi-file/1\"\n"
+      "SETTINGS \"loaded\"\nCONTENT \"" + contentHex(times) + "\"\nPOSITION 0 0\n"
+      "INPUTS 2\nPORT 1 2 1 0 \"start\"\nPORT 2 2 1 0 \"stop\"\n"
+      "OUTPUTS 1\nPORT 3 2 2 0 \"midi\"\nWIRES 0\nEND\n";
   std::stringstream saved;
   saveGraph(authored, saved, primitiveCodecs());
-  CHECK(saved.str() == earlier);
+  CHECK(saved.str() == written);
   std::istringstream input(earlier);
   const auto reopened = openGraph(input, primitiveCodecs());
   const auto& reopenedFile =
@@ -584,7 +592,7 @@ TEST_CASE("stored MIDI file times keep the digits that recover each double as ea
     CHECK(reopenedFile.entries()[i].seconds == file.entries()[i].seconds);
   std::stringstream resaved;
   saveGraph(reopened, resaved, primitiveCodecs());
-  CHECK(resaved.str() == earlier);
+  CHECK(resaved.str() == written);
 }
 
 TEST_CASE("an unready MIDI import can be reopened and repaired and failed replacement keeps content") {
@@ -1177,6 +1185,182 @@ TEST_CASE("a graph saved by the version 1 writer opens with its identities port 
       {9, 8, 15, 12},     // mono audio: synth to gain
       {11, 10, 15, 13},   // value 3: constant to gain level
       {19, 18, 22, 20}}); // stereo audio: gain to mixer
+}
+
+namespace {
+// A test-only id, as in the kernel tests: the node library defines no audio
+// subtype yet.
+constexpr std::uint32_t kMel = 7;
+
+// A mel spectrogram's output, an N-band spectral stream. Like the mixer's
+// arity, its width comes from its saved declaration, and it has no width check
+// of its own, so a zero width reaches the kernel's rule.
+class Spectrum : public Node {
+public:
+  Spectrum(Graph& graph, std::uint32_t bands) : Node(graph) {
+    output_ = addOutput(PortType::audio(bands, kMel), "spectrum");
+  }
+  PortId out() const { return output_; }
+  void process(ProcessContext&) override {}
+private:
+  PortId output_ = kNoPort;
+};
+
+std::vector<NodeCodec> codecsWithSpectrum() {
+  std::vector<NodeCodec> codecs(primitiveCodecs().begin(), primitiveCodecs().end());
+  codecs.push_back({"test.spectrum/1",
+      [](const Node& n) { return typeid(n) == typeid(Spectrum); },
+      [](const Node&) { return NodeContent{}; },
+      [](Graph& g, NodeId id, const NodePorts& ports, const NodeContent&) {
+        if (!ports.inputs.empty() || ports.outputs.size() != 1)
+          throw std::invalid_argument("open: invalid spectrum ports");
+        return g.restoreNode<Spectrum>(id, ports, ports.outputs[0].type.channels);
+      }});
+  return codecs;
+}
+
+std::string fileBytes(const std::filesystem::path& path) {
+  std::ifstream file(path, std::ios::binary);
+  return {std::istreambuf_iterator<char>(file), {}};
+}
+} // namespace
+
+TEST_CASE("a saved spectral port reopens with its subtype and refuses a speaker bus") {
+  const auto codecs = codecsWithSpectrum();
+  Workspace authored;
+  const auto id = authored.graph().addNode<Spectrum>(80);
+  const auto out = static_cast<Spectrum&>(authored.graph().node(id)).out();
+  std::stringstream saved;
+  saveGraph(authored, saved, codecs);
+  const auto text = saved.str();
+  CHECK(text.rfind("MODULAR_GRAPH 2\n", 0) == 0);
+  // Subtype, then channel count: kMel is 7, the width 80.
+  CHECK(text.find("PORT " + std::to_string(out) + " 0 7 80 \"spectrum\"\n") !=
+        std::string::npos);
+
+  auto reopened = openGraph(saved, codecs);
+  auto& graph = reopened.graph();
+  REQUIRE(graph.node(id).outputs().size() == 1);
+  const auto type = graph.node(id).outputs()[0].type;
+  CHECK(type == PortType::audio(80, kMel));
+  CHECK(type.sub == kMel);
+  CHECK(type.channels == 80);
+  const auto speakers = graph.addNode<CaptureSinkNode>(80);
+  const auto bus = static_cast<CaptureSinkNode&>(graph.node(speakers)).in();
+  CHECK_THROWS_AS(graph.connect(id, out, speakers, bus), std::invalid_argument);
+  CHECK(graph.connections().empty());
+}
+
+TEST_CASE("zero-width or mistyped saved ports fail to open and keep the graph") {
+  const auto codecs = codecsWithSpectrum();
+  const std::string valid =
+      "MODULAR_GRAPH 2\nNEXT 99\nNODES 3\n"
+      "NODE 2 \"modular.const-float/1\"\nSETTINGS \"0.5\"\nCONTENT \"\"\n"
+      "POSITION 0 0\nINPUTS 0\nOUTPUTS 1\nPORT 1 1 3 0 \"value\"\n"
+      "NODE 6 \"modular.gain/1\"\nSETTINGS \"1\"\nCONTENT \"\"\n"
+      "POSITION -17 31\nINPUTS 2\nPORT 3 0 0 1 \"in\"\nPORT 4 1 3 0 \"gain\"\n"
+      "OUTPUTS 1\nPORT 5 0 0 1 \"out\"\n"
+      "NODE 8 \"test.spectrum/1\"\nSETTINGS \"\"\nCONTENT \"\"\n"
+      "POSITION 0 0\nINPUTS 0\nOUTPUTS 1\nPORT 7 0 7 80 \"spectrum\"\n"
+      "WIRES 1\nWIRE 2 1 6 4\nEND\n";
+  std::istringstream original(valid);
+  auto current = openGraph(original, codecs);
+  REQUIRE(current.graph().nodeCount() == 3);
+  CHECK(current.graph().node(6).inputs()[0].type == PortType::audio(1));
+  CHECK(current.graph().node(6).inputs()[1].type == PortType::value(subtype::Float));
+  CHECK(current.graph().node(8).outputs()[0].type == PortType::audio(80, kMel));
+  for (const auto& [before, after] : std::vector<std::pair<std::string, std::string>>{
+       {"PORT 3 0 0 1", "PORT 3 0 0 0"},     // the gain declares audio<1>
+       {"PORT 7 0 7 80", "PORT 7 0 7 0"},    // declared as saved: the kernel's rule
+       {"PORT 7 0 7 80", "PORT 7 0 0 80"},   // the subtype cannot be lost
+       {"PORT 3 0 0 1", "PORT 3 0 7 1"},     // nor gained
+       {"PORT 1 1 3 0", "PORT 1 1 3 1"},     // a value port has no channels
+       {"PORT 1 1 3 0", "PORT 1 1 3"},       // a version 1 record in version 2
+       {"PORT 3 0 0 1", "PORT 3 0 0 -1"}}) {
+    auto corrupt = valid;
+    const auto at = corrupt.find(before);
+    REQUIRE(at != std::string::npos);
+    corrupt.replace(at, before.size(), after);
+    std::istringstream input(corrupt);
+    INFO(before, " -> ", after);
+    CHECK_THROWS_AS(current = openGraph(input, codecs), std::invalid_argument);
+    CHECK(current.graph().nodeCount() == 3);
+    CHECK(static_cast<ConstFloatNode&>(current.graph().node(2)).constant() == 0.5f);
+  }
+
+  // A version 1 audio port's one number is its width, so a zero there fails too:
+  // against the gain's declaration, and through the kernel's rule for a node that
+  // declares the width it was saved with.
+  const auto version1 = [](const std::string& kind, const std::string& ports) {
+    return "MODULAR_GRAPH 1\nNEXT 9\nNODES 1\nNODE 4 \"" + kind + "\"\nSETTINGS \"" +
+        (kind == "modular.gain/1" ? "1" : "") + "\"\nCONTENT \"\"\nPOSITION 0 0\n" +
+        ports + "WIRES 0\nEND\n";
+  };
+  const std::string gainPorts = "INPUTS 2\nPORT 1 0 1 \"in\"\nPORT 2 1 3 \"gain\"\n"
+      "OUTPUTS 1\nPORT 3 0 1 \"out\"\n";
+  std::istringstream mono(version1("modular.gain/1", gainPorts));
+  CHECK_NOTHROW(openGraph(mono, codecs));
+  auto zeroGain = gainPorts;
+  zeroGain.replace(zeroGain.find("PORT 1 0 1"), 10, "PORT 1 0 0");
+  std::istringstream zeroIn(version1("modular.gain/1", zeroGain));
+  CHECK_THROWS_WITH_AS(current = openGraph(zeroIn, codecs),
+                       "restore: port declaration does not match node",
+                       std::invalid_argument);
+  std::istringstream zeroSpectrum(version1("test.spectrum/1",
+      "INPUTS 0\nOUTPUTS 1\nPORT 1 0 0 \"spectrum\"\n"));
+  CHECK_THROWS_WITH_AS(current = openGraph(zeroSpectrum, codecs),
+                       "declare: an audio port needs at least one channel",
+                       std::invalid_argument);
+  CHECK(current.graph().nodeCount() == 3);
+  CHECK(static_cast<ConstFloatNode&>(current.graph().node(2)).constant() == 0.5f);
+}
+
+TEST_CASE("a reopened version 1 graph saves as version 2 and reopens unchanged") {
+  const auto path =
+      std::filesystem::path(MODULAR_TEST_FIXTURES) / "graph-version-1.modular";
+  const auto original = fileBytes(path);
+  REQUIRE(original.rfind("MODULAR_GRAPH 1\n", 0) == 0);
+  const auto first = openGraphFile(path, primitiveCodecs());
+  CHECK(fileBytes(path) == original); // only the user's next Save changes it
+
+  std::stringstream saved;
+  saveGraph(first, saved, primitiveCodecs());
+  const auto text = saved.str();
+  CHECK(text.rfind("MODULAR_GRAPH 2\n", 0) == 0);
+  // The fixture's PORT 16 0 2, PORT 17 1 3 and PORT 5 2 2, as version 2 writes
+  // them: subtype, then channel count.
+  CHECK(text.find("PORT 16 0 0 2 \"in\"\n") != std::string::npos);
+  CHECK(text.find("PORT 17 1 3 0 \"gain\"\n") != std::string::npos);
+  CHECK(text.find("PORT 5 2 2 0 \"midi\"\n") != std::string::npos);
+
+  const auto second = openGraph(saved, primitiveCodecs());
+  const auto& before = first.graph();
+  const auto& after = second.graph();
+  CHECK(after.nextIdentity() == before.nextIdentity());
+  REQUIRE(after.nodeIds() == before.nodeIds());
+  for (const auto id : before.nodeIds()) {
+    for (const auto input : {true, false}) {
+      const auto want = input ? before.node(id).inputs() : before.node(id).outputs();
+      const auto got = input ? after.node(id).inputs() : after.node(id).outputs();
+      INFO("node ", id, input ? " inputs" : " outputs");
+      REQUIRE(got.size() == want.size());
+      for (std::size_t i = 0; i < want.size(); ++i) {
+        CHECK(got[i].id == want[i].id);
+        CHECK(got[i].name == want[i].name);
+        CHECK(got[i].type == want[i].type);
+      }
+    }
+  }
+  REQUIRE(after.connections().size() == before.connections().size());
+  for (std::size_t i = 0; i < before.connections().size(); ++i) {
+    const auto& want = before.connections()[i];
+    const auto& got = after.connections()[i];
+    CHECK(std::tie(got.srcNode, got.srcPort, got.dstNode, got.dstPort) ==
+          std::tie(want.srcNode, want.srcPort, want.dstNode, want.dstPort));
+  }
+  std::stringstream resaved;
+  saveGraph(second, resaved, primitiveCodecs());
+  CHECK(resaved.str() == text);
 }
 
 TEST_CASE("recording graphs reopen with owned MIDI and settings but no transient take") {

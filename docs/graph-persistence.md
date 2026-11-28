@@ -39,22 +39,26 @@ Open returns a replacement. Errors identify malformed/unsupported content or an
 unavailable file. Cycles remain authored wiring: the existing Engine reports
 them when Run compiles the graph, as it does for newly authored cycles.
 
-## Representation: MODULAR_GRAPH 1
+## Representation: MODULAR_GRAPH 2
 
 The versioned text container is deliberately small, inspectable and independent
-of native struct layout or a GUI library. Tokens occur in this order:
+of native struct layout or a GUI library. Save always writes version 2, and Open
+reads versions 1 and 2 (see [Reading version 1](#reading-version-1)). Tokens occur
+in this order:
 
 ```text
-MODULAR_GRAPH 1
-NEXT 3
+MODULAR_GRAPH 2
+NEXT 5
 NODES 1
-NODE 2 "modular.const-float/1"
-SETTINGS "0.5"
+NODE 4 "modular.gain/1"
+SETTINGS "2"
 CONTENT ""
 POSITION 48 50
-INPUTS 0
+INPUTS 2
+PORT 1 0 0 2 "in"
+PORT 2 1 3 0 "gain"
 OUTPUTS 1
-PORT 1 1 3 "value"
+PORT 3 0 0 2 "out"
 WIRES 0
 END
 ```
@@ -65,10 +69,12 @@ END
 - Nodes retain insertion order. Each has its original NodeId, versioned codec
   kind, node-owned settings text, stored bytes, finite x/y coordinates, and
   ordered input/output port lists.
-- `PORT` stores PortId, numeric domain (Audio 0, Value 1, Event 2), the current
-  PortType `sub` field and the name. This matches the current two-field PortType:
-  audio channel count occupies `sub`. ADR-0003's additional field is not yet in
-  the codebase; adopting it requires an explicit format migration/version.
+- `PORT` stores PortId, numeric domain (Audio 0, Value 1, Event 2), the port
+  type's `sub`, its `channels` and the name, in that order. `sub` is the opaque
+  subtype in every domain, 0 for unspecified audio. `channels` is an audio port's
+  width, at least 1; value and event ports write 0. These are the three PortType
+  fields of ADR-0003. An audio port with 0 channels fails Open, and so does any
+  port whose saved type differs from what its node declares.
 - `WIRES` is followed by that many `WIRE srcNode srcPort dstNode dstPort` records.
   References and type/cardinality rules go through Graph's ordinary `connect`.
 - Quoted strings use `std::quoted` escaping for quotes and backslashes. Stored
@@ -77,12 +83,37 @@ END
 - Numbers use the classic locale, with enough floating-point digits to round
   trip. Missing tokens, trailing content, invalid numbers, unknown versions/kinds,
   malformed bytes, duplicate identities, IDs outside the reserved history and
-  mismatched port declarations are errors. Version 1 limits encoded files to
+  mismatched port declarations are errors. Every version limits encoded files to
   256 MiB and bounds parsed counts by the available file size.
 
 The ordinary graph format also applies to a supernode's inner graph. Parent
 graphs containing supernodes or boundary nodes are explicitly unsupported here;
 serialization never flattens them. Existing runtime composition is unchanged.
+
+### Reading version 1
+
+Version 1 is the format Save wrote before ADR-0003's third port type field. It
+differs from version 2 only in `PORT`, which carries one number between domain
+and name: `PORT 1 0 2 "in"`. Open reads that number by domain:
+
+- for an audio port, it is `channels`, and `sub` is 0;
+- for a value or event port, it is `sub`, and `channels` is 0.
+
+Every other record and every validation rule above apply to both versions, so a
+version 1 graph opens with every port's channel count and subtype as it was
+saved. Opening it never rewrites the file; it becomes version 2 at the user's
+next ordinary Save. `tests/fixtures/graph-version-1.modular` is a real file that
+version 1's Save wrote, and the authoring tests open it.
+
+### Versions
+
+A change to the container format bumps `MODULAR_GRAPH`'s version, and every
+older version keeps opening; there is no save-as-older and no downgrade. Each
+version gets a fixture written by its own Save, committed before Save moves past
+it, as version 1's was before version 2's writer landed. A version Open does not
+know fails with `open: unsupported graph version`, and the caller's graph stays
+as it was. Node kind versions are separate: every codec keeps its own `/1` kind
+and encoding when the container version changes.
 
 ## Reconstruction and node content
 
@@ -135,8 +166,8 @@ CONTENT bytes; recorder transience does not change that shared contract.
 
 ### Owned MIDI representation
 
-Each node kind has its own `/1` version; the generic `MODULAR_GRAPH 1` container
-is unchanged. All stored MIDI numbers are classic-locale decimal text within
+Each node kind has its own `/1` version, independent of the generic container's
+version. All stored MIDI numbers are classic-locale decimal text within
 the opaque CONTENT bytes:
 
 | Kind suffix | Settings | Decoded CONTENT |
@@ -205,8 +236,8 @@ device codec they lack. Giving the editor the node is a later, separate ticket:
 running it under Start/Stop needs `MidiBlockNode` to count held notes per channel
 and key.
 
-**A size limit follows.** CONTENT is hex, two characters per byte, and version 1
-caps an encoded file at 256 MiB, so a soundfont over about 128 MiB cannot be saved
+**A size limit follows.** CONTENT is hex, two characters per byte, and the
+container caps an encoded file at 256 MiB, so a soundfont over about 128 MiB cannot be saved
 in a graph: Save fails with `save: graph exceeds 256 MiB format limit`. The node
 itself sets no limit. A denser
 encoding, or sharing one soundfont between nodes, would be a container decision.
@@ -218,6 +249,14 @@ middle-port deletion, later growth, trailing deleted IDs and exhausted allocatio
 After loading, new signal/sink nodes drive the reconstructed constant/gain/mixer
 through Engine and verify actual samples. Corrupt-content tests retain the caller's
 original graph. File tests cover Unicode paths, replacement and failure preservation.
+
+Version coverage opens the version 1 fixture and checks every port and wire against
+literal values. Saving that graph writes version 2, which reopens with the same
+ids, names, types and wires and leaves the fixture's bytes unchanged. A test-only
+node with an `audio(80, kMel)` output round-trips with its subtype and still
+refuses an `audio(80)` input. Audio ports saved with zero channels, in either
+version, and version 2 ports with a lost or gained subtype or a channel count on a
+value port fail Open without replacing the graph.
 
 The actual Windows app tests cover Save/Open and Save As, restored layout/settings,
 Edit after Open from Run, unchanged saved content during processing, unsaved choices
