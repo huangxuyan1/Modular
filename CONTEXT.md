@@ -63,6 +63,25 @@ The graph as the user built it, with supernodes intact and nodes, ports and conn
 available for authoring. The single source of truth from which execution and views are derived.
 _Avoid_: patch, project graph
 
+**View**:
+A pure function of the authored graph and its presentation data, such as an arrangement,
+a piano roll or a mixer. It holds nothing the graph does not, apart from where it is
+looking: window size and scroll position.
+_Avoid_: display (as somewhere state lives), shadow model
+
+**DAW system**:
+The DAW as behavior on Modular: an authored graph built by templates, edited by commands
+and shown through views, apart from any app that draws it. Its claims are proved through
+scripts and text views. The GUI that people make music in is a separate effort that
+represents the system and never decides whether one of its claims holds.
+_Avoid_: the DAW app, the GUI (for the system)
+
+**First-users milestone**:
+The point at which the user judges the DAW system, with a GUI to use it, good enough to hand
+to other people. A milestone, not an end: after it, what those people ask for joins the
+roadmap as adversary apps.
+_Avoid_: terminal claim, finish line, v1
+
 **Graph persistence**:
 Saving and reconstructing an authored graph, its settings and stored node content through
 Modular's shared facilities. Generated signals and in-flight processing are transient.
