@@ -4,7 +4,7 @@ An ordered list of falsifiable claims. Planning for it happens on the wayfinder 
 `.scratch/roadmap/map.md`; this file is the running output, sharpened as each map ticket
 resolves.
 
-## Terminal claim
+## First-users milestone
 
 > A recognizable DAW runs on Modular while (a) the purity grep still returns nothing, and
 > (b) the DAW stores nothing that isn't derivable from the authored graph.
@@ -12,10 +12,32 @@ resolves.
 > **Falsified by:** any DAW feature that forced a media concept into the kernel or the
 > workspace, or that needed out-of-band storage.
 
-Half of this is already under continuous automated test — `scripts/check_kernel_purity.sh`
-runs as a ctest test. The other half makes the "graph is the single source of truth" bet
-checkable: reload a project from the graph alone and the DAW's display must be identical.
-The acceptance test for "recognizable" is still open (map ticket 05).
+*Renamed from the terminal claim by map ticket 05, 2026-11-27.* This is where the user
+judges it a DAW and hands it to other people, not where the roadmap ends. After it, what
+those people ask for joins this roadmap as adversary apps instead of being designed up
+front.
+
+**"Recognizable" is a task, not a checklist.** From an empty project, record and write a
+1–2 minute song with drums, bass, keys and one audio track, mix it with effects and
+automation, export a WAV, then reopen the project and find everything as it was left. The
+task needs multitrack arrangement of MIDI and audio clips, a piano roll, a mixer with sends
+and buses, automation lanes, VST3 hosting, recording, loop playback, offline bounce and undo;
+punch-in, freeze, comping, time-stretching, notation and video are out for now. Edits made
+during playback must be heard within a few blocks without dropouts, at a scale of at least
+16 tracks, 8 plugin instances and 5 minutes at 48 kHz with a 256-sample buffer.
+
+Half (a) is already under continuous automated test: `scripts/check_kernel_purity.sh` runs
+as a ctest test. Half (b) makes the "graph is the single source of truth" bet checkable the
+same way. Every view is a pure function of the authored graph, so a CTest test saves a
+project, reopens it in a fresh process and compares every view's serialized state byte for
+byte.
+
+**The DAW system and its GUI are two problems.** Every claim on this roadmap is proved
+without a GUI, through scripts and text views. The milestone needs both: the DAW system
+passing the task, and a GUI good enough for the user and others to make music in. The GUI is
+planned as its own effort, and which app carries it is decided there. The features arrive one
+claim at a time, starting with the walking skeleton in the tail. Ticket 05 has the full
+answer.
 
 Two sharpenings, both from resolved map tickets. **"On Modular", not "on the engine"** —
 "engine" as a product word retired with ticket 02; `Engine` is the class, and Modular is the
@@ -37,7 +59,7 @@ cannot write a cut list for something you don't understand yet.
 
 **Ordering: proof dependency first, then blast radius descending** — attack the unknowns
 that are most expensive to be wrong about as early as dependency allows. Note this ordering
-discipline is *not* part of the terminal claim: "every expensive unknown was attacked" has
+discipline is *not* part of the milestone: "every expensive unknown was attacked" has
 no demo that can fail, so it is method, not a claim.
 
 | class | meaning |
@@ -213,6 +235,23 @@ ever is, it becomes a moderate claim, a supernode whose inner graph runs at an i
 of the outer rate and is visible to compile and Save. Sub-rate analysis and live varispeed stay
 unprobed, in the map's fog. The rate rule and its two constraints are now part of the kernel
 contract in `docs/project-foundations.md`.
+
+**Ticket 05 gave the DAW its first claim and an order for the rest.** The first DAW claim
+is a walking skeleton:
+
+> **Claim.** A project that is nothing but an authored graph holds a few tracks of MIDI
+> clips on a timeline, plays and stops, and bounces to WAV through the soundfont node,
+> driven from a command line with text views.
+>
+> **Falsified by:** a track or clip concept forced into the kernel or the workspace, or a
+> track list held anywhere but the graph.
+
+It is coarse and unsized, like the rest of the tail. Its text views must find their tracks
+in the graph, so it meets ticket 06's question (which supernode is a track) first; ticket 06
+is now unblocked. After it, each remaining feature of the milestone's task is one claim,
+riskiest first: live editing (the command/edit API and the realtime probe), automation,
+sends and buses, plugin hosting, undo. The user sets the exact order claim by claim, so this
+entry orders the DAW claims among themselves and does not displace the next claim above.
 
 ## Out of scope
 

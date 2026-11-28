@@ -4,7 +4,8 @@ Labels: wayfinder:map
 
 ## Destination
 
-`docs/roadmap.md` — an ordered list of falsifiable claims running to this terminal claim:
+`docs/roadmap.md` — an ordered list of falsifiable claims running to the **first-users
+milestone** (renamed from the terminal claim by ticket 05):
 
 > A recognizable DAW runs on the engine while (a) the kernel-purity grep still returns
 > nothing, and (b) the DAW stores nothing that isn't derivable from the authored graph.
@@ -15,6 +16,8 @@ Labels: wayfinder:map
 Half of that is already under continuous test — `scripts/check_kernel_purity.sh` runs as a
 ctest test today. The other half is the "graph is the single source of truth" bet made
 checkable: reload a project from the graph alone and the DAW's display must be identical.
+The milestone is where the user judges it a DAW and hands it to other people, not the end:
+their requests then join the roadmap as adversary apps.
 
 ## Notes
 
@@ -46,7 +49,7 @@ Claim anatomy, as observed in the two closed claims:
   you a concrete, non-speculative requirement. Never speculatively design for a
   hypothetical.
 - **Ordering discipline: proof dependency first, then blast radius descending.** This is
-  method, not part of the terminal claim — "every expensive unknown was attacked" has no
+  method, not part of the milestone — "every expensive unknown was attacked" has no
   demo that fails, so it is not a claim.
 
 | class | example | cost |
@@ -150,6 +153,16 @@ Concede cleanly when a generalization adds a concept without adding information.
   right rate, but its inner graph is invisible to compile, Save/Open and the workspace. **The
   third catastrophic ranking in a row that its probe did not bear out.**
 
+- [What counts as a "recognizable DAW"?](issues/05-recognizable-daw-acceptance-test.md)
+  — a scripted task, not a checklist: from an empty project, write, mix, export and reopen a
+  1–2 minute multitrack song, at 16 tracks, 8 plugins and 5 minutes, with edits heard during
+  playback. The terminal claim becomes the **first-users milestone**: the user judges it a
+  DAW and hands it to others, whose requests become adversary apps. Half (b) is tested by
+  saving, reopening in a fresh process and comparing every view's state byte for byte. The
+  DAW system and its GUI are two problems: every claim is proved without a GUI, and the GUI
+  is its own effort. Built from a walking skeleton (MIDI clips on tracks, play/stop, bounce
+  through the soundfont node), then one feature per claim, riskiest first.
+
 ## Not yet specified
 
 In scope, not yet sharp enough to ticket. Graduates as the frontier advances.
@@ -199,14 +212,16 @@ In scope, not yet sharp enough to ticket. Graduates as the frontier advances.
   checklist now exists, so this is sharpenable: the ppq a boundary node must put in every VST3
   event header, which ticket 11 ruled arrives as a `value` input rather than on the event; and
   opaque state that is *storable in* the graph yet not *derivable from* it — which forces the
-  terminal claim to split authored from derived data. **Tail** is ranked expensive and
+  milestone to split authored from derived data. **Tail** is ranked expensive and
   cheap-now/expensive-later: the exact twin of `latencySamples()`, and it earns its place
   independent of plugins because offline render is the primary verification path. *Narrowed by
   ticket 03:* parameter mapping is settled — params are not ports, the node owns the mapping,
   ports are created and deleted by command. The unconnected-value-reads-zero defect graduated
   out of here into ticket 13.
 - **The DAW view layer.** Piano roll, arrangement, mixer as projections of one graph.
-  Blocked behind the constraint/annotation ruling.
+  Blocked behind the constraint/annotation ruling. *Narrowed by ticket 05:* a view is a pure
+  function of the graph, proved through text views, and the GUI that draws views is a
+  separate effort with its own planning, off this map. Which app carries it is decided there.
 - **Node library growth** — what "most common requirements" means concretely once the
   checklist exists. Cheap-class throughout, so it never competes for ordering. *Sharpened by
   ticket 11:* a note payload needs a **variant tag in the payload** (one port carries
