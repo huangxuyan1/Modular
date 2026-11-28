@@ -185,7 +185,8 @@ Engine::Engine(Graph& graph, double sampleRate, std::uint32_t maxBlockFrames)
   std::uint32_t maxInChannels = 1;
   for (const ResolvedNode& r : impl_->nodes)
     for (const PortSpec& p : r.node->inputs())
-      if (p.type.domain == Domain::Audio) maxInChannels = std::max(maxInChannels, p.type.sub);
+      if (p.type.domain == Domain::Audio)
+        maxInChannels = std::max(maxInChannels, p.type.channels);
   impl_->silence.data.assign(1, std::vector<float>(maxBlockFrames, 0.0f));
   impl_->silence.ptrs.assign(maxInChannels, impl_->silence.data[0].data());
 
@@ -211,7 +212,7 @@ Engine::Engine(Graph& graph, double sampleRate, std::uint32_t maxBlockFrames)
       switch (outs[p].type.domain) {
         case Domain::Audio:
           w.audioOuts[p] = std::make_unique<AudioStorage>();
-          w.audioOuts[p]->allocate(outs[p].type.sub, maxBlockFrames);
+          w.audioOuts[p]->allocate(outs[p].type.channels, maxBlockFrames);
           break;
         case Domain::Event:
           w.eventOuts[p] = std::make_unique<EventBuffer>();
@@ -236,7 +237,7 @@ Engine::Engine(Graph& graph, double sampleRate, std::uint32_t maxBlockFrames)
         case Domain::Audio:
           w.audioIns[p] = src ? impl_->wiring[src->node].audioOuts[src->port].get()
                               : &impl_->silence;
-          w.audioInChannels[p] = ins[p].type.sub;
+          w.audioInChannels[p] = ins[p].type.channels;
           break;
         case Domain::Event:
           w.eventIns[p] = src ? impl_->wiring[src->node].eventOuts[src->port].get()

@@ -37,8 +37,9 @@ See [windows.md](windows.md) for toolchain and editor setup.
 
 The initial GUI accepts 1–64 channels and 1–32 mixer inputs to bound interactive
 placement. Those are editor field limits, not new kernel limits. Port names and
-types are read from the actual node declarations; audio types currently show the
-channel count as `audio<N>`. There is no separate audio subtype field yet.
+types are read from the actual node declarations; an audio type shows its
+`channels` field, the port's channel count, as `audio<N>`. The label does not
+show an audio subtype, because no node the editor places declares one.
 
 ## Save and reopen
 

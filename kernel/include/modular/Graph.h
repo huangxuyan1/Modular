@@ -108,8 +108,8 @@ public:
   // job, and is why nothing in the kernel initiates it.
   void removePort(NodeId node, PortId port);
 
-  // Connection requires exact type equality: same domain, same sub
-  // (channel count for audio, subtype id for value/event).
+  // Connection requires exact type equality: same domain, same subtype id and,
+  // for audio, the same channel count.
   void connect(NodeId srcNode, PortId srcPort, NodeId dstNode, PortId dstPort);
 
   // Removes the wire feeding one input, unconditionally: a wire is what

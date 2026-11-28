@@ -26,9 +26,11 @@ struct NodeCodec {
   NodeId (*restore)(Graph&, NodeId, const NodePorts&, const NodeContent&);
 };
 
-// MODULAR_GRAPH version 1. Unsupported kinds/structure and malformed content
-// throw invalid_argument. Open builds a separate idle workspace; a caller only
-// replaces its current workspace after success. No Engine is created here.
+// Save writes MODULAR_GRAPH version 2; Open reads versions 1 and 2. A version 1
+// audio port's one number is its channel count, with subtype 0. Unsupported
+// versions, kinds and structure, and malformed content, throw invalid_argument.
+// Open builds a separate idle workspace; a caller only replaces its current
+// workspace after success. No Engine is created here.
 void saveGraph(const Workspace&, std::ostream&, std::span<const NodeCodec>);
 Workspace openGraph(std::istream&, std::span<const NodeCodec>);
 

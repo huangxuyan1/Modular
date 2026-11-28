@@ -165,7 +165,9 @@ const PrimitivePresentation& presentation(const Node& node) {
 }
 
 std::wstring portTypeName(PortType type) {
-  if (type.domain == Domain::Audio) return L"audio<" + std::to_wstring(type.sub) + L">";
+  // No placeable node declares an audio subtype, so the label shows width alone.
+  if (type.domain == Domain::Audio)
+    return L"audio<" + std::to_wstring(type.channels) + L">";
   const auto sub = type.sub == subtype::Float && type.domain == Domain::Value
       ? L"float" : type.domain == Domain::Event && type.sub == subtype::Trigger
       ? L"trigger" : type.domain == Domain::Event && type.sub == subtype::Midi
