@@ -24,57 +24,62 @@ records every decision and the test seams. Two user decisions from 2026-11-23 ap
 
 **Blocked by:** 01 (Pin a real version-1 save file as a fixture).
 
-**Status:** ready-for-agent
+**Status:** needs-info
 
 **Kernel**
 
-- [ ] A port type has a domain, an opaque subtype and an audio-only channel count. Equality,
+- [x] A port type has a domain, an opaque subtype and an audio-only channel count. Equality,
       and therefore connect, compares all three.
-- [ ] The audio port factory keeps its call shape and takes an optional subtype that
+- [x] The audio port factory keeps its call shape and takes an optional subtype that
       defaults to 0. Value and event ports have channel count 0.
-- [ ] Audio subtype 0 is a concrete "unspecified audio" type, not a wildcard, on outputs and
+- [x] Audio subtype 0 is a concrete "unspecified audio" type, not a wildcard, on outputs and
       inputs alike.
-- [ ] The Engine sizes every audio buffer from the channel count and never reads the subtype.
+- [x] The Engine sizes every audio buffer from the channel count and never reads the subtype.
       That covers the silence width, output allocation and input channel counts.
-- [ ] Declaring an audio port with 0 channels throws `invalid_argument` in every build
+- [x] Declaring an audio port with 0 channels throws `invalid_argument` in every build
       configuration, and so does reconfiguring one to 0 channels. Boundary nodes and
       reconstruction during Open are covered.
-- [ ] Kernel tests, with `kMel` defined only in the test:
+- [x] Kernel tests, with `kMel` defined only in the test:
       - `audio(80, kMel)` → `audio(80)` throws;
       - `audio(80, kMel)` → `audio(80, kMel)` and `audio(80)` → `audio(80)` both connect;
       - an equal subtype with a different width still throws;
       - a boundary node exposing `audio(80, kMel)` gives the supernode's face that full type,
         and that face refuses an `audio(80)` input;
       - a subtype change on a wired port is refused, and leaves every port type unchanged.
-- [ ] The existing mono, stereo and mixer render tests pass unchanged.
+- [x] The existing mono, stereo and mixer render tests pass unchanged.
 
 **Graph persistence**
 
-- [ ] Save always writes `MODULAR_GRAPH 2`.
+- [x] Save always writes `MODULAR_GRAPH 2`.
       - Its port records carry the subtype and channel count as separate numbers; value and
         event ports write channel count 0.
       - No other record changes, and every existing validation rule applies to both versions.
-- [ ] Open reads versions 1 and 2. A version-1 audio port's number becomes its channel count
+- [x] Open reads versions 1 and 2. A version-1 audio port's number becomes its channel count
       with subtype 0, and a value or event port's number stays its subtype. Any other version
       fails as unsupported.
-- [ ] Ticket 01's fixture test passes with neither the test nor the fixture edited. The
+- [x] Ticket 01's fixture test passes with neither the test nor the fixture edited. The
       reopened fixture saves as version 2 and reopens with identical ids, names, types and
       wires.
-- [ ] A test-only node and codec with an `audio(80, kMel)` output round-trip through Save and
+- [x] A test-only node and codec with an `audio(80, kMel)` output round-trip through Save and
       Open with the subtype intact. The reopened port still refuses an `audio(80)` input.
-- [ ] A version-2 file with a zero-channel audio port fails to open and leaves the caller's
+- [x] A version-2 file with a zero-channel audio port fails to open and leaves the caller's
       graph unchanged.
 - [ ] The only edit to an existing test: the corrupt-input test's unsupported-version case
       moves from version 2 to version 3.
-- [ ] Node codecs keep their kind versions and encodings.
-- [ ] Opening a version-1 file never rewrites it; it changes only through the user's next
+      **Open, for the user:** a second existing test needed an edit. "stored MIDI file times
+      keep the digits that recover each double as earlier saves wrote them" was added by
+      PR 29 on 2026-11-24, after this ticket. It compares Save's whole output with literal
+      version-1 bytes, so any version-2 writer fails it. It now expects version 2 output with
+      the same CONTENT; see the comments.
+- [x] Node codecs keep their kind versions and encodings.
+- [x] Opening a version-1 file never rewrites it; it changes only through the user's next
       Save.
 
 **Editor**
 
-- [ ] The editor's port label reads the channel count and still shows `audio<N>`. It does not
+- [x] The editor's port label reads the channel count and still shows `audio<N>`. It does not
       display a non-zero subtype.
-- [ ] The screenshot from the `desktop` editor test shows non-zero `audio<N>` labels. The
+- [x] The screenshot from the `desktop` editor test shows non-zero `audio<N>` labels. The
       test keeps its existing mono graph, so the labels read `audio<1>`.
       **Deviation from the spec, approved by the user on 2026-11-23:**
       - the spec asked for a stereo node showing `audio<2>`;
@@ -83,18 +88,18 @@ records every decision and the test seams. Two user decisions from 2026-11-23 ap
 
 **Documentation**
 
-- [ ] The graph persistence documentation:
+- [x] The graph persistence documentation:
       - describes container version 2;
       - explains how version 1 is read;
       - states the versioning precedent: a format change bumps the container version, every
         older version keeps opening, and each version has a fixture written by its own Save;
       - drops its note that the third port-type field is not yet in the codebase.
-- [ ] The graph editor documentation no longer says audio has no separate subtype field.
+- [x] The graph editor documentation no longer says audio has no separate subtype field.
 
 **Close**
 
-- [ ] `git diff --stat` against the base shows no file under `nodes/`.
-- [ ] The kernel purity check passes.
-- [ ] The Debug and Release suites pass, including both `desktop`-labelled editor tests.
-- [ ] The claim closes with a commit whose subject is the claim, and the roadmap records the
+- [x] `git diff --stat` against the base shows no file under `nodes/`.
+- [x] The kernel purity check passes.
+- [x] The Debug and Release suites pass, including both `desktop`-labelled editor tests.
+- [x] The claim closes with a commit whose subject is the claim, and the roadmap records the
       claim as proven, as the identity claim's close did.

@@ -574,7 +574,8 @@ TEST_CASE("stored MIDI file times keep the digits that recover each double as ea
   const auto earlier = midiNodeGraph("midi-file", "loaded", times);
   // Earlier saves wrote container version 1. Save now writes version 2, whose
   // port records differ, and the same CONTENT.
-  const auto written = "MODULAR_GRAPH 2\nNEXT 5\nNODES 1\nNODE 4 \"modular.midi-file/1\"\n"
+  const auto written =
+      "MODULAR_GRAPH 2\nNEXT 5\nNODES 1\nNODE 4 \"modular.midi-file/1\"\n"
       "SETTINGS \"loaded\"\nCONTENT \"" + contentHex(times) + "\"\nPOSITION 0 0\n"
       "INPUTS 2\nPORT 1 2 1 0 \"start\"\nPORT 2 2 1 0 \"stop\"\n"
       "OUTPUTS 1\nPORT 3 2 2 0 \"midi\"\nWIRES 0\nEND\n";

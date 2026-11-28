@@ -81,6 +81,7 @@ requirements oracle** — the engine bends to plugins, not the reverse.
 | Grouping the milestone graph into a supernode changes not one sample; nesting and block-size invariance survive it | 2026-07-30 | — |
 | The event payload carries a conformant plugin note (VST3 `NoteOnEvent`, CLAP `clap_event_note`), and widening it to do so changed not one line under `nodes/` | 2026-08-05 | moderate |
 | A wired, stateful node gains and loses ports mid-project without disturbing any other wire or its DSP state — the edit never replaces the node; state across a recompile is map ticket 10's, still open | 2026-11-20 | expensive |
+| An 80-band spectral stream and an 80-channel speaker bus cannot be connected to each other by mistake — and no file under `nodes/` changed to make that true; saved graphs moved to `MODULAR_GRAPH 2`, and version 1 still opens | 2026-11-28 | moderate |
 
 The third one is the smallest claim on this list and is kept because its *falsifier* did real
 work: "no file under `nodes/` changed" is what turned the moderate-class ruling from an
@@ -146,11 +147,8 @@ rejects the stale wire. The user ruled that shared editing in `workspace/` remov
 with the edit, so one Undo restores both. That arrives with supernode editing (ADR-0004,
 2026-11-15).
 
-## Next claim
-
-*Re-cut 2026-11-20.* The identity claim headed this section until it closed (see Proven), so
-"this" in the next paragraph is that claim. The claim left here is channel layout vs count,
-below. Ticket 04's rate probe has since resolved without displacing it.
+The fifth claim headed the next-claim slot until it closed. It stays here as it was
+stated, with the reasoning that kept it next, its sharpening and its close:
 
 **Ticket 01's checklist promoted event payload shape ahead of this, and ticket 11's probe has
 since demoted it again** — to moderate, and out of the way. The 16-byte payload genuinely
@@ -192,6 +190,31 @@ versioned, with older versions still opening. The `nodes/` falsifier stands; the
 `workspace/` is expected, persistence tests change with it, and the demo gains one check: a
 graph saved as version 1 still opens with every port's channel count intact. With ADR-0003 and
 this note, nothing is left to grill; the next step is `/to-spec`.
+
+*Closed 2026-11-28*, cut as `.scratch/audio-subtype/` (spec, two tickets). The demo held as
+written: with `kMel` defined only in the test, `audio(80, kMel)` → `audio(80)` throws at
+connect in both directions, and so does a supernode face exposing `audio(80, kMel)`. `git diff
+--stat` shows no path under `nodes/`, and the purity grep still returns nothing. None of it
+passes by construction: dropping `sub` from type equality fails the demo, the face and the
+retype tests, dropping `channels` fails the width test, and an Engine still reading `sub`
+crashes the first render test. The sharpened check held as well. Ticket 01 committed a file
+that version 1's Save wrote before the writer changed; it opens, unedited, with every port's
+channel count intact, and saved again it becomes version 2 and reopens identical. The class
+held at moderate: the port type, three Engine sites rather than two, a zero-channel check, the
+persistence reader and writer and one editor label line, and nothing under `nodes/`.
+
+One edge is sharper than the claim's wording. **"The existing suites pass untouched"** held
+everywhere but the persistence tests, as the sharpened note expected, and there it took two
+edits where the spec named one. The corrupt-input test's unsupported version moved from 2 to
+3, as planned. A MIDI-times test added after the spec compared Save's whole output with
+literal version 1 bytes, and now expects the same MIDI content in a version 2 container. Any
+new container version would break such a comparison; neither edit reaches the kernel.
+
+## Next claim
+
+*Open since 2026-11-28.* The audio subtype claim headed this section until it closed (see
+Proven), and nothing has been chosen to follow it. Choosing the next claim is a planning
+decision for the user, so the ticket that closed this one leaves the section empty.
 
 ## Tail — ordered, unsized
 
